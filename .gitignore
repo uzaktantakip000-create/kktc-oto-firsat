@@ -10,3 +10,4 @@ __pycache__/
 *.egg-info/
 .claude/
 .mcp.json
+.git-eski-ozel/
