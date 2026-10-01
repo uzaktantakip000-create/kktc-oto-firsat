@@ -39,7 +39,7 @@ class FakeRepo:
 
 def src(name, platform="web", url="https://kktcar.com/x", status_="aktif", level="yesil", hours=0.1):
     return dict(name=name, platform=platform, url=url, status=status_, alert_level=level,
-                hours_since_check=hours, new_24h=4, active_n=10)
+                hours_since_check=hours, new_24h=4, fresh_n=10)
 
 
 NOW = datetime(2026, 10, 2, 9, 5, tzinfo=timezone.utc)
@@ -49,15 +49,15 @@ def test_status_counts_and_marks():
     repo = FakeRepo([src("KKTCar"), src("IG", "instagram", "https://instagram.com/a", "deneme", "golge", hours=9),
                      src("Yasak", status_="erisim_reddediyor"), src("Aday", status_="aday")])
     text = status.build_status(repo, NOW)
-    assert "🔔 1 bildirim açık · 👻 1 gölge" in text and "💤 1 bekleyen · ⛔ 1 yasak" in text
-    assert "⚠️ 1 kaynakta gecikme" in text  # IG 9 saattir yok (sınır 6)
-    assert "12:05 (KKTC)" in text and "%40" in text and "Geri bildirim: 3/30" in text
-    assert "Facebook $1.50/15" in text
+    assert "SANA HABER VEREN YERLER (1)" in text and "SADECE İZLENEN YERLER (1)" in text
+    assert "⚠️ 1 yerde gecikme" in text and "⚠️ GECİKMİŞ — Instagram: IG" in text  # IG 9 saattir yok (sınır 6)
+    assert "12:05" in text and "%40" in text and "basışların: 3" in text
+    assert "Facebook $1.50" in text and "Yasak" not in text and "Aday" not in text
 
 
 def test_all_good_header_and_never_scanned_flagged():
-    assert "✅ Her şey yolunda" in status.build_status(FakeRepo([src("KKTCar")]), NOW)
-    assert "⚠️ 1 kaynakta gecikme" in status.build_status(FakeRepo([src("Yeni", hours=None)]), NOW)
+    assert "✅ Sistem çalışıyor" in status.build_status(FakeRepo([src("KKTCar")]), NOW)
+    assert "⚠️ 1 yerde gecikme" in status.build_status(FakeRepo([src("Yeni", hours=None)]), NOW)
 
 
 def test_morning_status_only_in_morning_window(monkeypatch):
