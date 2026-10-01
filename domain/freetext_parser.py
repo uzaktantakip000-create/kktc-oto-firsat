@@ -145,3 +145,17 @@ def parse_freetext(text: str, default_steering: str | None = None, max_year: int
     out.negotiable = bool(re.search(r"pazarl[ıi]k", low))
     out.swap = True if re.search(r"takas\s+(olur|var|yap[ıi]l[ıi]r|kabul)|takasa\s+uygun", low) else None
     return out
+
+
+def diagnose(text: str) -> str:
+    """Gönderi neden ilan sayılmadı? ('ok' = okunur). Yalnızca sayaç için; metin saklanmaz."""
+    if not text or _SKIP.search(text):
+        return "arac_degil"
+    if not _BRAND_RE.search(text):
+        return "marka_yok"
+    no_phone = _PHONE.sub(" ", text)
+    if not [y for y in _YEAR.findall(no_phone) if int(y) <= 2027]:
+        return "yil_yok"
+    if _price(_clean_lines(no_phone)) is None:
+        return "fiyat_yok"
+    return "ok"

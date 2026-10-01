@@ -61,3 +61,12 @@ def test_currency_must_be_explicit():
 def test_junk_words_are_not_models():
     p = parse_freetext("Ford İlk sahibinden Focus 2016 4.350 stg")
     assert p.model == "Focus"
+
+
+def test_diagnose_reasons():
+    from domain.freetext_parser import diagnose
+    assert diagnose("Satılık koltuk takımı 300£") == "marka_yok"
+    assert diagnose("Kiralık Toyota Corolla 2015 40£") == "arac_degil"
+    assert diagnose("Toyota Corolla 2015 detaylı bilgi için arayın") == "fiyat_yok"
+    assert diagnose("Toyota Corolla temiz araç 5000£") == "yil_yok"
+    assert diagnose("2015 Toyota Corolla 5000£") == "ok"

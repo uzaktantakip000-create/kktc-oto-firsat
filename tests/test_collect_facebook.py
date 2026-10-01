@@ -76,7 +76,7 @@ def test_second_run_does_not_duplicate_and_window_shrinks(monkeypatch):
 
 
 def test_monthly_budget_stops_collection():
-    repo = FakeRepo(spent="15.0")
+    repo = FakeRepo(spent=str(cf.MONTHLY_BUDGET_USD))
     with pytest.raises(RuntimeError, match="tavan"):
         cf.collect_facebook_groups(repo, "tok", SOURCES, fetch=fetch_stub([]), now=NOW)
 

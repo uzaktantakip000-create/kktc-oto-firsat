@@ -31,7 +31,7 @@ def source_limit_hours(source: dict) -> int:
     if "kktcarabam" in source["url"]:
         return 14  # 6 saatte bir
     if source["platform"] == "facebook":
-        return 20  # 8 saatte bir
+        return 12  # gündüz 2 saatte bir, gece 8 saatte bir
     if source["platform"] == "instagram":
         return 6  # gündüz 30 dk, gece 2 saatte bir
     return 3  # kktcar, kibrisarabaal: 15-30 dakikada bir

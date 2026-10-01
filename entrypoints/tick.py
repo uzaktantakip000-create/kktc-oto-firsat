@@ -18,7 +18,7 @@ SCHEDULE = {
     "kktcar": (15, 30),
     "kibrisarabaal": (15, 30),
     "instagram": (30, 120),  # özel satıcılar burada; gönderi başına ücret olduğu için sık bakmak ucuz
-    "facebook": (480, 480),  # grup gönderisi başına ücret: günde 3 tur, aylık tavan collect_facebook'ta
+    "facebook": (120, 480),  # gündüz 2 saatte bir, gece 8 saatte bir (kullanıcı kararı); gönderi başına ücret, aylık tavan collect_facebook'ta
 }
 
 

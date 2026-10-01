@@ -1,13 +1,15 @@
 """Sahibe sade dille sistem durumu: /durum komutu ve her sabah otomatik özet."""
+import json
 from datetime import datetime, timedelta, timezone
 
+from application.collect_facebook import MONTHLY_BUDGET_USD as FB_BUDGET
+from application.collect_instagram import MONTHLY_BUDGET_USD as IG_BUDGET
 from application.health import notify_owner, source_limit_hours
 from infrastructure.db.repository import Repository
 
 KKTC = timezone(timedelta(hours=3))
 MORNING_HOURS_UTC = range(5, 9)  # KKTC 08:00–11:00 arası bir kez
 FEEDBACK_TARGET = 30  # eşik ayarı için gereken geri bildirim sayısı
-FB_BUDGET, IG_BUDGET = 15.0, 8.0  # collect_facebook / collect_instagram tavanlarıyla aynı
 KIND = {"instagram": "Instagram", "facebook": "Facebook grubu", "web": "Site"}
 
 
@@ -79,6 +81,10 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
                   "Buralara bakıyorum ama henüz haber vermiyorum. Önce fiyatları doğru okuyorum mu diye deniyorum."]
         lines += [_source_line(r) for r in shadow_n]
 
+    try:
+        fun = json.loads(repo.get_state(f"fb_funnel:{now:%Y-%m}", "{}") or "{}")
+    except ValueError:
+        fun = {}
     pct = f" (%{cover['ok'] * 100 // cover['total']})" if cover["total"] else ""
     lines += [
         "",
@@ -86,6 +92,11 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
         f"• Son 24 saatte sana {sent24['strong']} fırsat gönderdim.",
         f"• Fiyatını karşılaştırabildiğim araç: {cover['ok']} / {cover['total']}{pct}. Kalanı için benzer ilan yetmiyor.",
         f"• Senin düğme basışların: {fb_n} (en az {FEEDBACK_TARGET} olunca sistem senin zevkine göre ayarlanmaya başlar).",
+    ] + ([
+        f"• Facebook'ta bu ay {fun['gonderi']} gönderiye baktım: {fun.get('ilan', 0)} araç ilanı çıktı. Ayıklananlar: "
+        f"{fun.get('fiyat_yok', 0)} araç gönderisi fiyat yazmıyor, {fun.get('yil_yok', 0)} yıl yazmıyor, "
+        f"{fun.get('marka_yok', 0) + fun.get('arac_degil', 0)} araba değil.",
+    ] if fun.get("gonderi") else []) + [
         f"• Bu ay Apify'a harcanan: Facebook ${_money(repo, 'fb_spend', now):.2f} (sınır {FB_BUDGET:.0f}$), "
         f"Instagram ${_money(repo, 'ig_spend', now):.2f} (sınır {IG_BUDGET:.0f}$).",
         "",

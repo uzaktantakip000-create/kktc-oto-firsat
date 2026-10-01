@@ -1,13 +1,14 @@
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from domain.freetext_parser import parse_freetext
+from domain.freetext_parser import diagnose, parse_freetext
 from infrastructure.collectors import facebook_groups
 from infrastructure.collectors.facebook_groups import RawGroupPost
 from infrastructure.db.repository import Repository
 from infrastructure.fx.frankfurter import gbp_rate
 
-MONTHLY_BUDGET_USD = 15.0  # aylık Apify harcama tavanı (grup toplama); aşılırsa o ay toplama durur
+MONTHLY_BUDGET_USD = 45.0  # aylık Apify harcama tavanı (grup toplama); aşılırsa o ay toplama durur (kullanıcı kararı: gündüz 2 saatte bir)
 MAX_ITEMS_PER_GROUP = 40
 MAX_HOURS = 14
 
@@ -18,6 +19,7 @@ class FbStats:
     new: int = 0
     skipped: int = 0  # ilan değil / fiyat-yıl-marka belirsiz: HİÇBİR ŞEY saklanmaz
     spent_usd: float = 0.0
+    reasons: dict[str, int] = field(default_factory=dict)  # ilan sayılmayan gönderilerin nedeni (sayaç)
 
 
 def group_default_steering(source: dict) -> str | None:
@@ -44,6 +46,21 @@ def listing_data(post: RawGroupPost, source: dict) -> dict | None:
 
 def _month_key(now: datetime) -> str:
     return f"fb_spend:{now:%Y-%m}"
+
+
+def _count_funnel(repo: Repository, result: dict[str, FbStats], now: datetime) -> None:
+    """Aylık huni sayacı: kaç gönderiye bakıldı, kaçı ilan, ilan olmayanlar neden. Metin/yazar saklanmaz."""
+    key = f"fb_funnel:{now:%Y-%m}"
+    try:
+        total = json.loads(repo.get_state(key, "{}") or "{}")
+    except ValueError:
+        total = {}
+    for st in result.values():
+        total["gonderi"] = total.get("gonderi", 0) + st.fetched
+        total["ilan"] = total.get("ilan", 0) + (st.fetched - st.skipped)
+        for why, n in st.reasons.items():
+            total[why] = total.get(why, 0) + n
+    repo.set_state(key, json.dumps(total))
 
 
 def collect_facebook_groups(repo: Repository, apify_token: str, sources: list[dict],
@@ -73,9 +90,12 @@ def collect_facebook_groups(repo: Repository, apify_token: str, sources: list[di
         data = listing_data(post, source)
         if data is None:
             st.skipped += 1
+            why = diagnose(post.text)
+            st.reasons[why] = st.reasons.get(why, 0) + 1
             continue
         if repo.upsert_listing(source["id"], post.post_id, data):
             st.new += 1
+    _count_funnel(repo, result, now)
     share = round(spent / len(sources), 4)
     for source in sources:
         result[source["name"]].spent_usd = share

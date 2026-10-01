@@ -72,5 +72,5 @@ def test_morning_status_only_in_morning_window(monkeypatch):
 
 
 def test_source_limits_per_platform():
-    assert health.source_limit_hours({"url": "https://www.facebook.com/groups/1", "platform": "facebook"}) == 20
+    assert health.source_limit_hours({"url": "https://www.facebook.com/groups/1", "platform": "facebook"}) == 12
     assert health.source_limit_hours({"url": "https://kibrisarabaal.com", "platform": "web"}) == 3

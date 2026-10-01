@@ -12,7 +12,7 @@ def test_first_run_everything_is_due():
 
 def test_only_jobs_whose_interval_passed_are_due():
     last = {"kktcar": DAY - timedelta(minutes=16), "kibrisarabaal": DAY - timedelta(minutes=5),
-            "instagram": DAY - timedelta(minutes=29), "facebook": DAY - timedelta(hours=3)}
+            "instagram": DAY - timedelta(minutes=29), "facebook": DAY - timedelta(minutes=60)}
     assert set(due_jobs(DAY, last)) == {"kktcar", "instagram"}  # instagram: 30 dk - 3 dk tolerans
 
 
@@ -27,3 +27,10 @@ def test_heartbeat_gap_alert_window():
     assert heartbeat_gap(now, now - timedelta(minutes=20)) is None
     assert heartbeat_gap(now, now - timedelta(minutes=90)) == 90
     assert heartbeat_gap(now, now - timedelta(days=10)) is None  # uzun duraklama: bilinçli kapatma sayılır
+
+
+def test_facebook_every_two_hours_by_day_and_eight_by_night():
+    assert "facebook" in due_jobs(DAY, {"facebook": DAY - timedelta(minutes=118)})  # 120 dk - 3 dk tolerans
+    assert "facebook" not in due_jobs(DAY, {"facebook": DAY - timedelta(minutes=100)})
+    assert "facebook" not in due_jobs(NIGHT, {"facebook": NIGHT - timedelta(hours=4)})
+    assert "facebook" in due_jobs(NIGHT, {"facebook": NIGHT - timedelta(hours=8)})
