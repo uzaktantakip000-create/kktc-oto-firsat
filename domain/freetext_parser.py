@@ -15,8 +15,9 @@ _BRANDS = [  # (aranan kelime, marka)
 _BRAND_RE = re.compile(r"(?<![a-zçğıöşü0-9])(" + "|".join(re.escape(b) for b in sorted(_BRANDS, key=len, reverse=True))
                        + r")(?![a-zçğıöşü0-9])", re.I)
 # ilan olmayan / araç olmayan gönderiler
-_SKIP = re.compile(r"kiral[ıi]k|aran[ıi]yor|al[ıi]n[ıi]r|al[ıi]yoruz|almak\s+istiyorum|jant|lastik|tekne|bisiklet|"
-                   r"motosiklet|yedek\s+par[çc]a|bah[çc]e", re.I)
+_SKIP = re.compile(r"kiral[ıi]k|aran[ıi]yor|al[ıi]n[ıi]r|al[ıi]yoruz|almak\s+istiyorum", re.I)  # ilan türü: kiralık / alım ilanı
+_SKIP_TITLE = re.compile(r"jant|lastik|tekne|bisiklet|motosiklet|yedek\s+par[çc]a|bah[çc]e", re.I)  # araç olmayan ürün (başlıkta)
+_SKIP_HEAD = 150  # 'aranıyor/kiralık/jant' gibi ilan türünü belirten sözcükler gönderinin başında olur
 # fiyat olmayan para satırları (tramer, boya, taksit...)
 _NOT_PRICE_LINE = re.compile(r"tramer|boya|kredi|taksit|pe[şs]inat|komisyon|depozito|kapora|vergi|muayene|sigorta|"
                              r"[öo]deme|masraf|bak[ıi]m", re.I)
@@ -31,6 +32,13 @@ _MODEL_STOP = {"il", "ilk", "ilan", "sahibinden", "galeriden", "yeni", "temiz", 
                "motor", "arac", "otomobil", "arabasi", "araba", "marka", "model", "aracimiz", "gunluk", "satilik"}
 _CITIES = ["girne", "lefkoşa", "lefkosa", "gazimağusa", "gazimagusa", "mağusa", "magusa", "güzelyurt", "guzelyurt",
            "iskele", "lefke", "alsancak", "lapta", "karpaz", "dikmen", "yeni boğaziçi", "boğaz", "bogaz", "ercan"]
+
+
+def _not_a_sale_ad(text: str) -> bool:
+    """Kiralık/aranıyor gönderisi ya da araç olmayan ürün. Sözcükler yalnızca başta aranır: satış ilanının içinde
+    'lastikler yeni', 'takas alınır' gibi ifadeler geçebilir."""
+    first_line = text.strip().split("\n", 1)[0]
+    return bool(_SKIP.search(text[:_SKIP_HEAD]) or _SKIP_TITLE.search(first_line))
 
 
 def _clean_lines(text: str) -> list[str]:
@@ -83,8 +91,10 @@ def _km(text: str) -> int | None:
     return None
 
 
-def parse_freetext(text: str, default_steering: str | None = None, max_year: int = 2027) -> ParsedCaption | None:
-    if not text or _SKIP.search(text):
+def parse_freetext(text: str, default_steering: str | None = None, max_year: int = 2027,
+                   known_price: tuple[float, str] | None = None) -> ParsedCaption | None:
+    """known_price=(tutar, para_birimi): sitenin yapılandırılmış alanından gelen kesin fiyat (metinde aranmaz)."""
+    if not text or _not_a_sale_ad(text):
         return None
     brand_m = _BRAND_RE.search(text)
     if not brand_m:
@@ -94,10 +104,14 @@ def parse_freetext(text: str, default_steering: str | None = None, max_year: int
     years = [int(y) for y in _YEAR.findall(no_phone) if int(y) <= max_year]
     if not years:
         return None
-    price = _price(_clean_lines(no_phone))
-    if price is None:
-        return None
-    amount, currency, price_line = price
+    if known_price:
+        amount, currency = known_price
+        price_line = f"{amount:g} {currency}"
+    else:
+        price = _price(_clean_lines(no_phone))
+        if price is None:
+            return None
+        amount, currency, price_line = price
 
     out = ParsedCaption()
     out.brand = brand_m.group(1).title() if brand_m.group(1).lower() not in ("bmw", "mg", "vw", "byd") else brand_m.group(1).upper()
@@ -149,7 +163,7 @@ def parse_freetext(text: str, default_steering: str | None = None, max_year: int
 
 def diagnose(text: str) -> str:
     """Gönderi neden ilan sayılmadı? ('ok' = okunur). Yalnızca sayaç için; metin saklanmaz."""
-    if not text or _SKIP.search(text):
+    if not text or _not_a_sale_ad(text):
         return "arac_degil"
     if not _BRAND_RE.search(text):
         return "marka_yok"

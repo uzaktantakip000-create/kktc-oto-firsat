@@ -6,6 +6,7 @@ from application.bot_poll import poll_bot
 from application.maintenance import run_maintenance
 from application.dedupe import mark_duplicates
 from application.digest import send_daily_digest
+from application.discovery import send_discovery
 from application.evaluate import evaluate_new, pending_alerts
 from application.health import check_sources
 from application import llm_reader
@@ -92,6 +93,7 @@ def run(repo: Repository) -> None:
     for name, job in (("kaynak düşürme", lambda: demote_failing_sources(repo)),
                       ("özet", lambda: send_daily_digest(repo, token)),
                       ("sabah durumu", lambda: send_morning_status(repo)),
+                      ("keşif", lambda: send_discovery(repo, token, owner)),
                       ("denetim", lambda: send_monthly_audit(repo, token, owner)),
                       ("kaynak sağlığı", lambda: (check_sources(repo), send_weekly_report(repo)))):
         try:

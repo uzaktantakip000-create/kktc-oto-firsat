@@ -1,10 +1,11 @@
-"""Toplayıcı girişi. Kullanım: python -m entrypoints.cron_collect [instagram | facebook | kktcar | kktcarabam | kibrisarabaal | all]"""
+"""Toplayıcı girişi. Kullanım: python -m entrypoints.cron_collect [instagram | facebook | kktcar | kktcarabam | kibrisarabaal | mezunum | all]"""
 import sys
 
 from application.collect_facebook import collect_facebook_groups
 from application.collect_instagram import collect_sources
 from application.collect_kibrisarabaal import collect_kibrisarabaal
 from application.collect_kktcar import collect_kktcar
+from application.collect_mezunum import collect_mezunum
 from application.collect_kktcarabam import collect_kktcarabam
 from application import llm_reader
 from application.health import report_collect_errors
@@ -13,7 +14,7 @@ from infrastructure.fx import frankfurter
 from infrastructure.db.repository import Repository
 
 # ad -> (platform, url içinde geçen parça, toplayıcı)
-JOBS = ("instagram", "facebook", "kktcar", "kktcarabam", "kibrisarabaal")
+JOBS = ("instagram", "facebook", "kktcar", "kktcarabam", "kibrisarabaal", "mezunum")
 
 
 def run(job: str, repo: Repository) -> list[tuple[str, str]]:
@@ -43,7 +44,8 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
             errors.append(("Facebook grupları", msg))
         return errors
     needle, fn = {"kktcar": ("kktcar.com", collect_kktcar), "kktcarabam": ("kktcarabam.com", collect_kktcarabam),
-                    "kibrisarabaal": ("kibrisarabaal.com", collect_kibrisarabaal)}[job]
+                    "kibrisarabaal": ("kibrisarabaal.com", collect_kibrisarabaal),
+                    "mezunum": ("mezunumsatiyorumkibris.com.tr", lambda repo, src: collect_mezunum(repo, src, llm_reader.from_env(repo)))}[job]
     for source in repo.sources("web", ("aktif", "deneme")):
         if needle in source["url"]:
             try:

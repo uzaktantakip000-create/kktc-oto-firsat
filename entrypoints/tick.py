@@ -17,6 +17,7 @@ DAY_UTC = range(5, 21)  # KKTC 08:00–24:00
 SCHEDULE = {
     "kktcar": (15, 30),
     "kibrisarabaal": (15, 30),
+    "mezunum": (30, 60),  # küçük site; 3 sn aralıklı nazik tarama
     "instagram": (15, 120),  # özel satıcılar burada; ücret gönderi başına ve imleçle yalnızca yeni gönderi çekilir: sık bakmak ucuz
     "facebook": (120, 480),  # gündüz 2 saatte bir, gece 8 saatte bir (kullanıcı kararı); gönderi başına ücret, aylık tavan collect_facebook'ta
 }

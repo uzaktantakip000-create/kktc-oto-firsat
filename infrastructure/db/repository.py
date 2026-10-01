@@ -102,7 +102,7 @@ class Repository:
         """Satıldı/silindi bilgisi izlenemeyen kaynaklarda (Instagram, kktcarabam) eski ilanı pasifleştirir."""
         cur = self.conn.execute(
             """UPDATE listings l SET is_active=FALSE FROM sources s
-               WHERE s.id=l.source_id AND l.is_active AND (s.platform='instagram' OR s.url LIKE '%%kktcarabam.com%%')
+               WHERE s.id=l.source_id AND l.is_active AND (s.platform='instagram' OR s.url LIKE '%%kktcarabam.com%%' OR s.url LIKE '%%mezunumsatiyorumkibris%%')
                  AND COALESCE(l.posted_at, l.first_seen_at) < NOW() - make_interval(days => %s)""",
             (days,),
         )
@@ -315,7 +315,7 @@ class Repository:
                       EXTRACT(EPOCH FROM (NOW() - COALESCE(last_checked_at, created_at))) / 3600 AS hours_since_check
                FROM sources
                WHERE (platform IN ('instagram','facebook') AND status IN ('aktif','deneme') AND (platform = 'instagram' OR url LIKE '%/groups/%'))
-                  OR (platform = 'web' AND status = 'aktif' AND (url LIKE '%kktcar.com%' OR url LIKE '%kktcarabam.com%' OR url LIKE '%kibrisarabaal.com%'))"""
+                  OR (platform = 'web' AND status = 'aktif' AND (url LIKE '%kktcar.com%' OR url LIKE '%kktcarabam.com%' OR url LIKE '%kibrisarabaal.com%' OR url LIKE '%mezunumsatiyorumkibris.com.tr%'))"""
         ).fetchall()
 
     def sources_failing_feedback(self, window: int = 10, max_bad: int = 3) -> list[dict]:
@@ -331,6 +331,19 @@ class Repository:
                WHERE rn <= %s GROUP BY sid, name HAVING count(*) FILTER (WHERE bad) >= %s""",
             (window, max_bad),
         ).fetchall()
+
+    def mentioned_handles(self, days: int = 30, min_posts: int = 2) -> list[dict]:
+        """İlan metinlerinde '@hesap' olarak anılan hesaplar ve kaç farklı ilanda anıldıkları (kaynak keşfi için)."""
+        return self.conn.execute(
+            """SELECT lower(m[2]) AS handle, count(DISTINCT l.id) AS n
+               FROM listings l, LATERAL regexp_matches(l.raw_text, '(^|[^A-Za-z0-9._])@([A-Za-z0-9._]{3,30})', 'g') AS m
+               WHERE l.raw_text IS NOT NULL AND l.first_seen_at > NOW() - make_interval(days => %s)
+               GROUP BY 1 HAVING count(DISTINCT l.id) >= %s ORDER BY 2 DESC LIMIT 40""",
+            (days, min_posts)).fetchall()
+
+    def known_instagram_handles(self) -> set[str]:
+        return {r["h"] for r in self.conn.execute(
+            "SELECT lower(split_part(rtrim(url,'/'), '/', -1)) AS h FROM sources WHERE platform='instagram'").fetchall()}
 
     def set_alert_level(self, source_id, level: str) -> None:
         self.conn.execute("UPDATE sources SET alert_level=%s WHERE id=%s", (level, source_id))

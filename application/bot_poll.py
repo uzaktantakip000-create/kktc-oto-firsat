@@ -1,7 +1,7 @@
 """Bot komutlarını Actions çalışması sırasında getUpdates ile işler (7/24 açık sunucu gerektirmez)."""
 import httpx
 
-from application import ad_check, llm_reader, settings_store, sources_cmd, status
+from application import ad_check, discovery, llm_reader, settings_store, sources_cmd, status
 from application.notify import TelegramError, api
 from infrastructure.db.repository import Repository
 
@@ -124,6 +124,9 @@ def _handle_callback(repo: Repository, token: str, owner: str, cb: dict) -> None
         _answer(token, cb["id"], "Kaydedildi")
         if action == "onayli":
             api(token, "sendMessage", chat_id=target, text="✅ Onaylandın! Fırsat bildirimleri bu sohbete gelecek.")
+    elif kind == "disc" and sender == owner and action in ("ekle", "gec"):
+        _answer(token, cb["id"], "Tamam")
+        api(token, "sendMessage", chat_id=owner, text=discovery.decide(repo, action, target))
     elif kind == "mute" and sender == owner and action in ("evet", "hayir"):
         _answer(token, cb["id"], "Kaydedildi")
         api(token, "sendMessage", chat_id=owner,
