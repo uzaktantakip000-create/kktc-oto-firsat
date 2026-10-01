@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from application.collect_facebook import MONTHLY_BUDGET_USD as FB_BUDGET
 from application.collect_instagram import MONTHLY_BUDGET_USD as IG_BUDGET
+from application.maintenance import summary_line
 from application.health import notify_owner, source_limit_hours
 from infrastructure.db.repository import Repository
 
@@ -92,7 +93,7 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
         f"• Son 24 saatte sana {sent24['strong']} fırsat gönderdim.",
         f"• Fiyatını karşılaştırabildiğim araç: {cover['ok']} / {cover['total']}{pct}. Kalanı için benzer ilan yetmiyor.",
         f"• Senin düğme basışların: {fb_n} (en az {FEEDBACK_TARGET} olunca sistem senin zevkine göre ayarlanmaya başlar).",
-    ] + ([
+    ] + ([summary_line(repo)] if summary_line(repo) else []) + ([
         f"• Facebook'ta bu ay {fun['gonderi']} gönderiye baktım: {fun.get('ilan', 0)} araç ilanı çıktı. Ayıklananlar: "
         f"{fun.get('fiyat_yok', 0)} araç gönderisi fiyat yazmıyor, {fun.get('yil_yok', 0)} yıl yazmıyor, "
         f"{fun.get('marka_yok', 0) + fun.get('arac_degil', 0)} araba değil.",

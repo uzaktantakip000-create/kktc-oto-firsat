@@ -3,6 +3,7 @@ import os
 
 from application.audit import send_monthly_audit
 from application.bot_poll import poll_bot
+from application.maintenance import run_maintenance
 from application.dedupe import mark_duplicates
 from application.digest import send_daily_digest
 from application.evaluate import evaluate_new, pending_alerts
@@ -58,6 +59,10 @@ def run(repo: Repository) -> None:
     except Exception as e:
         print("saklama temizliği başarısız:", type(e).__name__, redact(str(e))[:150])
     settings = load_settings(repo)  # kullanıcının Telegram'dan verdiği kararlar
+    try:
+        run_maintenance(repo)  # geceleri günde bir: şüpheli ilanlar karantinaya (emsalden/bildirimden çıkar)
+    except Exception as e:
+        print("gece bakımı başarısız:", type(e).__name__, redact(str(e))[:150])
     evaluated = evaluate_new(repo, settings)
     # Yeni 🟢'ler + önceki turlarda gönderilemeyenler (hata, hız sınırı, sonradan onaylanan abone)
     strong = [ev for ev in pending_alerts(repo)

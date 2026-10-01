@@ -75,6 +75,7 @@ class Repository:
                       COALESCE(posted_at, data_as_of, first_seen_at) AS ref_date
                FROM listings WHERE price_gbp IS NOT NULL AND brand_norm IS NOT NULL
                  AND COALESCE(extraction_by, '') <> 'llm'  -- yapay zekâ okuması emsal olmaz
+                 AND karantina_nedeni IS NULL
                  AND COALESCE(posted_at, data_as_of, first_seen_at) > NOW() - make_interval(days => %s)
                  AND NOT EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = listings.id
                                  AND f.action IN ('yanlis_fiyat','kusurlu','audit_yanlis'))""",
@@ -89,6 +90,7 @@ class Repository:
                FROM listings l JOIN sources s ON s.id=l.source_id
                LEFT JOIN LATERAL (SELECT MAX(evaluated_at) AS at FROM evaluations e WHERE e.listing_id=l.id) last_ev ON TRUE
                WHERE l.is_active AND l.duplicate_of IS NULL AND l.price_gbp IS NOT NULL AND l.brand_norm IS NOT NULL
+                 AND l.karantina_nedeni IS NULL
                  AND (last_ev.at IS NULL
                       OR last_ev.at < NOW() - make_interval(days => %s)
                       OR EXISTS (SELECT 1 FROM listing_history h WHERE h.listing_id=l.id AND h.field='price_gbp'
@@ -194,6 +196,21 @@ class Repository:
         )
 
     # --- kullanıcı kararları ---
+    def listings_for_quality(self) -> list[dict]:
+        """Veri bakımı için aktif ve yakın geçmişteki ilanlar (karantina kararı her gece baştan verilir)."""
+        return self.conn.execute(
+            """SELECT id, brand_norm, model_norm, year, km, price_gbp::float8 AS price_gbp
+               FROM listings WHERE brand_norm IS NOT NULL AND duplicate_of IS NULL
+                 AND COALESCE(posted_at, data_as_of, first_seen_at) > NOW() - interval '120 days'""").fetchall()
+
+    def set_quarantine(self, reasons: dict) -> int:
+        """Karantina listesini baştan yazar (düzelenler çıkar). Dönen: yeni karantinaya girenlerin sayısı."""
+        before = {r["id"] for r in self.conn.execute("SELECT id FROM listings WHERE karantina_nedeni IS NOT NULL").fetchall()}
+        self.conn.execute("UPDATE listings SET karantina_nedeni=NULL WHERE karantina_nedeni IS NOT NULL")
+        with self.conn.cursor() as cur:
+            cur.executemany("UPDATE listings SET karantina_nedeni=%s WHERE id=%s", [(why, lid) for lid, why in reasons.items()])
+        return len(set(reasons) - before)
+
     def mark_sold(self, listing_id) -> None:
         """Kullanıcı 'satılmış' dedi: ilan kapanır ve gerçek bir satış olarak işaretlenir (emsal olarak 'satıldı' sayılır)."""
         self.conn.execute(
@@ -246,7 +263,7 @@ class Repository:
                           AS price_changed_at
                FROM (SELECT DISTINCT ON (listing_id) * FROM evaluations ORDER BY listing_id, evaluated_at DESC) e
                JOIN listings l ON l.id = e.listing_id JOIN sources s ON s.id = l.source_id
-               WHERE e.tier = 'guclu' AND s.alert_level = 'yesil' AND l.is_active AND e.evaluated_at > NOW() - make_interval(hours => %s)
+               WHERE e.tier = 'guclu' AND s.alert_level = 'yesil' AND l.is_active AND l.karantina_nedeni IS NULL AND e.evaluated_at > NOW() - make_interval(hours => %s)
                  AND EXISTS (SELECT 1 FROM subscribers sub WHERE sub.status = 'onayli' AND NOT EXISTS (
                        SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.chat_id = sub.chat_id AND a.tier = 'guclu'))
                ORDER BY e.profit_pct DESC""",
@@ -267,7 +284,7 @@ class Repository:
                WHERE ((e.tier = 'pazarlik' AND s.alert_level IN ('yesil','sari')) OR (e.tier = 'guclu' AND s.alert_level = 'sari')
                       OR (e.tier = 'guclu' AND s.alert_level = 'yesil' AND s.platform IN ('instagram','facebook')
                           AND l.posted_at < NOW() - interval '48 hours'))  -- 48 saati geçen sosyal 🟢: anlık değil, özette
-                 AND e.confidence IN ('yuksek','orta','dusuk') AND l.is_active AND l.duplicate_of IS NULL
+                 AND e.confidence IN ('yuksek','orta','dusuk') AND l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL
                  AND e.evaluated_at > NOW() - make_interval(hours => %s)
                  AND (l.first_seen_at > NOW() - make_interval(hours => %s)
                       OR EXISTS (SELECT 1 FROM listing_history h WHERE h.listing_id = l.id AND h.field = 'price_gbp'
