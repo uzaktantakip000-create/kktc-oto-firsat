@@ -256,7 +256,7 @@ class Repository:
             """SELECT id, name, platform, url, status, created_at, last_checked_at, listings_7d,
                       EXTRACT(EPOCH FROM (NOW() - COALESCE(last_checked_at, created_at))) / 3600 AS hours_since_check
                FROM sources
-               WHERE (platform = 'instagram' AND status IN ('aktif','deneme'))
+               WHERE (platform IN ('instagram','facebook') AND status IN ('aktif','deneme') AND (platform = 'instagram' OR url LIKE '%/groups/%'))
                   OR (platform = 'web' AND status = 'aktif' AND (url LIKE '%kktcar.com%' OR url LIKE '%kktcarabam.com%' OR url LIKE '%kibrisarabaal.com%'))"""
         ).fetchall()
 

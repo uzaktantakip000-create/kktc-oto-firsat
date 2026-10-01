@@ -1,10 +1,11 @@
 """Bot komutlarını Actions çalışması sırasında getUpdates ile işler (7/24 açık sunucu gerektirmez)."""
 from application.notify import TelegramError, api
-from application import sources_cmd
+from application import sources_cmd, status
 from infrastructure.db.repository import Repository
 
 FEEDBACK_ACTIONS = ("ilgilendim", "pas", "yanlis_fiyat", "satilmis", "kusurlu", "audit_dogru", "audit_yanlis")
-WELCOME_OWNER = "Merhaba! Fırsat bildirimleri bu sohbete gelecek. /dur ile durdurabilir, /basla ile açabilirsin."
+WELCOME_OWNER = ("Merhaba! Fırsat bildirimleri bu sohbete gelecek. /dur ile durdurabilir, /basla ile açabilirsin.\n"
+                 "Sistemin durumu için /durum, kaynak listesi için /kaynaklar.")
 
 
 def _answer(token: str, callback_id: str, text: str | None = None) -> None:
@@ -46,6 +47,8 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
                 reply_markup={"inline_keyboard": [[
                     {"text": "✅ Onayla", "callback_data": f"sub:onayli:{chat_id}"},
                     {"text": "⛔ Reddet", "callback_data": f"sub:reddedildi:{chat_id}"}]]})
+    elif chat_id == owner and text.startswith("/durum"):
+        api(token, "sendMessage", chat_id=chat_id, text=status.build_status(repo), disable_web_page_preview=True)
     elif chat_id == owner and text.startswith("/kaynaklar"):
         api(token, "sendMessage", chat_id=chat_id, text=sources_cmd.sources_report(repo), disable_web_page_preview=True)
     elif chat_id == owner and text.startswith("/kaynak_ekle"):
@@ -56,10 +59,10 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
         api(token, "sendMessage", chat_id=chat_id, text=sources_cmd.change_status(repo, text[len("/kaynak_ac"):], "deneme"))
     elif chat_id == owner and text.startswith("/kaynak_kapat"):
         api(token, "sendMessage", chat_id=chat_id, text=sources_cmd.change_status(repo, text[len("/kaynak_kapat"):], "pasif"))
-    elif text.startswith("/dur") and row and row["status"] == "onayli":
+    elif text.split()[:1] == ["/dur"] and row and row["status"] == "onayli":
         repo.conn.execute("UPDATE subscribers SET status='durduruldu' WHERE chat_id=%s", (chat_id,))
         api(token, "sendMessage", chat_id=chat_id, text="Bildirimler durduruldu. /basla ile tekrar açabilirsin.")
-    elif text.startswith("/basla") and row and row["status"] == "durduruldu":
+    elif text.split()[:1] == ["/basla"] and row and row["status"] == "durduruldu":
         repo.conn.execute("UPDATE subscribers SET status='onayli' WHERE chat_id=%s", (chat_id,))
         api(token, "sendMessage", chat_id=chat_id, text="Bildirimler açıldı.")
 

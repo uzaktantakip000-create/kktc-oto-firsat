@@ -26,20 +26,22 @@ def report_collect_errors(repo: Repository, errors: list[tuple[str, str]]) -> No
         notify_owner(repo, f"collect:{name}", f"⚠️ Toplama hatası — {name}\n{message[:300]}", repeat_hours=6)
 
 
-def _limit_hours(source: dict) -> int:
-    """Bu süreyi aşan sessizlik arıza sayılır (çalışma aralığının yaklaşık 2,5 katı; Actions gecikebilir)."""
+def source_limit_hours(source: dict) -> int:
+    """Bu süreyi aşan sessizlik arıza sayılır (çalışma aralığının yaklaşık 3-6 katı; tetikleyici/Actions gecikebilir)."""
     if "kktcarabam" in source["url"]:
         return 14  # 6 saatte bir
+    if source["platform"] == "facebook":
+        return 20  # 8 saatte bir
     if source["platform"] == "instagram":
-        return 10  # 4 saatte bir
-    return 6  # kktcar, 2 saatte bir
+        return 6  # gündüz 30 dk, gece 2 saatte bir
+    return 3  # kktcar, kibrisarabaal: 15-30 dakikada bir
 
 
 def source_problems(repo: Repository) -> list[tuple[str, str]]:
     """(anahtar, mesaj) listesi: uzun süredir kontrol edilmeyen veya haftadır yeni ilan getirmeyen kaynaklar."""
     problems = []
     for s in repo.stale_sources():
-        limit_h = _limit_hours(s)
+        limit_h = source_limit_hours(s)
         if s["hours_since_check"] > limit_h:
             problems.append((f"stale:{s['id']}", f"⏱ {s['name']}: {s['hours_since_check']:.0f} saattir başarılı tarama yok"))
         elif (s["listings_7d"] or 0) == 0 and s["hours_since_check"] < limit_h and _older_than_week(repo, s):

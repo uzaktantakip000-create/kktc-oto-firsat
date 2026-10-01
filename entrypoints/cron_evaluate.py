@@ -10,6 +10,7 @@ from application.health import check_sources
 from application.liveness import recheck_before_send
 from application.notify import is_fresh, send_alerts
 from application.report import send_weekly_report
+from application.status import send_morning_status
 from domain.comparables import nearest_comparables
 from domain.settings import Settings
 from infrastructure.config import load_env, redact, require
@@ -79,6 +80,7 @@ def run(repo: Repository) -> None:
                 print("LLM notu alınamadı:", type(e).__name__)
     sent = send_alerts(repo, token, strong, notes, comps=comps)
     for name, job in (("özet", lambda: send_daily_digest(repo, token)),
+                      ("sabah durumu", lambda: send_morning_status(repo)),
                       ("denetim", lambda: send_monthly_audit(repo, token, owner)),
                       ("kaynak sağlığı", lambda: (check_sources(repo), send_weekly_report(repo)))):
         try:

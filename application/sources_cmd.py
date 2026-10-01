@@ -53,7 +53,7 @@ def sources_report(repo: Repository, now: datetime | None = None) -> str:
         for platform, names in by.items():
             lines.append(f"• {platform} ({len(names)}): " + ", ".join(names[:8]) + (" …" if len(names) > 8 else ""))
         if "facebook" in by:
-            lines.append("ℹ️ Facebook için toplayıcı yok (çoğu grup kapalı; kapalı gruplara girmiyoruz).")
+            lines.append("ℹ️ Facebook: yalnız herkese açık gruplar taranır; kapalı gruplara girmiyoruz.")
     lines.append("\nKomutlar: /kaynak_ekle <instagram bağlantısı> · /kaynak_ac <ad> · /kaynak_kapat <ad> · /kaynak_seviye <ad> <golge|sari|yesil>")
     return "\n".join(lines)[:3900]
 
