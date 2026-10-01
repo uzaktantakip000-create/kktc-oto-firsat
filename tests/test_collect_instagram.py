@@ -44,10 +44,30 @@ def test_single_apify_run_for_all_sources_and_posts_routed_by_owner(monkeypatch)
                dict(id="B", name="B", url="https://www.instagram.com/acc_b/", cursor=None)]
     repo = FakeRepo()
     res = ci.collect_sources(repo, "tok", sources)
-    assert len(calls) == 1 and calls[0][0] == ["Acc_A", "acc_b"]
-    assert calls[0][1] <= "2026-09-30T10:00:00"  # en eski başlangıç
+    # imleci olan hesap ana çağrıda (son imleçten itibaren), hiç taranmamış hesap ayrı tek seferlik çağrıda (3 güne kadar)
+    assert [c[0] for c in calls] == [["Acc_A"], ["acc_b"]]
+    assert calls[0][1] == "2026-09-30T10:00:00" and calls[1][1] < calls[0][1]
     assert (res["A"].new, res["B"].new) == (1, 1)  # yeniden adlandırılmış hesabın gönderisi hiçbir kaynağa karışmaz
     assert set(repo.checked) == {"A", "B"}
+
+
+def test_next_run_asks_only_for_posts_after_previous_run_not_oldest_cursor(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ci, "fetch_posts", lambda token, usernames, newer_than, limit=20: calls.append((usernames, newer_than)) or [])
+    monkeypatch.setattr(ci, "gbp_rate", lambda c: 1.0)
+    repo = FakeRepo()
+    now = datetime.now(timezone.utc)
+    repo.state["ig_watermark"] = now.strftime("%Y-%m-%dT%H:%M:%S")  # az önce tarandı
+    old = dict(id="S", name="S", url="https://www.instagram.com/slow/", cursor="2026-09-30T10:00:00")  # yavaş hesap: eski imleç
+    ci.collect_sources(repo, "tok", [old])
+    assert calls[0][1] >= (now.replace(microsecond=0) - __import__("datetime").timedelta(minutes=25)).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def test_account_without_posts_gets_a_cursor_so_it_joins_the_main_group(monkeypatch):
+    monkeypatch.setattr(ci, "fetch_posts", lambda *a, **k: [])
+    repo = FakeRepo()
+    ci.collect_sources(repo, "tok", [dict(id="N", name="N", url="https://www.instagram.com/new/", cursor=None)])
+    assert repo.checked["N"] is not None
 
 
 def test_monthly_budget_blocks_collection():

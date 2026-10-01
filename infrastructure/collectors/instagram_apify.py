@@ -33,6 +33,7 @@ def fetch_posts(token: str, usernames: list[str], newer_than: str, limit: int = 
             "username": usernames,
             "resultsLimit": limit,
             "onlyPostsNewerThan": newer_than,
+            "skipPinnedPosts": True,  # sabitlenmiş eski gönderiler tarihten bağımsız gelir ve her çağrıda ücretlenir
             "dataDetailLevel": "basicData",
         },
         max_total_charge_usd=round(0.02 + 0.04 * len(usernames), 2),  # profil başına en fazla 20 gönderi ≈ $0.034

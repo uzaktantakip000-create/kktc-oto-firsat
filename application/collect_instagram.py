@@ -3,11 +3,12 @@ from datetime import datetime, timedelta, timezone
 
 from application.llm_reader import LlmReader, listing_fields
 from domain.caption_parser import is_sold_post, parse_caption, sold_ilan_no
-from infrastructure.collectors.instagram_apify import RawPost, fetch_posts, username_from_url
+from infrastructure.collectors.instagram_apify import PostList, RawPost, fetch_posts, username_from_url
 from infrastructure.db.repository import Repository
 from infrastructure.fx.frankfurter import gbp_rate
 
 
+OVERLAP_MIN = 20  # önceki turun sonundan bu kadar geriden başla (kaçan gönderi olmasın; bilinenler tekrar eklenmez)
 MONTHLY_BUDGET_USD = 8.0  # aylık Instagram (Apify) harcama tavanı; aşılırsa o ay toplama durur
 
 
@@ -65,11 +66,28 @@ def collect_sources(repo: Repository, apify_token: str, sources: list[dict], fir
     spent_month = float(repo.get_state(key, "0"))
     if spent_month >= MONTHLY_BUDGET_USD:
         raise RuntimeError(f"Instagram toplama aylık tavana ulaştı (${spent_month:.2f} / ${MONTHLY_BUDGET_USD:.0f})")
-    first_run = (datetime.now(timezone.utc) - timedelta(days=first_run_days)).strftime("%Y-%m-%d")
-    newer_than = max(min(s["cursor"] or first_run for s in sources), first_run)  # en fazla 3 gün geri (maliyet sınırı)
+    first_run = (now - timedelta(days=first_run_days)).strftime("%Y-%m-%d")
+    # Gönderi başına ücret var: her turda yalnızca bir ÖNCEKİ turdan sonrasını isteriz (en eski imleç değil: yavaş bir hesap
+    # tüm hesapların eski gönderilerini yeniden çektirir). Hiç taranmamış (imleçsiz) hesaplar ayrı, tek seferlik çağrı alır.
+    established = [s for s in sources if s["cursor"]]
+    fresh = [s for s in sources if not s["cursor"]]
+    watermark = repo.get_state("ig_watermark", "")
     names = {username_from_url(s["url"]).lower(): s for s in sources}
-    posts = fetch_posts(apify_token, [username_from_url(s["url"]) for s in sources], newer_than)
+    posts = PostList()
+    if established:
+        if watermark and watermark > first_run:
+            since = (datetime.strptime(watermark, "%Y-%m-%dT%H:%M:%S") - timedelta(minutes=OVERLAP_MIN)).strftime("%Y-%m-%dT%H:%M:%S")
+        else:
+            since = max(min(s["cursor"] for s in established), first_run)
+        got = fetch_posts(apify_token, [username_from_url(s["url"]) for s in established], since)
+        posts.extend(got)
+        posts.cost_usd += getattr(got, "cost_usd", 0.0)
+    if fresh:
+        got = fetch_posts(apify_token, [username_from_url(s["url"]) for s in fresh], first_run)
+        posts.extend(got)
+        posts.cost_usd += getattr(got, "cost_usd", 0.0)
     repo.set_state(key, f"{spent_month + getattr(posts, 'cost_usd', 0.0):.4f}")
+    repo.set_state("ig_watermark", now.strftime("%Y-%m-%dT%H:%M:%S"))  # Apify saatleri UTC
     by_source: dict[str, list[RawPost]] = {n: [] for n in names}
     for post in posts:
         if post.owner in by_source:
@@ -99,7 +117,7 @@ def collect_sources(repo: Repository, apify_token: str, sources: list[dict], fir
                 stats.needs_llm += not parsed
         repo.mark_checked(
             source["id"],
-            cursor=newest.strftime("%Y-%m-%dT%H:%M:%S") if newest else None,
+            cursor=newest.strftime("%Y-%m-%dT%H:%M:%S") if newest else (now.strftime("%Y-%m-%dT%H:%M:%S") if not source["cursor"] else None),
             last_post_at=newest,
             listings_7d=repo.count_recent(source["id"]),
         )
