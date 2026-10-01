@@ -1,0 +1,22 @@
+[project]
+name = "kktc-oto"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2",
+    "httpx",
+    "selectolax",
+    "psycopg[binary]>=3",
+    "python-telegram-bot>=21",
+    "apify-client",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+browser = ["scrapling[fetchers]"]
+
+[tool.setuptools]
+packages = []

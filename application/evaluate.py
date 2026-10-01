@@ -1,0 +1,87 @@
+from dataclasses import dataclass
+
+from domain.comparables import Market, find_market
+from domain.data_gate import below_cheap_quartile, data_gaps
+from domain.profit import Confidence, ProfitResult, Tier, evaluate_profit
+from domain.red_flags import blocking_flags, plate_flags, urgency_signals, warning_flags
+from domain.settings import Settings
+from infrastructure.db.repository import Repository
+
+
+@dataclass
+class Evaluated:
+    listing: dict
+    market: Market
+    profit: ProfitResult
+    blocking: list[str]
+    warnings: list[str]
+    urgency: list[str]
+
+
+def evaluate_new(repo: Repository, settings: Settings | None = None) -> list[Evaluated]:
+    """Henüz değerlendirilmemiş aktif ilanları değerlendirir. Emsali olmayanlar bir sonraki turda tekrar denenir."""
+    s = settings or Settings()
+    pool = repo.market_pool(days=s.comparable_window_days + 30)
+    results = []
+    for listing in repo.unevaluated_active():
+        price = float(listing["price_gbp"])
+        if not s.min_plausible_price_gbp <= price <= s.max_plausible_price_gbp:
+            # Eksik rakam/yanlış yazım olasılığı: değerlendirme kaydı atılır ama bildirim üretilmez
+            repo.save_evaluation(listing["id"], {"comparables_n": 0, "confidence": Confidence.NONE.value,
+                                                 "tier": Tier.NONE.value, "red_flags": ["fiyat_gecersiz"]})
+            continue
+        market = find_market(listing, pool, s)
+        if market is None:
+            continue
+        profit = evaluate_profit(float(listing["price_gbp"]), market.median_gbp, market.n, s)
+        text = (listing["raw_text"] or "") + " " + (listing["model"] or "")
+        blocking, warnings = blocking_flags(text), warning_flags(text)
+        gaps = data_gaps(listing, market, s)
+        tier = Tier.NONE if blocking else profit.tier
+        if tier is Tier.STRONG and not below_cheap_quartile(price, market):
+            gaps = gaps + ["ucuz_ceyrek_degil"]  # medyandan %20 ucuz ama benzerlerin en ucuz çeyreğinde değil: sıradan fiyat
+        plate = plate_flags(text)
+        if tier is Tier.STRONG and plate:
+            gaps = gaps + ["plaka_uyari"]
+        downgraded = tier is Tier.STRONG and bool(gaps)
+        if downgraded:  # eksik/şüpheli veriyle 🟢 yok: en fazla 🟡
+            tier = Tier.NEGOTIABLE
+        repo.save_evaluation(
+            listing["id"],
+            {
+                "comparables_n": market.n,
+                "market_median_gbp": round(market.median_gbp, 2),
+                "market_low_gbp": round(market.low_gbp, 2),
+                "market_high_gbp": round(market.high_gbp, 2),
+                "year_span": market.year_span,
+                "archived_share": round(market.archived_share, 3),
+                "exit_price_gbp": round(profit.exit_price_gbp, 2),
+                "profit_gbp": round(profit.profit_gbp, 2),
+                "profit_pct": round(profit.profit_pct * 100, 2),
+                "confidence": profit.confidence.value,
+                "tier": tier.value,
+                "red_flags": blocking + warnings + (gaps if downgraded else []),  # "bu yüzden 🟢 değil" sadece gerçekten düşürüldüyse
+            },
+        )
+        results.append(Evaluated(listing, market, ProfitResult(profit.exit_price_gbp, profit.profit_gbp,
+                                 profit.profit_pct, profit.confidence, tier), blocking, warnings,
+                                 urgency_signals(text)))
+    return results
+
+
+def pending_alerts(repo: Repository, hours: int = 36) -> list[Evaluated]:
+    """Gönderilmesi gereken 🟢 fırsatlar: yeni değerlendirilenler + daha önce gönderilemeyenler (hata, hız sınırı, yeni abone)."""
+    out = []
+    for r in repo.pending_strong(hours):
+        text = (r["raw_text"] or "") + " " + (r["model"] or "")
+        med = r["market_median_gbp"]
+        market = Market(r["comparables_n"], med, r["market_low_gbp"] or med, r["market_high_gbp"] or med,
+                        r["year_span"] or 1, r["archived_share"] or 0.0)
+        profit = ProfitResult(r["exit_price_gbp"], r["profit_gbp"], r["profit_pct"] / 100,
+                              Confidence(r["confidence"]), Tier.STRONG)
+        out.append(Evaluated(r, market, profit, [], list(r["red_flags"] or []), urgency_signals(text)))
+    return out
+
+
+def confidence_label(c: Confidence) -> str:
+    return {"yuksek": "YÜKSEK", "orta": "ORTA", "dusuk": "DÜŞÜK — kontrol et", "yok": "YOK"}[c.value]

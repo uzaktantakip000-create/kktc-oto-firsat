@@ -1,0 +1,95 @@
+from datetime import datetime, timedelta, timezone
+
+from domain.comparables import find_market, km_band
+
+NOW = datetime(2026, 10, 1, tzinfo=timezone.utc)
+
+
+def row(i, price, **kw):
+    base = dict(id=i, brand_norm="Toyota", model_norm="vitz", year=2015, km=80_000, steering="RHD",
+                transmission="otomatik", fuel="benzin", price_gbp=price, currency_guess=False,
+                first_seen_at=NOW - timedelta(days=10), is_active=True, duplicate_of=None)
+    return base | kw
+
+
+TARGET = row("t", 5000)
+
+
+def test_median_of_comparables():
+    pool = [row(i, p) for i, p in enumerate([6000, 6200, 6400, 6600, 6800])]
+    m = find_market(TARGET, pool, now=NOW)
+    assert m.n == 5 and m.median_gbp == 6400
+
+
+def test_lhd_never_mixed():
+    pool = [row(i, 9000, steering="LHD") for i in range(5)]
+    assert find_market(TARGET, pool, now=NOW) is None
+
+
+def test_too_old_and_guessed_currency_excluded():
+    pool = [row(1, 6000, first_seen_at=NOW - timedelta(days=200)), row(2, 6000, currency_guess=True),
+            row(3, 6000), row(4, 6100)]
+    assert find_market(TARGET, pool, now=NOW) is None  # sadece 2 geçerli emsal
+
+
+def test_widens_year_when_few():
+    pool = [row(1, 6000, year=2013), row(2, 6200, year=2017), row(3, 6400, year=2013)]
+    m = find_market(TARGET, pool, now=NOW)
+    assert m.n == 3 and m.year_span == 2
+
+
+def test_outlier_removed():
+    pool = [row(i, p) for i, p in enumerate([6000, 6100, 6200, 6300, 6400, 6500, 6600, 6700, 60000])]
+    assert find_market(TARGET, pool, now=NOW).high_gbp == 6700
+
+
+def test_km_band():
+    assert km_band(49_999) == 0 and km_band(50_000) == 1 and km_band(None) is None
+
+
+def test_age_uses_ref_date_not_first_seen():
+    # Sisteme yeni girmiş ama ilanın kendi tarihi eski: emsal sayılmaz
+    old = NOW - timedelta(days=200)
+    pool = [row(i, 6000 + i * 100, ref_date=old) for i in range(5)]
+    assert find_market(TARGET, pool, now=NOW) is None
+    fresh = [row(i, 6000 + i * 100, ref_date=NOW - timedelta(days=5)) for i in range(5)]
+    assert find_market(TARGET, fresh, now=NOW).n == 5
+
+
+def test_small_pool_typo_outlier_dropped():
+    pool = [row(i, p) for i, p in enumerate([600, 6000, 6200, 6400, 6600])]  # 600 = eksik rakam
+    m = find_market(TARGET, pool, now=NOW)
+    assert m.n == 4 and m.median_gbp == 6300
+
+
+def test_implausible_prices_never_comparable():
+    pool = [row(i, 15) for i in range(6)]
+    assert find_market(TARGET, pool, now=NOW) is None
+
+
+def test_nearest_comparables_picks_closest_year_and_km():
+    from domain.comparables import nearest_comparables
+    pool = [row(1, 6000, year=2015, km=79_000), row(2, 6200, year=2016, km=70_000), row(3, 6400, year=2014, km=90_000),
+            row(4, 6600, year=2015, km=60_000), row(5, 6800, year=2015, km=85_000)]
+    m = find_market(TARGET, pool, now=NOW)
+    near = nearest_comparables(TARGET, pool, m, k=2, now=NOW)
+    assert [r["id"] for r in near] == [1, 5]
+    assert m.median_km == 79_000
+
+
+def test_different_engine_sizes_not_mixed_but_unknown_engine_allowed():
+    from domain.engine import engine_liters
+    target = row("t", 5000, engine_l=1.6)
+    pool = [row(1, 14000, engine_l=3.0), row(2, 15000, engine_l=3.0), row(3, 16000, engine_l=3.0)]
+    assert find_market(target, pool, now=NOW) is None  # 340i'ler 316i'nın emsali değil
+    pool += [row(4, 6000, engine_l=1.6), row(5, 6100), row(6, 6200, engine_l=1.5)]
+    m = find_market(target, pool, now=NOW)
+    assert m.n == 3 and m.median_gbp == 6100
+    assert engine_liters("2.5 cc") == 2.5 and engine_liters("1600 cc") == 1.6 and engine_liters("1.5 L") == 1.5
+    assert engine_liters("Yok") is None and engine_liters(None) is None
+
+
+def test_engine_tolerance_is_inclusive_despite_float_rounding():
+    pool = [row(i, 6000 + i, engine_l=1.3) for i in range(3)]
+    assert find_market(row("t", 5000, engine_l=1.6), pool, now=NOW) is not None  # fark tam 0,3 L: emsal
+    assert find_market(row("t", 5000, engine_l=1.7), pool, now=NOW) is None  # 0,4 L: emsal değil

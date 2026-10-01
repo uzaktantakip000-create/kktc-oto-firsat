@@ -1,0 +1,7 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY pyproject.toml .
+RUN pip install --no-cache-dir .
+COPY . .
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "-m", "entrypoints.cron_collect", "instagram"]
