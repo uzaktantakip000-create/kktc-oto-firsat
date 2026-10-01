@@ -20,6 +20,53 @@ class Evaluated:
     checks: list[str] = field(default_factory=list)  # ✅ ile gösterilen doğrulama satırları
 
 
+@dataclass
+class Assessment:
+    market: Market
+    profit: ProfitResult  # tier: kuralların hepsinden geçtikten sonraki son seviye
+    blocking: list[str]
+    warnings: list[str]
+    gaps: list[str]  # 🟢 iken düşürülmesine yol açan eksikler (düşürülmediyse boş)
+    text: str
+
+
+def _apply_user_decisions(listing: dict, s: Settings, price: float, tier: Tier, gaps: list[str]) -> tuple[Tier, list[str]]:
+    """Kullanıcının Telegram'dan verdiği kararlar: istenmeyen marka / bütçe üstü / kara listedeki satıcı -> bildirim yok;
+    3 kez 'pas' denen model -> en fazla 🟡."""
+    brand, model = listing.get("brand_norm"), listing.get("model_norm")
+    if brand in s.blocked_brands or (s.max_buy_gbp and price > s.max_buy_gbp):
+        return Tier.NONE, gaps
+    if listing.get("seller_phone") and listing["seller_phone"] in s.blocked_phones:
+        return Tier.NONE, gaps
+    if tier is Tier.STRONG and f"{brand}|{model}" in s.muted_models:
+        gaps = gaps + ["sessiz_model"]
+    return tier, gaps
+
+
+def assess_listing(listing: dict, pool: list[dict], s: Settings) -> Assessment | None:
+    """Tek ilanın piyasa değerlendirmesi (toplayıcı ilanları ve kullanıcının ilettiği ilanlar aynı kuralları kullanır).
+    Emsal yoksa None."""
+    price = float(listing["price_gbp"])
+    market = find_market(listing, pool, s)
+    if market is None:
+        return None
+    profit = evaluate_profit(price, market.median_gbp, market.n, s)
+    text = (listing.get("raw_text") or "") + " " + (listing.get("model") or "")
+    blocking, warnings = blocking_flags(text), warning_flags(text)
+    gaps = data_gaps(listing, market, s)
+    tier = Tier.NONE if blocking else profit.tier
+    if tier is Tier.STRONG and not below_cheap_quartile(price, market):
+        gaps = gaps + ["ucuz_ceyrek_degil"]  # medyandan %20 ucuz ama benzerlerin en ucuz çeyreğinde değil: sıradan fiyat
+    if tier is Tier.STRONG and plate_flags(text):
+        gaps = gaps + ["plaka_uyari"]
+    tier, gaps = _apply_user_decisions(listing, s, price, tier, gaps)
+    downgraded = tier is Tier.STRONG and bool(gaps)
+    if downgraded:  # eksik/şüpheli veriyle 🟢 yok: en fazla 🟡
+        tier = Tier.NEGOTIABLE
+    final = ProfitResult(profit.exit_price_gbp, profit.profit_gbp, profit.profit_pct, profit.confidence, tier)
+    return Assessment(market, final, blocking, warnings, gaps if downgraded else [], text)
+
+
 def evaluate_new(repo: Repository, settings: Settings | None = None) -> list[Evaluated]:
     """Henüz değerlendirilmemiş aktif ilanları değerlendirir. Emsali olmayanlar bir sonraki turda tekrar denenir."""
     s = settings or Settings()
@@ -34,22 +81,10 @@ def evaluate_new(repo: Repository, settings: Settings | None = None) -> list[Eva
             repo.save_evaluation(listing["id"], {"comparables_n": 0, "confidence": Confidence.NONE.value,
                                                  "tier": Tier.NONE.value, "red_flags": ["fiyat_gecersiz"]})
             continue
-        market = find_market(listing, pool, s)
-        if market is None:
+        a = assess_listing(listing, pool, s)
+        if a is None:
             continue
-        profit = evaluate_profit(float(listing["price_gbp"]), market.median_gbp, market.n, s)
-        text = (listing["raw_text"] or "") + " " + (listing["model"] or "")
-        blocking, warnings = blocking_flags(text), warning_flags(text)
-        gaps = data_gaps(listing, market, s)
-        tier = Tier.NONE if blocking else profit.tier
-        if tier is Tier.STRONG and not below_cheap_quartile(price, market):
-            gaps = gaps + ["ucuz_ceyrek_degil"]  # medyandan %20 ucuz ama benzerlerin en ucuz çeyreğinde değil: sıradan fiyat
-        plate = plate_flags(text)
-        if tier is Tier.STRONG and plate:
-            gaps = gaps + ["plaka_uyari"]
-        downgraded = tier is Tier.STRONG and bool(gaps)
-        if downgraded:  # eksik/şüpheli veriyle 🟢 yok: en fazla 🟡
-            tier = Tier.NEGOTIABLE
+        market, profit = a.market, a.profit
         repo.save_evaluation(
             listing["id"],
             {
@@ -63,13 +98,11 @@ def evaluate_new(repo: Repository, settings: Settings | None = None) -> list[Eva
                 "profit_gbp": round(profit.profit_gbp, 2),
                 "profit_pct": round(profit.profit_pct * 100, 2),
                 "confidence": profit.confidence.value,
-                "tier": tier.value,
-                "red_flags": blocking + warnings + (gaps if downgraded else []),  # "bu yüzden 🟢 değil" sadece gerçekten düşürüldüyse
+                "tier": profit.tier.value,
+                "red_flags": a.blocking + a.warnings + a.gaps,  # "bu yüzden 🟢 değil" sadece gerçekten düşürüldüyse
             },
         )
-        results.append(Evaluated(listing, market, ProfitResult(profit.exit_price_gbp, profit.profit_gbp,
-                                 profit.profit_pct, profit.confidence, tier), blocking, warnings,
-                                 urgency_signals(text)))
+        results.append(Evaluated(listing, market, profit, a.blocking, a.warnings, urgency_signals(a.text)))
     return results
 
 

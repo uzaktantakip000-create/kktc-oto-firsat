@@ -11,6 +11,7 @@ from application import llm_reader
 from application.liveness import recheck_before_send
 from application.notify import is_fresh, send_alerts
 from application.report import send_weekly_report
+from application.settings_store import load_settings
 from application.source_guard import demote_failing_sources
 from application.status import send_morning_status
 from domain.comparables import nearest_comparables
@@ -56,7 +57,8 @@ def run(repo: Repository) -> None:
             print(f"saklama temizliği: telefon={phones} metin={texts}")
     except Exception as e:
         print("saklama temizliği başarısız:", type(e).__name__, redact(str(e))[:150])
-    evaluated = evaluate_new(repo)
+    settings = load_settings(repo)  # kullanıcının Telegram'dan verdiği kararlar
+    evaluated = evaluate_new(repo, settings)
     # Yeni 🟢'ler + önceki turlarda gönderilemeyenler (hata, hız sınırı, sonradan onaylanan abone)
     strong = [ev for ev in pending_alerts(repo)
               if is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
@@ -66,7 +68,7 @@ def run(repo: Repository) -> None:
 
     comps = {}
     if strong:
-        s = Settings()
+        s = settings
         pool = repo.market_pool(days=s.comparable_window_days + 30)
         for ev in strong:
             comps[ev.listing["id"]] = nearest_comparables(ev.listing, pool, ev.market, 3, s)

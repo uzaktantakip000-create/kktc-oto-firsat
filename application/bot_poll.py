@@ -1,11 +1,14 @@
 """Bot komutlarını Actions çalışması sırasında getUpdates ile işler (7/24 açık sunucu gerektirmez)."""
+import httpx
+
+from application import ad_check, llm_reader, settings_store, sources_cmd, status
 from application.notify import TelegramError, api
-from application import sources_cmd, status
 from infrastructure.db.repository import Repository
 
 FEEDBACK_ACTIONS = ("ilgilendim", "pas", "yanlis_fiyat", "satilmis", "kusurlu", "audit_dogru", "audit_yanlis")
 WELCOME_OWNER = ("Merhaba! Fırsat bildirimleri bu sohbete gelecek. /dur ile durdurabilir, /basla ile açabilirsin.\n"
-                 "Sistemin durumu için /durum, kaynak listesi için /kaynaklar.")
+                 "Sistemin durumu için /durum, kaynak listesi için /kaynaklar.\n"
+                 "Bir ilanı (yazı ya da ekran görüntüsü) bana gönderirsen piyasayla karşılaştırıp cevap veririm; cevap en geç ~15 dk içinde gelir.")
 
 
 def _answer(token: str, callback_id: str, text: str | None = None) -> None:
@@ -25,10 +28,24 @@ def _upsert_owner(repo: Repository, owner_chat_id: str) -> None:
     )
 
 
+def _download_photo(token: str, photo: list[dict]) -> bytes | None:
+    """Telegram fotoğrafını indirir (en büyük boyut). Çok büyük/indirilemezse None; hata metni token taşıyabilir: yazdırılmaz."""
+    best = photo[-1]
+    if (best.get("file_size") or 0) > ad_check.MAX_IMAGE_BYTES:
+        return None
+    try:
+        info = api(token, "getFile", file_id=best["file_id"])
+        r = httpx.get(f"https://api.telegram.org/file/bot{token}/{info['file_path']}", timeout=30)
+    except (TelegramError, httpx.HTTPError):
+        return None
+    return r.content if r.status_code == 200 and len(r.content) <= ad_check.MAX_IMAGE_BYTES else None
+
+
 def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None:
     chat_id = str(msg["chat"]["id"])
     name = " ".join(filter(None, [msg["from"].get("first_name"), msg["from"].get("last_name")])) or chat_id
     text = (msg.get("text") or "").strip().lower()
+    raw = (msg.get("text") or msg.get("caption") or "").strip()  # iletilen ilan: küçük harfe çevrilmemiş özgün metin
     row = repo.conn.execute("SELECT * FROM subscribers WHERE chat_id=%s", (chat_id,)).fetchone()
 
     if text.startswith("/start"):
@@ -49,6 +66,15 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
                     {"text": "⛔ Reddet", "callback_data": f"sub:reddedildi:{chat_id}"}]]})
     elif chat_id == owner and text.startswith("/durum"):
         api(token, "sendMessage", chat_id=chat_id, text=status.build_status(repo), disable_web_page_preview=True)
+    elif chat_id == owner and text.split()[:1] == ["/ayarlar"]:
+        api(token, "sendMessage", chat_id=chat_id, text=settings_store.describe(repo))
+    elif chat_id == owner and text.split()[:1] == ["/esik"]:
+        api(token, "sendMessage", chat_id=chat_id, text=settings_store.set_threshold(repo, text[len("/esik"):]))
+    elif chat_id == owner and text.split()[:1] == ["/butce"]:
+        api(token, "sendMessage", chat_id=chat_id, text=settings_store.set_budget(repo, text[len("/butce"):]))
+    elif chat_id == owner and text.split()[:1] in (["/istemiyorum"], ["/istiyorum"]):
+        cmd = text.split()[0]
+        api(token, "sendMessage", chat_id=chat_id, text=settings_store.block_brand(repo, text[len(cmd):], cmd == "/istemiyorum"))
     elif chat_id == owner and text.startswith("/kaynaklar"):
         api(token, "sendMessage", chat_id=chat_id, text=sources_cmd.sources_report(repo), disable_web_page_preview=True)
     elif chat_id == owner and text.startswith("/kaynak_ekle"):
@@ -65,6 +91,29 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
     elif text.split()[:1] == ["/basla"] and row and row["status"] == "durduruldu":
         repo.conn.execute("UPDATE subscribers SET status='onayli' WHERE chat_id=%s", (chat_id,))
         api(token, "sendMessage", chat_id=chat_id, text="Bildirimler açıldı.")
+    elif chat_id == owner and (msg.get("photo") or (raw and not raw.startswith("/"))):
+        # İlet → cevap al: kapalı gruptan/başka yerden gelen ilan; otomatik tarananlarla aynı kurallarla değerlendirilir
+        image = _download_photo(token, msg["photo"]) if msg.get("photo") else None
+        if msg.get("photo") and image is None:
+            reply = "Görüntüyü indiremedim (en çok 5 MB olmalı). İlanı yazı olarak da gönderebilirsin."
+        else:
+            reply = ad_check.handle(repo, raw, image, llm_reader.from_env(repo))
+        api(token, "sendMessage", chat_id=chat_id, text=reply[:3900], disable_web_page_preview=True)
+
+
+PAS_LIMIT = 3  # aynı modele bu kadar "pas" deyince özete almayı öneririm
+
+
+def _maybe_ask_mute(repo: Repository, token: str, owner: str, listing_id) -> None:
+    brand, model, n = repo.pas_count(listing_id)
+    key = f"{brand}|{model}"
+    if n < PAS_LIMIT or key in (repo.get_state("cfg:muted_models", "") or "").split(",") or repo.get_state(f"mute_asked:{key}"):
+        return
+    repo.set_state(f"mute_asked:{key}", "1")  # her model için bir kez sorulur
+    api(token, "sendMessage", chat_id=owner,
+        text=f"{brand} {model} ilanlarına {n} kez 'pas' dedin. Bu modeli anlık 🟢 yerine günlük özete alayım mı?",
+        reply_markup={"inline_keyboard": [[{"text": "✅ Evet, özete al", "callback_data": f"mute:evet:{key}"[:64]},
+                                           {"text": "❌ Hayır, olduğu gibi", "callback_data": f"mute:hayir:{key}"[:64]}]]})
 
 
 def _handle_callback(repo: Repository, token: str, owner: str, cb: dict) -> None:
@@ -75,6 +124,10 @@ def _handle_callback(repo: Repository, token: str, owner: str, cb: dict) -> None
         _answer(token, cb["id"], "Kaydedildi")
         if action == "onayli":
             api(token, "sendMessage", chat_id=target, text="✅ Onaylandın! Fırsat bildirimleri bu sohbete gelecek.")
+    elif kind == "mute" and sender == owner and action in ("evet", "hayir"):
+        _answer(token, cb["id"], "Kaydedildi")
+        api(token, "sendMessage", chat_id=owner,
+            text=settings_store.mute_model(repo, target) if action == "evet" else "Tamam, olduğu gibi devam.")
     elif kind == "fb" and action in FEEDBACK_ACTIONS:
         allowed = sender == owner or repo.conn.execute(
             "SELECT 1 FROM subscribers WHERE chat_id=%s AND status='onayli'", (sender,)).fetchone()
@@ -82,9 +135,15 @@ def _handle_callback(repo: Repository, token: str, owner: str, cb: dict) -> None
             _answer(token, cb["id"])
             return
         repo.conn.execute("INSERT INTO feedback (listing_id, action, note) VALUES (%s,%s,%s)", (target, action, f"chat:{sender}"))
-        if action == "satilmis" and sender == owner:  # tek abonenin yanlış basışı herkes için ilanı kapatmasın
-            repo.conn.execute("UPDATE listings SET is_active=FALSE WHERE id=%s", (target,))
-        _answer(token, cb["id"], "Not aldım 👍")
+        answer = "Not aldım 👍"
+        if sender == owner:  # tek abonenin yanlış basışı herkes için karar vermesin: kararları yalnızca sahip sisteme geri döner
+            if action == "satilmis":
+                repo.mark_sold(target)  # kapanır ve gerçek bir satış olarak emsale girer
+            elif action == "kusurlu" and repo.block_seller_of(target, "kusurlu"):
+                answer = "Not aldım. Bu satıcıdan bir daha 🟢 göndermeyeceğim."
+            elif action == "pas":
+                _maybe_ask_mute(repo, token, owner, target)
+        _answer(token, cb["id"], answer)
     else:
         _answer(token, cb["id"])
 

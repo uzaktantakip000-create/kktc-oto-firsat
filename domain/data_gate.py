@@ -10,6 +10,7 @@ GAP_LABELS = {
     "km_yuksek": "km emsallerden çok yüksek",
     "ucuz_ceyrek_degil": "fiyat benzer araçların en ucuz çeyreğinde değil",
     "plaka_uyari": "TR/yabancı plaka yazıyor",
+    "sessiz_model": "bu modele 3 kez 'pas' dedin (özete alındı)",
     "llm_okudu": "kural okuyamadı, yapay zekâ okudu (kontrol et)",
 }
 GAP_LABELS.update(MISMATCH_LABELS)

@@ -193,6 +193,38 @@ class Repository:
             [listing_id, *ev.values()],
         )
 
+    # --- kullanıcı kararları ---
+    def mark_sold(self, listing_id) -> None:
+        """Kullanıcı 'satılmış' dedi: ilan kapanır ve gerçek bir satış olarak işaretlenir (emsal olarak 'satıldı' sayılır)."""
+        self.conn.execute(
+            """UPDATE listings SET is_active=FALSE,
+                   urgency_signals = CASE WHEN 'satildi' = ANY(COALESCE(urgency_signals, '{}')) THEN urgency_signals
+                                          ELSE COALESCE(urgency_signals, '{}') || ARRAY['satildi'] END
+               WHERE id=%s""", (listing_id,))
+
+    def block_seller_of(self, listing_id, reason: str) -> bool:
+        """İlanın satıcı telefonunu kara listeye alır. Telefon yoksa False."""
+        row = self.conn.execute("SELECT seller_phone FROM listings WHERE id=%s", (listing_id,)).fetchone()
+        if not row or not row["seller_phone"]:
+            return False
+        self.conn.execute("INSERT INTO blocked_sellers (phone, reason) VALUES (%s,%s) ON CONFLICT (phone) DO NOTHING",
+                          (row["seller_phone"], reason))
+        return True
+
+    def blocked_phones(self) -> list[str]:
+        return [r["phone"] for r in self.conn.execute("SELECT phone FROM blocked_sellers").fetchall()]
+
+    def pas_count(self, listing_id, days: int = 90) -> tuple[str | None, str | None, int]:
+        """Bu ilanla aynı marka+modele son 'days' günde kaç ilanda 'pas' denmiş? (brand_norm, model_norm, adet)"""
+        row = self.conn.execute("SELECT brand_norm, model_norm FROM listings WHERE id=%s", (listing_id,)).fetchone()
+        if not row or not row["brand_norm"] or not row["model_norm"]:
+            return None, None, 0
+        n = self.conn.execute(
+            """SELECT count(DISTINCT f.listing_id) AS n FROM feedback f JOIN listings l ON l.id = f.listing_id
+               WHERE f.action='pas' AND l.brand_norm=%s AND l.model_norm=%s AND f.created_at > NOW() - make_interval(days => %s)""",
+            (row["brand_norm"], row["model_norm"], days)).fetchone()["n"]
+        return row["brand_norm"], row["model_norm"], n
+
     def downgrade_evaluation(self, listing_id, flags: list[str]) -> None:
         """Son değerlendirmeyi 🟢'den 🟡'ye düşürür ve nedenleri red_flags'e ekler (bağımsız okuma uyuşmadı)."""
         self.conn.execute(

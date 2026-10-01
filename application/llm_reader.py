@@ -18,8 +18,10 @@ UNCONFIRMED = "yapay zekâ fiyatı doğrulayamadı"
 
 
 class LlmReader:
-    def __init__(self, repo: Repository, api_key: str, model: str, call=openrouter.read_listing, now=None):
+    def __init__(self, repo: Repository, api_key: str, model: str, call=openrouter.read_listing, now=None,
+                 image_call=openrouter.read_image_text):
         self.repo, self.api_key, self.model, self._call, self._now = repo, api_key, model, call, now
+        self._image_call = image_call
         self.calls = 0
         self.last_error: str | None = None
 
@@ -47,6 +49,18 @@ class LlmReader:
         read = parse_llm_read(data, text)
         self.last_error = None if read else "çıktı geçersiz"
         return read
+
+
+    def read_image(self, image: bytes, mime: str = "image/jpeg") -> str | None:
+        """Ekran görüntüsündeki yazı (aynı günlük bütçeden). None = okunamadı; nedeni last_error'da."""
+        spent = self.spent_today()
+        if spent >= DAILY_BUDGET_USD:
+            self.last_error = "günlük yapay zekâ bütçesi doldu"
+            return None
+        text, err, cost = self._image_call(self.api_key, self.model, image, mime)
+        self.repo.set_state(self._spend_key(), f"{spent + cost:.5f}")
+        self.last_error = err or (None if text else "görselde okunur yazı yok")
+        return text or None
 
 
 def from_env(repo: Repository) -> LlmReader | None:

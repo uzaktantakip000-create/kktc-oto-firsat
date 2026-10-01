@@ -128,6 +128,23 @@ class CbConn:
 class CbRepo:
     def __init__(self):
         self.conn = CbConn()
+        self.state = {}
+
+    def mark_sold(self, listing_id):
+        self.conn.sql.append("UPDATE listings SET is_active (mark_sold)")
+
+    def block_seller_of(self, listing_id, reason):
+        self.conn.sql.append("BLOCK " + reason)
+        return True
+
+    def pas_count(self, listing_id):
+        return "Toyota", "vitz", 3
+
+    def get_state(self, k, default=None):
+        return self.state.get(k, default)
+
+    def set_state(self, k, v):
+        self.state[k] = v
 
 
 def test_sold_button_deactivates_only_for_owner(monkeypatch):
@@ -162,3 +179,24 @@ def test_digest_drops_items_that_do_not_fit_message():
         r["url"] = "https://x/" + "y" * 600
     text, shown = digest.build_digest(rows, NOW)
     assert len(text) <= digest.LIMIT and 0 < len(shown) < 8
+
+
+def test_owner_decisions_flow_back_into_the_system(monkeypatch):
+    sent = []
+    monkeypatch.setattr(bot_poll, "_answer", lambda *a, **k: None)
+    monkeypatch.setattr(bot_poll, "api", lambda token, method, **kw: sent.append((method, kw)))
+    repo = CbRepo()
+    bot_poll._handle_callback(repo, "t", "owner", {"id": "1", "from": {"id": "owner"}, "data": "fb:kusurlu:L1"})
+    assert "BLOCK kusurlu" in repo.conn.sql                       # kusurlu/sahte -> satıcı kara listede
+    repo = CbRepo()
+    bot_poll._handle_callback(repo, "t", "owner", {"id": "1", "from": {"id": "friend"}, "data": "fb:kusurlu:L1"})
+    assert not any(q.startswith("BLOCK") for q in repo.conn.sql)  # arkadaşın basışı kara liste yapmaz
+    repo = CbRepo()
+    bot_poll._handle_callback(repo, "t", "owner", {"id": "1", "from": {"id": "owner"}, "data": "fb:pas:L1"})
+    ask = [kw for m, kw in sent if m == "sendMessage"]
+    assert ask and "3 kez 'pas'" in ask[-1]["text"] and "mute:evet:Toyota|vitz" in str(ask[-1]["reply_markup"])
+    n = len(sent)
+    bot_poll._handle_callback(repo, "t", "owner", {"id": "1", "from": {"id": "owner"}, "data": "fb:pas:L2"})
+    assert len(sent) == n                                         # aynı model için ikinci kez sorulmaz
+    bot_poll._handle_callback(repo, "t", "owner", {"id": "2", "from": {"id": "owner"}, "data": "mute:evet:Toyota|vitz"})
+    assert repo.state["cfg:muted_models"] == "Toyota|vitz"

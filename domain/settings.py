@@ -21,3 +21,8 @@ class Settings(BaseModel):
     min_distinct_sellers: int = 3  # emsaller en az bu kadar farklı satıcıdan (telefon) gelmeli; tek galerinin fiyatı piyasa olmaz
     social_max_age_hours: int = 48  # Instagram/Facebook gönderisi bundan eskiyse anlık 🟢 gitmez (satılmış olabilir)
     low_confidence_can_alert: bool = False  # 3-7 emsalli ilan 🟢 olmaz (en fazla 🟡): küçük havuzlarda sahte fırsat çok çıkıyor
+    # --- kullanıcı kararları (Telegram komutlarıyla değişir, application/settings_store.py) ---
+    max_buy_gbp: float | None = None  # bundan pahalı ilan için bildirim yok (/butce)
+    blocked_brands: list[str] = []  # /istemiyorum <marka>
+    muted_models: list[str] = []  # "Marka|model": 3 kez "pas" denen model sadece özete düşer
+    blocked_phones: list[str] = []  # "kusurlu/sahte" denen ilanların satıcıları
