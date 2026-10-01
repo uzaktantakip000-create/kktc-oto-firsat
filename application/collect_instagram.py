@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from domain.caption_parser import parse_caption, sold_ilan_no
+from application.llm_reader import LlmReader, listing_fields
+from domain.caption_parser import is_sold_post, parse_caption, sold_ilan_no
 from infrastructure.collectors.instagram_apify import RawPost, fetch_posts, username_from_url
 from infrastructure.db.repository import Repository
 from infrastructure.fx.frankfurter import gbp_rate
@@ -16,6 +17,7 @@ class CollectStats:
     new: int = 0
     parsed: int = 0
     needs_llm: int = 0
+    llm_read: int = 0  # kural okuyamadı, yapay zekâ okudu (en fazla 🟡)
     sold: int = 0
 
 
@@ -52,7 +54,8 @@ def listing_data(post: RawPost) -> tuple[dict, bool]:
     }, True
 
 
-def collect_sources(repo: Repository, apify_token: str, sources: list[dict], first_run_days: int = 3) -> dict[str, CollectStats]:
+def collect_sources(repo: Repository, apify_token: str, sources: list[dict], first_run_days: int = 3,
+                    reader: LlmReader | None = None) -> dict[str, CollectStats]:
     """Tüm Instagram kaynaklarını tek Apify çalıştırmasında toplar (dakika ve maliyet tasarrufu).
     Başlangıç tarihi: en eski imleç (cursor); yeni eklenen kaynak varsa ilk-çalıştırma tarihi. Bilinen gönderiler atlanır."""
     if not sources:
@@ -76,10 +79,17 @@ def collect_sources(repo: Repository, apify_token: str, sources: list[dict], fir
         stats = result[source["name"]] = CollectStats()
         batch = by_source[name]
         stats.fetched = len(batch)
+        known = repo.known_item_ids(source["id"]) if reader else set()
         newest = max((p.posted_at for p in batch if p.posted_at), default=None)
         for post in batch:
             data, parsed = listing_data(post)
             no = sold_ilan_no(post.caption)
+            if (not parsed and reader and post.shortcode not in known and post.caption.strip()
+                    and not is_sold_post(post.caption)):
+                extra = listing_fields(reader.read(post.caption))  # sadece yeni ve okunamayan gönderi: bir kez ödenir
+                if extra:
+                    data = {**data, **extra}
+                    stats.llm_read += 1
             if no:  # "SATILDI" paylaşımı: yeni ilan değil; eski ilan kapatılır, bu gönderi aktif ilan sayılmaz
                 data = {**data, "is_active": False, "urgency_signals": ["satildi"]}
                 stats.sold += repo.deactivate_by_ilan_no(source["id"], no)

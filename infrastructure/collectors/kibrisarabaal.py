@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import httpx
+from urllib.parse import urlparse
 from selectolax.parser import HTMLParser
 
 from domain.engine import engine_liters
@@ -130,14 +131,23 @@ def parse_detail(html: str) -> dict | None:
 GONE = {"is_active": False, "urgency_signals": ["kaldirildi"]}
 
 
+def _is_listing_url(final_url: str, entry: Entry) -> bool:
+    """Kaldırılmış ilan ana sayfaya (ya da ilan numarası içermeyen bir adrese) yönlenir."""
+    path = urlparse(str(final_url)).path.strip("/")
+    return bool(path) and entry.item_id in path
+
+
 def fetch_detail(client: httpx.Client, entry: Entry) -> dict | None:
-    """None = geçici hata (tekrar denenir). GONE = ilan kaldırılmış (404/410 ya da ilan sayfası olmayan yönlendirme)."""
+    """None = geçici hata ya da OKUNAMADI (tekrar denenir; şablon değişirse sessizce 'kaldırıldı' yazılmaz).
+    GONE = ilan kaldırılmış: yalnızca 404/410 ya da ilan sayfası olmayan yönlendirme."""
     r = client.get(entry.url, timeout=30)
     if r.status_code in (404, 410):
         return dict(GONE)
     if r.status_code != 200:
         return None
-    return parse_detail(r.text) or dict(GONE)
+    if not _is_listing_url(r.url, entry):
+        return dict(GONE)
+    return parse_detail(r.text)
 
 
 def new_client() -> httpx.Client:

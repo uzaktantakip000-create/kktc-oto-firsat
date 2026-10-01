@@ -27,7 +27,8 @@ def test_too_few_comparables_no_alert():
 
 def test_low_confidence_needs_30_percent():
     assert evaluate_profit(7500, 10000, 5).tier is Tier.NONE  # %26.7
-    assert evaluate_profit(6500, 10000, 5).tier is Tier.STRONG  # %46
+    assert evaluate_profit(6500, 10000, 5).tier is Tier.NEGOTIABLE  # %46 ama az emsal (3-7): en fazla 🟡
+    assert evaluate_profit(6500, 10000, 5, Settings(low_confidence_can_alert=True)).tier is Tier.STRONG
 
 
 def test_absurd_price_not_green():

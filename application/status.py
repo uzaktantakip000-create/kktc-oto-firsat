@@ -77,8 +77,8 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
     lines += ["", f"📣 SANA HABER VEREN YERLER ({len(open_n)})", "Burada iyi bir fırsat görürsem hemen yazarım."]
     lines += [_source_line(r) for r in open_n]
     if shadow_n:
-        lines += ["", f"👀 SADECE İZLENEN YERLER ({len(shadow_n)})",
-                  "Buralara bakıyorum ama henüz haber vermiyorum. Önce fiyatları doğru okuyorum mu diye deniyorum."]
+        lines += ["", f"🗒 SADECE GÜNLÜK ÖZETE GİRENLER ({len(shadow_n)})",
+                  "Buralara bakıyorum ama anlık haber vermiyorum (sen kapattın ya da çok yanlış fiyat çıktığı için ben düşürdüm)."]
         lines += [_source_line(r) for r in shadow_n]
 
     try:

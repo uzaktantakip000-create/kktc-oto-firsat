@@ -22,10 +22,23 @@ def fold(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+# Araba olmayan kategoriler (KibrisArabaAl motosiklet, tekne, karavan, ticari vb. de listeler): değerlendirilmez, emsale girmez
+NON_CAR_BRANDS = {
+    "Yamaha", "Kamyon & Kamyonet", "Ticari Araclar", "Minibus & Midibus", "Cfmoto", "Harley Davidson", "Can-Am",
+    "Cekme Karavan", "ATV", "Yuki", "KTM", "Alice", "Balikci Teknesi", "Kawasaki", "Moto Karavan", "Scooter", "SYM",
+    "Vespa", "Volta", "Karavan", "Jet Ski", "Jawa", "Iveco", "Hino", "Abbey Karavan", "Surat Teknesi", "DAF", "Triumph",
+    "TVS", "Vento", "MAN", "Lobster", "Bisiklet", "Motolux", "Motoryat", "Tesla Marin", "Ducati", "Sanya", "Access", "Test",
+}
+
+
+def is_car_brand(brand_norm: str | None) -> bool:
+    return bool(brand_norm) and brand_norm not in NON_CAR_BRANDS
+
+
 def normalize_brand(brand: str | None) -> str | None:
     if not brand:
         return None
-    key = fold(brand)
+    key = re.sub(r"\s*-\s*", "-", fold(brand))  # "Mercedes - Benz" = "Mercedes-Benz"
     if key in _BRANDS:
         return _BRANDS[key]
     return key.upper() if len(key) <= 3 else key.title()

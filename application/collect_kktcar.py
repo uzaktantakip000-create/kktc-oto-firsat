@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 
+from application.safeguards import check_read_rate, sitemap_shrunk
 from infrastructure.collectors import kktcar
 from infrastructure.db.repository import Repository
 from infrastructure.fx.frankfurter import gbp_rate
@@ -63,8 +64,12 @@ def collect_kktcar(repo: Repository, source: dict, max_new: int = 25) -> KktcarS
             if repo.upsert_listing(source["id"], entry.slug, data):
                 stats.new += 1
         # Güvenlik: sitemap makul büyüklükteyse kaybolanları pasifleştir
-        if len(entries) > 500:
+        shrunk = sitemap_shrunk(repo, source["id"], len(entries))
+        if len(entries) > 500 and not shrunk:
             stats.deactivated = repo.deactivate_missing(source["id"], {e.slug for e in entries})
         refresh_active(repo, source, client, stats)
     repo.mark_checked(source["id"], cursor=None, last_post_at=None, listings_7d=repo.count_recent(source["id"]))
+    if shrunk:
+        raise RuntimeError(f"{source['name']}: site haritası şüpheli biçimde küçüldü ({len(entries)} ilan), pasifleştirme yapılmadı")
+    check_read_rate(source["name"], stats.fetched, stats.failed)
     return stats

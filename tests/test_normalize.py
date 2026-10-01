@@ -44,3 +44,9 @@ def test_land_rover_families_not_mixed():
     assert normalize_model("Land Rover", "Range Rover Vogue") == "range rover"
     assert normalize_model("Land Rover", "Discovery Sport") == "discovery sport"
     assert normalize_model("Land Rover", "Discovery 4") == "discovery"
+
+
+def test_brand_hyphen_spacing_and_non_car_categories():
+    from domain.normalize import is_car_brand, normalize_brand
+    assert normalize_brand("Mercedes - Benz") == normalize_brand("Mercedes-Benz") == normalize_brand("Mercedes") == "Mercedes-Benz"
+    assert is_car_brand("Toyota") and not is_car_brand("Yamaha") and not is_car_brand("Surat Teknesi") and not is_car_brand(None)

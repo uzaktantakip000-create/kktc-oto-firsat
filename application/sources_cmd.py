@@ -70,8 +70,8 @@ def add_instagram(repo: Repository, arg: str) -> str:
         return f"Bu kaynak zaten var: {exists['name']} ({exists['status']})."
     repo.conn.execute(
         "INSERT INTO sources (platform,name,url,kind,region,status,priority,discovered_by,alert_level) "
-        "VALUES ('instagram',%s,%s,'ilan_sayfasi','KKTC','aday',3,'kullanici','golge')", (user, url))
-    return (f"Eklendi: {user} (aday — henüz taranmıyor).\nTaramaya başlamak için: /kaynak_ac {user} (yeni kaynak 'gölge' başlar: bildirim yok, ölçülür)\n"
+        "VALUES ('instagram',%s,%s,'ilan_sayfasi','KKTC','aday',3,'kullanici','yesil')", (user, url))
+    return (f"Eklendi: {user} (aday — henüz taranmıyor).\nTaramaya başlamak için: /kaynak_ac {user} (yeni kaynak ilk günden anlık bildirim verir, mesajda 🆕 etiketi olur)\n"
             "Not: her Instagram hesabı Apify'da küçük bir ek maliyet getirir (tahmini birkaç dolar/ay; ilk haftada gerçek rakamı ölçeriz).")
 
 
@@ -120,5 +120,5 @@ def change_status(repo: Repository, part: str, to_status: str) -> str:
         new = "deneme" if "instagram.com" in src["url"] else "aktif"
     repo.conn.execute("UPDATE sources SET status=%s WHERE id=%s", (new, src["id"]))
     if new != "pasif":
-        return f"{src['name']} taramaya alındı ({new}). Bir sonraki turda taranır (Instagram en geç ~4 saat, siteler 2–6 saat)."
+        return f"{src['name']} taramaya alındı ({new}). Bir sonraki turda taranır (Instagram gündüz 15 dk, siteler 15-30 dk)."
     return f"{src['name']} kapatıldı (pasif). Eski ilanları kayıtlı kalır, yeni ilan çekilmez."

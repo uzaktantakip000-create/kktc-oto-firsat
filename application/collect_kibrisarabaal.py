@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from application.safeguards import check_read_rate, sitemap_shrunk
 from infrastructure.collectors import kibrisarabaal
 from infrastructure.db.repository import Repository
 from infrastructure.fx.frankfurter import gbp_rate
@@ -45,7 +46,11 @@ def collect_kibrisarabaal(repo: Repository, source: dict, max_new: int = 10) -> 
             data["photo_urls"] = []
             if repo.upsert_listing(source["id"], entry.item_id, data):
                 stats.new += 1
-        if len(entries) > 500:  # sitemap makul büyüklükteyse kaybolan (kaldırılan) ilanları pasifleştir
+        shrunk = sitemap_shrunk(repo, source["id"], len(entries))
+        if len(entries) > 500 and not shrunk:  # sitemap makul büyüklükteyse kaybolan (kaldırılan) ilanları pasifleştir
             stats.deactivated += repo.deactivate_missing(source["id"], {e.item_id for e in entries})
     repo.mark_checked(source["id"], cursor=None, last_post_at=None, listings_7d=repo.count_recent(source["id"]))
+    if shrunk:
+        raise RuntimeError(f"{source['name']}: site haritası şüpheli biçimde küçüldü ({len(entries)} ilan), pasifleştirme yapılmadı")
+    check_read_rate(source["name"], stats.fetched, stats.failed)
     return stats

@@ -2,6 +2,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
+from application.llm_reader import LlmReader, listing_fields
 from domain.freetext_parser import diagnose, parse_freetext
 from infrastructure.collectors import facebook_groups
 from infrastructure.collectors.facebook_groups import RawGroupPost
@@ -19,6 +20,7 @@ class FbStats:
     new: int = 0
     skipped: int = 0  # ilan değil / fiyat-yıl-marka belirsiz: HİÇBİR ŞEY saklanmaz
     spent_usd: float = 0.0
+    llm_read: int = 0  # kural okuyamadı (fiyat/yıl yazım biçimi), yapay zekâ okudu (en fazla 🟡)
     reasons: dict[str, int] = field(default_factory=dict)  # ilan sayılmayan gönderilerin nedeni (sayaç)
 
 
@@ -44,6 +46,19 @@ def listing_data(post: RawGroupPost, source: dict) -> dict | None:
     }
 
 
+LLM_RETRY = ("yil_yok", "fiyat_yok")  # marka var ama kural yıl/fiyatı okuyamadı; başka nedenler (marka yok, araç değil) LLM'e gitmez
+
+
+def llm_listing_data(post: RawGroupPost, source: dict, reader: LlmReader) -> dict | None:
+    fields = listing_fields(reader.read(post.text))
+    if fields is None:
+        return None
+    if fields["steering"] is None:
+        fields["steering"] = group_default_steering(source)
+    return {"url": post.url, "posted_at": post.posted_at, "raw_text": post.text, "photo_urls": [],
+            "currency_guess": False, "negotiable": False} | fields
+
+
 def _month_key(now: datetime) -> str:
     return f"fb_spend:{now:%Y-%m}"
 
@@ -64,7 +79,8 @@ def _count_funnel(repo: Repository, result: dict[str, FbStats], now: datetime) -
 
 
 def collect_facebook_groups(repo: Repository, apify_token: str, sources: list[dict],
-                            fetch=facebook_groups.fetch_group_posts, now: datetime | None = None) -> dict[str, FbStats]:
+                            fetch=facebook_groups.fetch_group_posts, now: datetime | None = None,
+                            reader: LlmReader | None = None) -> dict[str, FbStats]:
     now = now or datetime.now(timezone.utc)
     if not sources:
         return {}
@@ -78,6 +94,7 @@ def collect_facebook_groups(repo: Repository, apify_token: str, sources: list[di
     posts, spent, _rows = fetch(apify_token, list(by_url), hours, MAX_ITEMS_PER_GROUP)
     repo.set_state(key, f"{spent_month + spent:.4f}")
     result = {s["name"]: FbStats() for s in sources}
+    known = {s["id"]: repo.known_item_ids(s["id"]) for s in sources} if reader else {}
     newest: dict[str, datetime] = {}
     for post in posts:
         source = by_url.get(post.group_url)
@@ -89,10 +106,15 @@ def collect_facebook_groups(repo: Repository, apify_token: str, sources: list[di
             newest[source["name"]] = post.posted_at
         data = listing_data(post, source)
         if data is None:
-            st.skipped += 1
             why = diagnose(post.text)
-            st.reasons[why] = st.reasons.get(why, 0) + 1
-            continue
+            if reader and why in LLM_RETRY and post.post_id not in known.get(source["id"], ()):  # araç gönderisi ama kural okuyamadı: yapay zekâ bir kez dener
+                data = llm_listing_data(post, source, reader)
+                if data:
+                    st.llm_read += 1
+            if data is None:
+                st.skipped += 1
+                st.reasons[why] = st.reasons.get(why, 0) + 1
+                continue
         if repo.upsert_listing(source["id"], post.post_id, data):
             st.new += 1
     _count_funnel(repo, result, now)

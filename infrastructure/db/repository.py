@@ -74,6 +74,7 @@ class Repository:
                       currency_guess, first_seen_at, is_active, duplicate_of, url, seller_phone, urgency_signals,
                       COALESCE(posted_at, data_as_of, first_seen_at) AS ref_date
                FROM listings WHERE price_gbp IS NOT NULL AND brand_norm IS NOT NULL
+                 AND COALESCE(extraction_by, '') <> 'llm'  -- yapay zekâ okuması emsal olmaz
                  AND COALESCE(posted_at, data_as_of, first_seen_at) > NOW() - make_interval(days => %s)
                  AND NOT EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = listings.id
                                  AND f.action IN ('yanlis_fiyat','kusurlu','audit_yanlis'))""",
@@ -192,10 +193,18 @@ class Repository:
             [listing_id, *ev.values()],
         )
 
+    def downgrade_evaluation(self, listing_id, flags: list[str]) -> None:
+        """Son değerlendirmeyi 🟢'den 🟡'ye düşürür ve nedenleri red_flags'e ekler (bağımsız okuma uyuşmadı)."""
+        self.conn.execute(
+            """UPDATE evaluations SET tier='pazarlik', red_flags = COALESCE(red_flags, '{}') || %s::text[]
+               WHERE id = (SELECT id FROM evaluations WHERE listing_id=%s ORDER BY evaluated_at DESC LIMIT 1)""",
+            (flags, listing_id),
+        )
+
     def pending_strong(self, hours: int = 36) -> list[dict]:
         """Son 'hours' saatte 🟢 değerlendirilmiş, ama onaylı abonelerden en az birine henüz gitmemiş ilanlar."""
         return self.conn.execute(
-            """SELECT l.*, l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform,
+            """SELECT l.*, l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform, s.created_at AS source_created_at,
                       e.comparables_n, e.market_median_gbp::float8 AS market_median_gbp,
                       e.market_low_gbp::float8 AS market_low_gbp, e.market_high_gbp::float8 AS market_high_gbp,
                       e.exit_price_gbp::float8 AS exit_price_gbp, e.profit_gbp::float8 AS profit_gbp,
@@ -226,7 +235,7 @@ class Repository:
                WHERE ((e.tier = 'pazarlik' AND s.alert_level IN ('yesil','sari')) OR (e.tier = 'guclu' AND s.alert_level = 'sari')
                       OR (e.tier = 'guclu' AND s.alert_level = 'yesil' AND s.platform IN ('instagram','facebook')
                           AND l.posted_at < NOW() - interval '48 hours'))  -- 48 saati geçen sosyal 🟢: anlık değil, özette
-                 AND e.confidence IN ('yuksek','orta') AND l.is_active AND l.duplicate_of IS NULL
+                 AND e.confidence IN ('yuksek','orta','dusuk') AND l.is_active AND l.duplicate_of IS NULL
                  AND e.evaluated_at > NOW() - make_interval(hours => %s)
                  AND (l.first_seen_at > NOW() - make_interval(hours => %s)
                       OR EXISTS (SELECT 1 FROM listing_history h WHERE h.listing_id = l.id AND h.field = 'price_gbp'
@@ -259,6 +268,23 @@ class Repository:
                WHERE (platform IN ('instagram','facebook') AND status IN ('aktif','deneme') AND (platform = 'instagram' OR url LIKE '%/groups/%'))
                   OR (platform = 'web' AND status = 'aktif' AND (url LIKE '%kktcar.com%' OR url LIKE '%kktcarabam.com%' OR url LIKE '%kibrisarabaal.com%'))"""
         ).fetchall()
+
+    def sources_failing_feedback(self, window: int = 10, max_bad: int = 3) -> list[dict]:
+        """Anlık bildirim veren kaynaklardan, SON 'window' 🟢'sinin en az 'max_bad' tanesine 'yanlış fiyat/kusurlu' denenler."""
+        return self.conn.execute(
+            """SELECT sid AS id, name, count(*) AS n, count(*) FILTER (WHERE bad) AS bad_n FROM (
+                   SELECT s.id AS sid, s.name, l.id AS lid,
+                          EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = l.id AND f.action IN ('yanlis_fiyat','kusurlu')) AS bad,
+                          ROW_NUMBER() OVER (PARTITION BY s.id ORDER BY MAX(a.sent_at) DESC) AS rn
+                   FROM alerts a JOIN listings l ON l.id = a.listing_id JOIN sources s ON s.id = l.source_id
+                   WHERE a.tier = 'guclu' AND s.alert_level = 'yesil'
+                   GROUP BY s.id, s.name, l.id) t
+               WHERE rn <= %s GROUP BY sid, name HAVING count(*) FILTER (WHERE bad) >= %s""",
+            (window, max_bad),
+        ).fetchall()
+
+    def set_alert_level(self, source_id, level: str) -> None:
+        self.conn.execute("UPDATE sources SET alert_level=%s WHERE id=%s", (level, source_id))
 
     def alert_recent(self, key: str, hours: int) -> bool:
         """Aynı uyarı 'hours' saat içinde gönderildi mi? (uyarı tekrarlarını sınırlar)"""

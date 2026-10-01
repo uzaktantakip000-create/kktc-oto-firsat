@@ -60,6 +60,9 @@ def evaluate_profit(
     # Düşük güvende sadece kâr >= %30 ise bildirim
     if confidence is Confidence.LOW and pct < s.low_confidence_min_profit:
         tier = Tier.NONE
+    # Az emsalle (3-7) 🟢 verilmez: küçük havuzlarda medyan oynak, ölçülen sahte fırsatlar çoğunlukla burada
+    if confidence is Confidence.LOW and tier is Tier.STRONG and not s.low_confidence_can_alert:
+        tier = Tier.NEGOTIABLE
     # Küçük araçlarda %20 az para eder: asgari net kâr yoksa 🟢 verilmez (🟡 olarak kalır)
     if tier is Tier.STRONG and profit < s.min_strong_profit_gbp:
         tier = Tier.NEGOTIABLE

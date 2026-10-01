@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from apify_client import ApifyClient
 
@@ -36,6 +36,7 @@ def fetch_posts(token: str, usernames: list[str], newer_than: str, limit: int = 
             "dataDetailLevel": "basicData",
         },
         max_total_charge_usd=round(0.02 + 0.04 * len(usernames), 2),  # profil başına en fazla 20 gönderi ≈ $0.034
+        run_timeout=timedelta(minutes=8),  # takılan çalıştırma tüm turu (ve bildirimleri) bekletmesin
         logger=None,
     )
     if run is None:

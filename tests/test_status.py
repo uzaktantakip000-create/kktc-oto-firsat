@@ -49,7 +49,7 @@ def test_status_counts_and_marks():
     repo = FakeRepo([src("KKTCar"), src("IG", "instagram", "https://instagram.com/a", "deneme", "golge", hours=9),
                      src("Yasak", status_="erisim_reddediyor"), src("Aday", status_="aday")])
     text = status.build_status(repo, NOW)
-    assert "SANA HABER VEREN YERLER (1)" in text and "SADECE İZLENEN YERLER (1)" in text
+    assert "SANA HABER VEREN YERLER (1)" in text and "SADECE GÜNLÜK ÖZETE GİRENLER (1)" in text
     assert "⚠️ 1 yerde gecikme" in text and "⚠️ GECİKMİŞ — Instagram: IG" in text  # IG 9 saattir yok (sınır 6)
     assert "12:05" in text and "%40" in text and "basışların: 3" in text
     assert "Facebook $1.50" in text and "Yasak" not in text and "Aday" not in text

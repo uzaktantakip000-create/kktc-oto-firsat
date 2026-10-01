@@ -32,6 +32,9 @@ class FakeRepo:
     def count_recent(self, source_id):
         return 0
 
+    def known_item_ids(self, source_id):
+        return {i for (sid, i) in self.rows if sid == source_id}
+
 
 NOW = datetime(2026, 10, 1, 20, tzinfo=timezone.utc)
 SOURCES = [dict(id="G1", name="Kktc Sol Direksiyon Araba Pazari", url=GROUP + "/", last_checked_at=None)]

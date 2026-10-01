@@ -1,8 +1,9 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from domain.comparables import Market, find_market
 from domain.data_gate import below_cheap_quartile, data_gaps
 from domain.profit import Confidence, ProfitResult, Tier, evaluate_profit
+from domain.normalize import is_car_brand
 from domain.red_flags import blocking_flags, plate_flags, urgency_signals, warning_flags
 from domain.settings import Settings
 from infrastructure.db.repository import Repository
@@ -16,14 +17,17 @@ class Evaluated:
     blocking: list[str]
     warnings: list[str]
     urgency: list[str]
+    checks: list[str] = field(default_factory=list)  # ✅ ile gösterilen doğrulama satırları
 
 
 def evaluate_new(repo: Repository, settings: Settings | None = None) -> list[Evaluated]:
     """Henüz değerlendirilmemiş aktif ilanları değerlendirir. Emsali olmayanlar bir sonraki turda tekrar denenir."""
     s = settings or Settings()
-    pool = repo.market_pool(days=s.comparable_window_days + 30)
+    pool = [r for r in repo.market_pool(days=s.comparable_window_days + 30) if is_car_brand(r.get("brand_norm"))]
     results = []
     for listing in repo.unevaluated_active():
+        if not is_car_brand(listing.get("brand_norm")):
+            continue  # motosiklet/tekne/karavan/ticari: bu sistem otomobil içindir
         price = float(listing["price_gbp"])
         if not s.min_plausible_price_gbp <= price <= s.max_plausible_price_gbp:
             # Eksik rakam/yanlış yazım olasılığı: değerlendirme kaydı atılır ama bildirim üretilmez

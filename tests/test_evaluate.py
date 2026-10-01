@@ -28,7 +28,7 @@ def car(i, price, **kw):
     return base | kw
 
 
-POOL = [car(f"p{i}", p) for i, p in enumerate([8000, 8200, 8400, 8600, 8800])]
+POOL = [car(f"p{i}", p) for i, p in enumerate([8000, 8200, 8400, 8600, 8800, 9000, 9200, 9400])]  # 8 emsal = orta güven (3-7 emsalde 🟢 verilmez)
 
 
 def test_cheap_known_steering_is_strong():
@@ -74,7 +74,7 @@ def test_missing_model_never_strong():
 
 
 def test_km_far_above_comparables_never_strong():
-    pool = [car(f"p{i}", 8000 + i * 100, km=60_000) for i in range(5)]  # hepsi 60 bin km
+    pool = [car(f"p{i}", 8000 + i * 100, km=60_000) for i in range(8)]  # hepsi 60 bin km
     repo = FakeRepo([car("t", 5000, km=98_000)], pool)  # aynı km bandı (50-100 bin) ama +%63
     (ev,) = evaluate_new(repo)
     assert ev.market.median_km == 60_000
@@ -82,7 +82,7 @@ def test_km_far_above_comparables_never_strong():
 
 
 def test_similar_km_stays_strong():
-    pool = [car(f"p{i}", 8000 + i * 100, km=60_000) for i in range(5)]
+    pool = [car(f"p{i}", 8000 + i * 100, km=60_000) for i in range(8)]
     repo = FakeRepo([car("t", 5000, km=70_000)], pool)
     (ev,) = evaluate_new(repo)
     assert ev.profit.tier is Tier.STRONG

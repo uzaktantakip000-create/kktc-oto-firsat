@@ -20,3 +20,4 @@ class Settings(BaseModel):
     active_max_age_days: int = 60  # aktif ama 60 günden uzun süredir yayında duran ilan satılamamıştır: emsal sayılmaz
     min_distinct_sellers: int = 3  # emsaller en az bu kadar farklı satıcıdan (telefon) gelmeli; tek galerinin fiyatı piyasa olmaz
     social_max_age_hours: int = 48  # Instagram/Facebook gönderisi bundan eskiyse anlık 🟢 gitmez (satılmış olabilir)
+    low_confidence_can_alert: bool = False  # 3-7 emsalli ilan 🟢 olmaz (en fazla 🟡): küçük havuzlarda sahte fırsat çok çıkıyor

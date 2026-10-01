@@ -10,6 +10,7 @@ from domain.red_flags import customs_stated
 from domain.settings import Settings
 from infrastructure.db.repository import Repository
 
+NEW_SOURCE_DAYS = 14  # kaynak bu günden gençse mesajda 🆕 etiketi
 SOCIAL = ("instagram", "facebook")
 CURRENCY_NAMES = {"GBP": "STG", "TRY": "TL", "EUR": "EUR", "USD": "USD"}
 API = "https://api.telegram.org/bot{token}/{method}"
@@ -51,8 +52,12 @@ def format_alert(ev: Evaluated, note: dict | None = None, comps: list[dict] | No
     ]
     if l["currency_guess"]:
         lines.append(f"⚠️ Para birimi yazmıyordu, {CURRENCY_NAMES.get(l['currency'], l['currency'])} varsayıldı")
+    created = l.get("source_created_at")
+    if created and (datetime.now(timezone.utc) - created).days < NEW_SOURCE_DAYS:
+        lines.append(f"🆕 Yeni kaynak ({l['source_name']}) — henüz tanışıyoruz, fiyatı ve ilanı kendin de kontrol et")
     if ev.urgency:
         lines.append("🔥 " + ", ".join(ev.urgency))
+    lines += ev.checks
     if ev.warnings:
         lines.append("⚠️ Dikkat: " + ", ".join(ev.warnings))
     if m.archived_share > 0.6:

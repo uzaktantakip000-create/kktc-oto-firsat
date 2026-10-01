@@ -98,3 +98,14 @@ def test_alert_shows_age_and_asks_about_customs():
     assert "5 saat önce paylaşıldı" in text and "Gümrük/plaka/evrak durumu ilanda yazmıyor" in text
     e.listing["raw_text"] = "Gümrüklü araç"
     assert "Gümrük/plaka/evrak durumu" not in notify.format_alert(e)
+
+
+def test_suspicious_low_km_is_treated_as_unknown():
+    from domain.comparables import effective_km
+    assert effective_km({"km": 370, "year": 2016}) is None   # 370 = 370.000 yazılmış olabilir
+    assert effective_km({"km": 370, "year": 2026}) == 370     # yeni araçta makul
+    assert effective_km({"km": 98000, "year": 2012}) == 98000
+    from domain.data_gate import data_gaps
+    from domain.comparables import Market
+    m = Market(8, 10000, 9000, 11000, 1, 0.0, 120000, 9500)
+    assert "km_yok" in data_gaps({"km": 370, "year": 2016, "model_norm": "x"}, m)

@@ -6,6 +6,7 @@ from application.collect_instagram import collect_sources
 from application.collect_kibrisarabaal import collect_kibrisarabaal
 from application.collect_kktcar import collect_kktcar
 from application.collect_kktcarabam import collect_kktcarabam
+from application import llm_reader
 from application.health import report_collect_errors
 from infrastructure.config import load_env, redact, require
 from infrastructure.fx import frankfurter
@@ -20,8 +21,10 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
     if job == "instagram":
         token = require("APIFY_TOKEN")
         try:
-            for name, st in collect_sources(repo, token, repo.sources("instagram", ("aktif", "deneme"))).items():
-                print(f"{name}: çekilen={st.fetched} yeni={st.new} parser={st.parsed} llm_gerek={st.needs_llm} satıldı={st.sold}")
+            for name, st in collect_sources(repo, token, repo.sources("instagram", ("aktif", "deneme")),
+                                           reader=llm_reader.from_env(repo)).items():
+                print(f"{name}: çekilen={st.fetched} yeni={st.new} parser={st.parsed} llm_okudu={st.llm_read} "
+                      f"okunamadı={st.needs_llm - st.llm_read} satıldı={st.sold}")
         except Exception as e:
             msg = redact(f"{type(e).__name__}: {str(e)[:150]}")
             print(f"Instagram (toplu): HATA {msg}")
@@ -31,8 +34,9 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
         token = require("APIFY_TOKEN")
         sources = [x for x in repo.sources("facebook", ("aktif", "deneme")) if "/groups/" in x["url"]]
         try:
-            for name, st in collect_facebook_groups(repo, token, sources).items():
-                print(f"{name}: çekilen={st.fetched} yeni={st.new} ilan_değil={st.skipped} tahmini_maliyet=${st.spent_usd}")
+            for name, st in collect_facebook_groups(repo, token, sources, reader=llm_reader.from_env(repo)).items():
+                print(f"{name}: çekilen={st.fetched} yeni={st.new} llm_okudu={st.llm_read} ilan_değil={st.skipped} "
+                      f"tahmini_maliyet=${st.spent_usd}")
         except Exception as e:
             msg = redact(f"{type(e).__name__}: {str(e)[:150]}")
             print(f"Facebook grupları: HATA {msg}")

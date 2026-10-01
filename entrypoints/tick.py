@@ -17,9 +17,12 @@ DAY_UTC = range(5, 21)  # KKTC 08:00–24:00
 SCHEDULE = {
     "kktcar": (15, 30),
     "kibrisarabaal": (15, 30),
-    "instagram": (30, 120),  # özel satıcılar burada; gönderi başına ücret olduğu için sık bakmak ucuz
+    "instagram": (15, 120),  # özel satıcılar burada; ücret gönderi başına ve imleçle yalnızca yeni gönderi çekilir: sık bakmak ucuz
     "facebook": (120, 480),  # gündüz 2 saatte bir, gece 8 saatte bir (kullanıcı kararı); gönderi başına ücret, aylık tavan collect_facebook'ta
 }
+
+
+SLOW_JOBS = ("instagram", "facebook")  # Apify çalıştırmaları dakikalar sürebilir
 
 
 def due_jobs(now: datetime, last_runs: dict[str, datetime | None]) -> list[str]:
@@ -63,16 +66,25 @@ def main() -> None:
     jobs = due_jobs(now, {j: _parse(repo.get_state(f"tick:{j}")) for j in SCHEDULE})
     print("sırası gelen işler:", jobs or "yok")
     errors: list[tuple[str, str]] = []
-    for job in jobs:
-        repo.set_state(f"tick:{job}", now.isoformat())  # hata olsa da hemen tekrar denenmesin
-        try:
-            errors += cron_collect.run(job, repo)
-        except Exception as e:  # bir kaynağın çökmesi diğerlerini ve değerlendirmeyi durdurmasın
-            msg = redact(f"{type(e).__name__}: {str(e)[:150]}")
-            print(f"{job}: HATA {msg}")
-            errors.append((job, msg))
-    report_collect_errors(repo, errors)
+
+    def run_jobs(batch: list[str]) -> None:
+        for job in batch:
+            repo.set_state(f"tick:{job}", now.isoformat())  # hata olsa da hemen tekrar denenmesin
+            try:
+                errors.extend(cron_collect.run(job, repo))
+            except Exception as e:  # bir kaynağın çökmesi diğerlerini ve değerlendirmeyi durdurmasın
+                msg = redact(f"{type(e).__name__}: {str(e)[:150]}")
+                print(f"{job}: HATA {msg}")
+                errors.append((job, msg))
+
+    # Hızlı siteler önce toplanıp değerlendirilir: yavaş bir Apify turu site bildirimlerini geciktirmesin
+    run_jobs([j for j in jobs if j not in SLOW_JOBS])
     cron_evaluate.main()
+    slow = [j for j in jobs if j in SLOW_JOBS]
+    if slow:
+        run_jobs(slow)
+        cron_evaluate.main()
+    report_collect_errors(repo, errors)
 
 
 if __name__ == "__main__":

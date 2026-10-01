@@ -7,9 +7,11 @@ from application.dedupe import mark_duplicates
 from application.digest import send_daily_digest
 from application.evaluate import evaluate_new, pending_alerts
 from application.health import check_sources
+from application import llm_reader
 from application.liveness import recheck_before_send
 from application.notify import is_fresh, send_alerts
 from application.report import send_weekly_report
+from application.source_guard import demote_failing_sources
 from application.status import send_morning_status
 from domain.comparables import nearest_comparables
 from domain.settings import Settings
@@ -60,6 +62,7 @@ def run(repo: Repository) -> None:
               if is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
                       platform=ev.listing.get("platform"))]
     strong = recheck_before_send(repo, strong)  # satılmış/fiyatı değişmiş ilan gönderilmez
+    strong = llm_reader.verify_candidates(repo, llm_reader.from_env(repo), strong)  # sosyal medya 🟢'sini bağımsız okut; uyuşmazsa 🟡
 
     comps = {}
     if strong:
@@ -79,7 +82,8 @@ def run(repo: Repository) -> None:
             except Exception as e:  # LLM hatası bildirimi engellemesin
                 print("LLM notu alınamadı:", type(e).__name__)
     sent = send_alerts(repo, token, strong, notes, comps=comps)
-    for name, job in (("özet", lambda: send_daily_digest(repo, token)),
+    for name, job in (("kaynak düşürme", lambda: demote_failing_sources(repo)),
+                      ("özet", lambda: send_daily_digest(repo, token)),
                       ("sabah durumu", lambda: send_morning_status(repo)),
                       ("denetim", lambda: send_monthly_audit(repo, token, owner)),
                       ("kaynak sağlığı", lambda: (check_sources(repo), send_weekly_report(repo)))):

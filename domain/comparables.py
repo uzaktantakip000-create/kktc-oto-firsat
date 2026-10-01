@@ -1,11 +1,19 @@
 """Emsal seçimi ve piyasa medyanı (DEGER_MOTORU.md bölüm 2)."""
 import statistics
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from domain.settings import Settings
 
 KM_BANDS = [(0, 50_000), (50_000, 100_000), (100_000, 150_000), (150_000, 10**9)]
+
+
+def effective_km(row: dict) -> int | None:
+    """İlandaki km makul mü? Eski araçta 1.000 km altı çoğunlukla 'bin' yazılmış/eksik rakam (370 = 370.000): bilinmiyor say."""
+    km, year = row.get("km"), row.get("year")
+    if km is not None and km < 1000 and year is not None and year <= date.today().year - 2:
+        return None
+    return km
 
 
 def km_band(km: int | None) -> int | None:
@@ -52,7 +60,7 @@ def _is_comparable(target: dict, row: dict, year_span: int, widen_km: bool, now:
     te, re_ = target.get("engine_l"), row.get("engine_l")
     if te is not None and re_ is not None and round(abs(float(te) - float(re_)), 1) > s.engine_tolerance_l:
         return False  # 316i ile 340i gibi farklı motorlar aynı havuzda karışmaz (bilinmeyen motor elenmez)
-    tb, rb = km_band(target.get("km")), km_band(row.get("km"))
+    tb, rb = km_band(effective_km(target)), km_band(effective_km(row))
     if tb is not None and rb is not None and abs(tb - rb) > (1 if widen_km else 0):
         return False
     # İlanın gerçek tarihi (yayın/arşiv); yoksa sisteme giriş tarihi. Geçmiş doldurma "bugün görüldü" sayılmaz.
@@ -95,7 +103,7 @@ def find_market(target: dict, pool: list[dict], settings: Settings | None = None
             if len({seller_key(r) for r in used}) < s.min_distinct_sellers:
                 continue  # emsallerin çoğu tek satıcıdan: piyasa fiyatı sayılmaz, havuzu genişlet
             archived = sum(1 for r in used if not r.get("is_active", True)) / len(used)
-            kms = [r["km"] for r in used if r.get("km")]
+            kms = [k for k in (effective_km(r) for r in used) if k]
             median_km = int(statistics.median(kms)) if len(kms) >= 3 else None
             p25 = statistics.quantiles(prices, n=4, method="inclusive")[0] if len(prices) >= 2 else min(prices)
             return Market(len(prices), statistics.median(prices), min(prices), max(prices), span, archived, median_km, p25)
@@ -113,8 +121,9 @@ def nearest_comparables(target: dict, pool: list[dict], market: Market, k: int =
 
     def distance(r: dict) -> float:
         d = abs((r["year"] or 0) - (target["year"] or 0))
-        if target.get("km") and r.get("km"):
-            d += abs(r["km"] - target["km"]) / 30_000
+        tk, rk = effective_km(target), effective_km(r)
+        if tk and rk:
+            d += abs(rk - tk) / 30_000
         else:
             d += 1.0  # km bilinmiyorsa kesin yakın sayılmaz
         return d + abs(r["price_gbp"] - market.median_gbp) / max(market.median_gbp, 1) * 0.1

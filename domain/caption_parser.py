@@ -25,6 +25,10 @@ _SOLD = re.compile(r"sat[ıi]ld[ıi]|sat[ıi]lm[ıi][şs]", re.I)
 _ILAN_NO = re.compile(r"[İI]lan\s*(?:Numaras[ıi]|No)\s*[:.]?\s*\W{0,4}(\d{3,8})", re.I)
 
 
+def is_sold_post(caption: str) -> bool:
+    return bool(caption and _SOLD.search(caption))
+
+
 def sold_ilan_no(caption: str) -> str | None:
     """Sayfanın "SATILDI" paylaşımı hangi ilan numarasını kapatıyor? (aynı sayfanın eski ilanı satıldı sayılır)"""
     if not caption or not _SOLD.search(caption):

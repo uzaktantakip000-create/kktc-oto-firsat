@@ -26,3 +26,35 @@ def test_description_in_raw_text():
 
 def test_not_a_listing_page():
     assert parse_detail("<html><body>Ana sayfa</body></html>") is None
+
+
+class _Resp:
+    def __init__(self, status, url, text=""):
+        self.status_code, self.url, self.text = status, url, text
+
+
+class _Client:
+    def __init__(self, resp):
+        self.resp = resp
+
+    def get(self, url, timeout=30):
+        return self.resp
+
+
+def _entry():
+    from infrastructure.collectors.kibrisarabaal import Entry
+    return Entry("https://kibrisarabaal.com/ilan/12345-mazda-demio", "12345", None)
+
+
+def test_removed_ad_redirecting_home_is_gone():
+    from infrastructure.collectors.kibrisarabaal import fetch_detail
+    assert fetch_detail(_Client(_Resp(200, "https://kibrisarabaal.com/", HTML)), _entry())["urgency_signals"] == ["kaldirildi"]
+    assert fetch_detail(_Client(_Resp(404, "x")), _entry())["is_active"] is False
+
+
+def test_template_change_is_unreadable_not_gone():
+    from infrastructure.collectors.kibrisarabaal import fetch_detail
+    same = "https://kibrisarabaal.com/ilan/12345-mazda-demio"
+    assert fetch_detail(_Client(_Resp(200, same, "<html><body>yeni tasarım</body></html>")), _entry()) is None  # tekrar denenir
+    assert fetch_detail(_Client(_Resp(200, same, HTML)), _entry())["brand"] == "Mazda"
+    assert fetch_detail(_Client(_Resp(503, same)), _entry()) is None
