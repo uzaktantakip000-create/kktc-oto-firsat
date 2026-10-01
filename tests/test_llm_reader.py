@@ -123,3 +123,12 @@ def test_facebook_post_with_two_prices_is_read_by_llm_and_marked(monkeypatch):
     res = cf.collect_facebook_groups(repo, "t", src, fetch=fetch, now=now, reader=reader(repo, data=good))
     row = repo.rows[("G1", "1")]
     assert res["G"].llm_read == 1 and row["extraction_by"] == "llm" and row["price_gbp"] == 7500
+
+
+def test_free_text_site_listing_is_verified_but_structured_site_is_not():
+    repo = FakeRepo()
+    r = reader(repo)
+    structured = ev("web", extraction_by="parser")
+    assert len(lr.verify_candidates(repo, r, [structured])) == 1 and r.seen == []        # JSON-LD'li site: gerek yok
+    free = ev("web", extraction_by="parser_serbest", price_amount=4500)                  # serbest metin: okutulur, fiyat uyuşmuyor
+    assert lr.verify_candidates(repo, r, [free]) == [] and len(r.seen) == 1

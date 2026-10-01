@@ -13,6 +13,7 @@ from infrastructure.llm import openrouter
 
 DAILY_BUDGET_USD = 0.15  # günlük yapay zekâ okuma harcama tavanı (aylık ≈ $4.5)
 SOCIAL = ("instagram", "facebook")
+FREE_TEXT = ("parser_serbest", "llm")  # serbest metinden okunan ilan (site olsa bile) bağımsız okumadan geçer
 UNCHECKED = "yapay zekâ kontrolü yapılamadı (kontrol edilmedi)"
 UNCONFIRMED = "yapay zekâ fiyatı doğrulayamadı"
 
@@ -88,7 +89,8 @@ def verify_candidates(repo: Repository, reader: LlmReader | None, evs: list[Eval
     Okuma yapılamazsa ilan notla birlikte gider (hız kaybolmasın)."""
     kept = []
     for ev in evs:
-        if ev.listing.get("platform") not in SOCIAL or reader is None:
+        free = ev.listing.get("platform") in SOCIAL or ev.listing.get("extraction_by") in FREE_TEXT
+        if not free or reader is None:
             kept.append(ev)
             continue
         cached = repo.get_state(f"verify:{ev.listing['id']}")
