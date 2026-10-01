@@ -26,3 +26,24 @@ class Settings(BaseModel):
     blocked_brands: list[str] = []  # /istemiyorum <marka>
     muted_models: list[str] = []  # "Marka|model": 3 kez "pas" denen model sadece özete düşer
     blocked_phones: list[str] = []  # "kusurlu/sahte" denen ilanların satıcıları
+    # --- değer tablosu ve 🟠 tahmini fırsat (domain/price_book.py) ---
+    estimated_alerts: bool = True  # /tahmini ac|kapat
+    est_z: float = 1.53  # alt sınır = değer·exp(−z·σ); geriye dönük testte %80 aralığın gerçek karşılığı
+    est_min_discount_to_lower: float = 0.80  # 🟠: fiyat ≤ alt sınırın bu katı (≈ değerden %30+ ucuz)
+    est_min_value_ratio: float = 0.40  # fiyat değerin bundan azıysa yazım hatası say
+    est_a_agree_ratio: float = 0.85  # emsal varsa fiyat ≤ emsal medyanının bu katı (eğri emsalle çelişmesin)
+    est_min_curve_sellers: int = 5
+    est_max_sigma: float = 0.30  # eğri dağınıklığı (ln) bundan büyükse eğri yok
+    est_brand_max_sigma: float = 0.40
+    est_curve_min_rows: int = 8
+    est_curve_min_years: int = 3
+    ridge_lambda: float = 0.5
+    owner_sale_weight: float = 3.0  # sahibin girdiği gerçek satış eğride kaç ilan sayılır
+    book_max_per_seller: int = 2  # bir satıcı bir satıra en fazla bu kadar ilanla girer (galeri ağırlığı)
+    book_settled_min_n: int = 5
+    book_settled_min_sellers: int = 3
+    book_change_limit: float = 0.15  # gece değişim bundan büyükse satır şüpheli olur
+    book_confirm_tolerance: float = 0.07  # bekleyen değer ertesi gece bu kadar yakın kalırsa onay sayılır
+    book_confirm_nights: int = 2
+    book_self_check_max_error: float = 0.25  # öz-kontrolde model ortanca hatası bundan büyükse 🟠 kapanır
+    est_burst_limit: int = 15  # tek turda bundan fazla 🟠 çıkarsa arıza say: tek özet mesaj

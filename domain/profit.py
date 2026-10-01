@@ -7,6 +7,7 @@ from domain.settings import Settings
 class Tier(StrEnum):
     STRONG = "guclu"
     NEGOTIABLE = "pazarlik"
+    ESTIMATED = "tahmini"  # 🟠 değer tablosu/eğrisine göre ≥%30 ucuz, az emsal (domain/price_book.py)
     NONE = "yok"
 
 
