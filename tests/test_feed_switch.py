@@ -186,7 +186,8 @@ def test_status_shows_pause_not_delay():
     text = status.build_status(StatusRepo({"tick:last": "2026-10-02T09:00:00+00:00"}), NOW)
     assert "✅ Sistem çalışıyor" in text and "gecikme" not in text.lower()  # sessizlik arıza gibi görünmez
     assert "📴 Instagram/Facebook duraklatıldı. Siteler çalışıyor; ilanı bota iletebilirsin." in text
-    assert "📴 Instagram: IG · duraklatıldı" in text
+    assert "📴 DURAKLATILANLAR" in text and "Instagram (1 kaynak)" in text and "IG ·" not in text  # kaynaklar tek satırda
+    assert "SANA HABER VEREN YERLER (1)" in text  # duraklatılmış olan "haber verenler"e sayılmaz
     assert "Apify'a harcanan" not in text  # ikisi de kapalıyken harcama satırı yok
 
 

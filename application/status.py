@@ -30,16 +30,12 @@ def _money(repo: Repository, prefix: str, now: datetime) -> float:
         return 0.0
 
 
-def _is_late(r: dict, paused: dict | None = None) -> bool:
-    if r["platform"] in (paused or {}):
-        return False  # duraklatılmış sosyal kaynak gecikmiş sayılmaz
+def _is_late(r: dict) -> bool:
     return r["hours_since_check"] is None or r["hours_since_check"] > source_limit_hours(r)
 
 
-def _source_line(r: dict, paused: dict | None = None) -> str:
+def _source_line(r: dict) -> str:
     kind = KIND.get(r["platform"], r["platform"])
-    if r["platform"] in (paused or {}):
-        return f"📴 {kind}: {r['name']} · duraklatıldı"
     mark = "⚠️ GECİKMİŞ —" if _is_late(r) else "✅"
     return f"{mark} {kind}: {r['name']} · {_ago(r['hours_since_check'])} · {r['fresh_n']} güncel ilan, bugün {r['new_24h']} yeni"
 
@@ -55,11 +51,13 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
                       AND COALESCE(l.posted_at, l.first_seen_at) > NOW() - interval '24 hours') AS new_24h
            FROM sources s ORDER BY s.platform, s.name"""
     ).fetchall()
-    scanned = [r for r in rows if r["status"] in ("aktif", "deneme")]
+    paused = feed_switch.paused_platforms(repo, now)
+    scanned_all = [r for r in rows if r["status"] in ("aktif", "deneme")]
+    paused_n = [r for r in scanned_all if r["platform"] in paused]  # duraklatılmış sosyal kaynaklar: tek satırda özetlenir
+    scanned = [r for r in scanned_all if r["platform"] not in paused]
     open_n = [r for r in scanned if r["alert_level"] == "yesil"]
     shadow_n = [r for r in scanned if r["alert_level"] != "yesil"]
-    paused = feed_switch.paused_platforms(repo, now)
-    late = [r for r in scanned if _is_late(r, paused)]
+    late = [r for r in scanned if _is_late(r)]
 
     sent24 = repo.conn.execute(
         "SELECT count(DISTINCT listing_id) FILTER (WHERE tier='guclu') AS strong FROM alerts "
@@ -84,12 +82,16 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
         lines.append(f"Son kontrol saat {datetime.fromisoformat(last_tick).astimezone(KKTC):%H:%M}. Her 15 dakikada bir tekrar bakılır.")
 
     lines += ["", f"📣 SANA HABER VEREN YERLER ({len(open_n)})", "Burada iyi bir fırsat görürsem hemen yazarım."]
-    lines += [_source_line(r, paused) for r in open_n]
+    lines += [_source_line(r) for r in open_n]
     if shadow_n:
         lines += ["", f"🗒 BİLDİRİM VERMEYENLER ({len(shadow_n)})",
                   "Buralara bakıyorum ama haber vermiyorum, sadece ölçüyorum (sen kapattın ya da çok yanlış fiyat çıktığı için ben düşürdüm)."]
-        lines += [_source_line(r, paused) for r in shadow_n]
+        lines += [_source_line(r) for r in shadow_n]
 
+    if paused_n:
+        counts = {p: sum(1 for r in paused_n if r["platform"] == p) for p in feed_switch.PLATFORMS}
+        lines += ["", "📴 DURAKLATILANLAR", "Bakmıyorum, alarm da vermiyorum: "
+                  + ", ".join(f"{KIND[p]} ({n} kaynak)" for p, n in counts.items() if n) + "."]
     try:
         fun = json.loads(repo.get_state(f"fb_funnel:{now:%Y-%m}", "{}") or "{}")
     except ValueError:
