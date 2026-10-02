@@ -150,7 +150,7 @@ def test_inactive_or_unknown_source_counter_ignored(monkeypatch):
 
 def test_collective_job_alarms(monkeypatch):
     out = sent_messages(monkeypatch)
-    repo = FakeRepo(state={"fail:Facebook grupları": "4", "failmsg:Facebook grupları": "RuntimeError: Apify süresi doldu"})
+    repo = FakeRepo(state={"feed:facebook": "on", "fail:Facebook grupları": "4", "failmsg:Facebook grupları": "RuntimeError: Apify süresi doldu"})
     assert source_alarm.check_source_alarms(repo) == 1
     assert "Facebook grupları 4 turdur okunamıyor (hata: RuntimeError)" in out[0]
 

@@ -1,4 +1,5 @@
-"""🟡 pazarlıklı fırsatların günde bir özeti (anlık bildirim yok: gürültü olmasın)."""
+"""🟡 pazarlıklı fırsatların günde bir özeti. KAPALI (ENABLED=False, sahibin kararı 02.10.2026: bot yalnız 🟢 ve 🟠 yollar);
+kod, kapatma geri alınabilsin diye duruyor."""
 from datetime import datetime, timezone
 
 from application.evaluate import confidence_label
@@ -11,6 +12,7 @@ MAX_ITEMS = 8
 SEND_HOURS_UTC = range(5, 20)  # KKTC saatiyle 08:00–23:00 arası; geceleyin gönderme
 REPEAT_HOURS = 20
 LIMIT = 3900  # Telegram mesaj sınırı 4096
+ENABLED = False  # 🟡 özet kapalı
 
 
 def _item(i: int, r: dict) -> str:
@@ -53,6 +55,8 @@ def build_digest(rows: list[dict], now: datetime | None = None) -> tuple[str, li
 
 
 def send_daily_digest(repo: Repository, token: str, now: datetime | None = None) -> int:
+    if not ENABLED:
+        return 0
     now = now or datetime.now(timezone.utc)
     if now.hour not in SEND_HOURS_UTC or repo.alert_recent("digest", REPEAT_HOURS):
         return 0

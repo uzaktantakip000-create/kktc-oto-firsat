@@ -91,7 +91,7 @@ def block_brand(repo: Repository, arg: str, block: bool) -> str:
 
 def mute_model(repo: Repository, brand_model: str) -> str:
     _save_list(repo, "cfg:muted_models", _list(repo, "cfg:muted_models") + [brand_model])
-    return f"Tamam. {brand_model.replace('|', ' ')} için anlık 🟢 yerine günlük özete yazacağım."
+    return f"Tamam. {brand_model.replace('|', ' ')} için 🟢 bildirimlerini kapattım (🟡 özet de kapalı)."
 
 
 def describe(repo: Repository) -> str:
@@ -102,7 +102,7 @@ def describe(repo: Repository) -> str:
         f"• 🟢 kâr eşiği: %{s.strong_threshold * 100:.0f}" + ("" if s.strong_threshold == d.strong_threshold else f" (varsayılan %{d.strong_threshold * 100:.0f})") + "  → /esik 25",
         f"• Alış bütçesi sınırı: " + (f"£{s.max_buy_gbp:,.0f}".replace(",", ".") if s.max_buy_gbp else "yok") + "  → /butce 20000",
         "• İstenmeyen markalar: " + (", ".join(s.blocked_brands) or "yok") + "  → /istemiyorum fiat",
-        "• Sadece özete düşen modeller: " + (", ".join(m.replace("|", " ") for m in s.muted_models) or "yok") + "  (3 kez 'pas' deyince sorarım)",
+        "• Sessize aldığın modeller: " + (", ".join(m.replace("|", " ") for m in s.muted_models) or "yok") + "  (3 kez 'pas' deyince sorarım)",
         f"• Kara listedeki satıcı: {len(s.blocked_phones)}  ('kusurlu/sahte' dediklerin)",
         "• 🟠 Tahmini fırsat bildirimleri (az emsal, değer eğrisiyle): " + ("açık" if s.estimated_alerts else "kapalı")
         + ("" if s.est_min_discount_to_lower == d.est_min_discount_to_lower

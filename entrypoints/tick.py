@@ -5,7 +5,8 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from application.health import report_collect_errors
+from application import feed_switch
+from application.health import notify_owner, report_collect_errors
 from application.notify import TelegramError, api
 from entrypoints import cron_collect, cron_evaluate
 from infrastructure.config import load_env, redact, require
@@ -106,6 +107,14 @@ def main() -> None:
     repo.set_state("tick:last", now.isoformat())
 
     jobs = due_jobs(now, {j: _parse(repo.get_state(f"tick:{j}")) for j in SCHEDULE})
+    paused = feed_switch.paused_platforms(repo, now)
+    if paused:
+        print("duraklatılmış sosyal kaynaklar:", ", ".join(f"{p} ({why})" for p, why in paused.items()))
+        try:
+            feed_switch.announce_pause(repo, notify_owner, now)  # sahibe tek mesaj (aynı durum için tekrar yazmaz)
+        except Exception as e:  # duyuru toplamayı engellemesin
+            print("duraklatma duyurusu gönderilemedi:", type(e).__name__)
+        jobs = [j for j in jobs if j not in paused]
     print("sırası gelen işler:", jobs or "yok")
     errors: list[tuple[str, str]] = []
 

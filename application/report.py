@@ -59,10 +59,10 @@ def _learned(repo: Repository) -> list[str]:
     ids = repo.alert_marks_since("guard:")
     names = repo.source_names(ids) if ids else []
     if names:
-        out.append("anlık bildirimden günlük özete aldığım kaynaklar: " + ", ".join(names))
+        out.append("bildirimden çıkardığım kaynaklar: " + ", ".join(names))
     muted = [m for m in (repo.get_state("cfg:muted_models", "") or "").split(",") if m]
     if muted:
-        out.append(f"günlük özete aldığın model sayısı (toplam): {len(muted)}")
+        out.append(f"sessize aldığın model sayısı (toplam): {len(muted)}")
     return out
 
 

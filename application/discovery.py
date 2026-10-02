@@ -32,8 +32,8 @@ def send_discovery(repo: Repository, token: str, owner: str) -> int:
              {"text": "Geç", "callback_data": f"disc:gec:{c['handle']}"[:64]}] for c in found]
     try:
         api(token, "sendMessage", chat_id=owner, reply_markup={"inline_keyboard": rows},
-            text="🔎 Bu hafta ilanlarda sık anılan Instagram hesapları buldum. Eklersen anlık bildirim verir "
-                 "(mesajlarda 🆕 etiketi olur). İstediklerini ekle:")
+            text="🔎 Bu hafta ilanlarda sık anılan Instagram hesapları buldum. Eklersen anlık bildirim verir. "
+                 "İstediklerini ekle:")
     except TelegramError:
         return 0
     repo.mark_alerted("discovery")

@@ -41,7 +41,7 @@ def sources_report(repo: Repository, now: datetime | None = None) -> str:
     lines = [f"📡 Taranan kaynaklar ({len(scanned)})"]
     for r in scanned:
         extra = f" · %{r['parsed_pct']} okundu" if r["parsed_pct"] is not None and r["platform"] == "instagram" else ""
-        level = {"golge": " 🌑gölge: bildirim yok", "sari": " 🟡sarı: sadece özet"}.get(r["alert_level"], "")
+        level = {"golge": " 🌑gölge: bildirim yok", "sari": " 🟡sarı: bildirim yok (özet kapalı)"}.get(r["alert_level"], "")
         lines.append(f"{STATUS_ICON.get(r['status'], '•')} {r['name']} ({r['platform']}){level} · son tarama {_ago(r['last_checked_at'], now)} · "
                      f"7 günde {r['listings_7d'] or 0} yeni · {r['active_n']} aktif · 30 günde {r['strong_30d']} 🟢{extra}")
     waiting = [r for r in rows if r["status"] not in ("aktif", "deneme")]
@@ -71,7 +71,7 @@ def add_instagram(repo: Repository, arg: str) -> str:
     repo.conn.execute(
         "INSERT INTO sources (platform,name,url,kind,region,status,priority,discovered_by,alert_level) "
         "VALUES ('instagram',%s,%s,'ilan_sayfasi','KKTC','aday',3,'kullanici','yesil')", (user, url))
-    return (f"Eklendi: {user} (aday — henüz taranmıyor).\nTaramaya başlamak için: /kaynak_ac {user} (yeni kaynak ilk günden anlık bildirim verir, mesajda 🆕 etiketi olur)\n"
+    return (f"Eklendi: {user} (aday — henüz taranmıyor).\nTaramaya başlamak için: /kaynak_ac {user} (yeni kaynak ilk günden anlık bildirim verir)\n"
             "Not: her Instagram hesabı Apify'da küçük bir ek maliyet getirir (tahmini birkaç dolar/ay; ilk haftada gerçek rakamı ölçeriz).")
 
 
@@ -89,7 +89,7 @@ def _find(repo: Repository, part: str, statuses: tuple[str, ...], platform: str 
                              (list(statuses), platform, platform, f"%{like}%", f"%{like}%")).fetchall()
 
 
-LEVELS = {"golge": "gölge (bildirim yok, sadece ölçülür)", "sari": "sarı (sadece günlük özet)", "yesil": "yeşil (tam yetki, anlık 🟢)"}
+LEVELS = {"golge": "gölge (bildirim yok, sadece ölçülür)", "sari": "sarı (bildirim yok; 🟡 özet kapalı)", "yesil": "yeşil (tam yetki, anlık 🟢)"}
 
 
 def set_level(repo: Repository, arg: str) -> str:

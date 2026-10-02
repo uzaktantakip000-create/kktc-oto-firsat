@@ -8,7 +8,7 @@ from application.dedupe import mark_duplicates
 from application.digest import send_daily_digest
 from application.discovery import send_discovery
 from application.estimate_guard import guard_estimates
-from application.evaluate import evaluate_new, load_book, pending_alerts
+from application.evaluate import apply_send_floor, evaluate_new, load_book, pending_alerts
 from application.health import check_sources
 from application import llm_reader
 from application.liveness import recheck_before_send
@@ -95,6 +95,7 @@ def run(repo: Repository) -> None:
     strong = [ev for ev in pending_alerts(repo, book=book)
               if is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
                       platform=ev.listing.get("platform"))]
+    strong = apply_send_floor(strong, "🟢")  # emsal < 8 ise gitmez (okuma/canlılık maliyeti de harcanmaz)
     strong = recheck_before_send(repo, strong)  # satılmış/fiyatı değişmiş ilan gönderilmez
     strong = llm_reader.verify_candidates(repo, llm_reader.from_env(repo), strong)  # sosyal medya 🟢'sini bağımsız okut; uyuşmazsa 🟡
 
@@ -122,6 +123,7 @@ def run(repo: Repository) -> None:
             est = [ev for ev in pending_alerts(repo, tier=Tier.ESTIMATED, book=book)
                    if is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
                                platform=ev.listing.get("platform"))]
+            est = apply_send_floor(est, "🟠")  # 🟠 doğrudan emsal < 8 iken doğar: dürüst 🟠 KONTROL ET gelene kadar gönderilmez
             est = recheck_before_send(repo, est)
             est = llm_reader.verify_candidates(repo, llm_reader.from_env(repo), est)  # her kaynakta ikinci okuma + gizli sorun kontrolü
             est_sent = send_alerts(repo, token, est, tier=Tier.ESTIMATED, s=settings)
@@ -129,7 +131,7 @@ def run(repo: Repository) -> None:
             print("tahmini fırsat gönderimi başarısız:", type(e).__name__, redact(str(e))[:150])
     for name, job in (("kaynak düşürme", lambda: demote_failing_sources(repo)),
                       ("tahmini öğrenme", lambda: guard_estimates(repo)),
-                      ("özet", lambda: send_daily_digest(repo, token)),
+                      ("özet", lambda: send_daily_digest(repo, token)),  # 🟡 özet kapalı (digest.ENABLED)
                       ("sabah durumu", lambda: send_morning_status(repo)),
                       ("keşif", lambda: send_discovery(repo, token, owner)),
                       ("denetim", lambda: send_monthly_audit(repo, token, owner)),

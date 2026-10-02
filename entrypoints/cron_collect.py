@@ -10,7 +10,7 @@ from application.collect_sahibindenarabakibris import collect_sahibindenarabakib
 from application.collect_kktcar import collect_kktcar
 from application.collect_mezunum import collect_mezunum
 from application.collect_kktcarabam import collect_kktcarabam
-from application import llm_reader
+from application import feed_switch, llm_reader
 from application.health import report_collect_errors
 from application.source_alarm import track_collect
 from infrastructure.config import load_env, redact, require
@@ -21,8 +21,20 @@ from infrastructure.db.repository import Repository
 JOBS = ("instagram", "facebook", "kktcar", "kktcarabam", "kibrisarabaal", "mezunum", "kibriscars", "pazarkibris", "sahibindenarabakibris")
 
 
+def _provider_limit(repo: Repository, platform: str, e: Exception) -> bool:
+    """Sağlayıcı 403 verdiyse toplamayı duraklatır (arıza sayacı/alarm yok); duraklatıldıysa True."""
+    if not feed_switch.is_provider_limit(e):
+        return False
+    until = feed_switch.pause_provider(repo, platform)
+    print(f"{platform}: sağlayıcı 403 verdi, toplama {until:%d.%m %H:%M} UTC'ye kadar duraklatıldı")
+    return True
+
+
 def run(job: str, repo: Repository) -> list[tuple[str, str]]:
     errors: list[tuple[str, str]] = []
+    if job in feed_switch.PLATFORMS and job in feed_switch.paused_platforms(repo):
+        print(f"{job}: duraklatılmış, atlandı")  # sosyal anahtar kapalı / sağlayıcı limiti: ne iş ne alarm
+        return errors
     if job == "instagram":
         token = require("APIFY_TOKEN")
         try:
@@ -32,6 +44,8 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
                       f"okunamadı={st.needs_llm - st.llm_read} satıldı={st.sold}")
             track_collect(repo, "Instagram (toplu)")
         except Exception as e:
+            if _provider_limit(repo, "instagram", e):
+                return errors
             msg = redact(f"{type(e).__name__}: {str(e)[:150]}")
             print(f"Instagram (toplu): HATA {msg}")
             errors.append(("Instagram (toplu)", msg))
@@ -46,6 +60,8 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
                       f"ilan_değil={st.skipped} tahmini_maliyet=${st.spent_usd}")
             track_collect(repo, "Facebook grupları")
         except Exception as e:
+            if _provider_limit(repo, "facebook", e):
+                return errors
             msg = redact(f"{type(e).__name__}: {str(e)[:150]}")
             print(f"Facebook grupları: HATA {msg}")
             errors.append(("Facebook grupları", msg))

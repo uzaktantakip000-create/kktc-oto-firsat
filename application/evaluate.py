@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 
+from domain.alert_policy import send_floor_ok
 from domain.comparables import Market, find_market
 from domain.data_gate import below_cheap_quartile, data_gaps
 from domain.profit import Confidence, ProfitResult, Tier, evaluate_profit
@@ -190,6 +191,15 @@ def pending_alerts(repo: Repository, hours: int = 36, tier: Tier = Tier.STRONG, 
         row = book.row(r.get("brand_norm"), r.get("model_norm"), r["year"], "") if book is not None and r.get("year") else None
         out.append(Evaluated(r, market, profit, [], flags, urgency_signals(text), method=r.get("method") or "A", book_row=row))
     return out
+
+
+def apply_send_floor(evaluated: list[Evaluated], label: str = "") -> list[Evaluated]:
+    """Emsal kapısı (domain/alert_policy.py): yeterli emsali olmayan 🟢/🟠 gönderilmez. Elenenler yalnızca log'a yazılır,
+    alerts kaydı atılmaz (kural gevşerse/ilan yeniden değerlenirse taze kaldığı sürece gider)."""
+    ok = [ev for ev in evaluated if send_floor_ok(ev.profit.tier, ev.method, ev.market.n)]
+    if len(ok) != len(evaluated):
+        print(f"emsal kapısı{' (' + label + ')' if label else ''}: {len(evaluated) - len(ok)} ilan gönderilmedi (emsal < 8)")
+    return ok
 
 
 def confidence_label(c: Confidence) -> str:

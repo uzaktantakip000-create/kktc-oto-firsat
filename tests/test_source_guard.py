@@ -38,10 +38,10 @@ def test_no_failing_source_changes_nothing():
     assert source_guard.demote_failing_sources(repo) == 0 and repo.levels == {}
 
 
-def test_new_source_gets_label_old_source_does_not():
+def test_new_source_gets_no_label_any_more():
     e = ev('L1')
     now = datetime.now(timezone.utc)
     e.listing["source_created_at"] = now - timedelta(days=3)
-    assert "🆕 Yeni kaynak" in notify.format_alert(e)
+    assert "🆕" not in notify.format_alert(e)  # 🆕 etiketi kaldırıldı (02.10.2026)
     e.listing["source_created_at"] = now - timedelta(days=40)
     assert "🆕" not in notify.format_alert(e)

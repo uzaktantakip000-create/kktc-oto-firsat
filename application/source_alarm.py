@@ -4,6 +4,7 @@ Sayaç: bot_state 'fail:<kaynak adı>' = üst üste hatalı tur sayısı (başar
 normal sınırdan uzun süredir başarılı tarama yok)."""
 import re
 
+from application import feed_switch
 from application.health import notify_owner, source_limit_hours
 from infrastructure.config import redact
 from infrastructure.db.repository import Repository
@@ -45,12 +46,16 @@ def _count(v: str | None) -> int:
         return 0
 
 
-def source_alarms(repo: Repository, sources: dict[str, dict]) -> tuple[list[tuple[str, str]], set[str]]:
-    """([(ad, mesaj)] alarm verilecekler, sorunsuz çalışan adlar). Kendi başına mesaj göndermez. sources: ad -> kaynak satırı."""
+def source_alarms(repo: Repository, sources: dict[str, dict],
+                  skip: frozenset[str] = frozenset()) -> tuple[list[tuple[str, str]], set[str]]:
+    """([(ad, mesaj)] alarm verilecekler, sorunsuz çalışan adlar). Kendi başına mesaj göndermez. sources: ad -> kaynak satırı.
+    skip: duraklatılmış kaynak/toplu iş adları; ne alarm ne "tekrar çalışıyor" üretir."""
     fails = repo.state_with_prefix("fail:")
     msgs = repo.state_with_prefix("failmsg:")
     bad: dict[str, str] = {}
     for name in sorted(set(fails) | set(sources)):
+        if name in skip:
+            continue
         s = sources.get(name)
         if s is None and name not in COLLECTIVE:
             continue  # kapalı/aday kaynağın eski sayacı
@@ -59,7 +64,7 @@ def source_alarms(repo: Repository, sources: dict[str, dict]) -> tuple[list[tupl
             bad[name] = f"{name} {n} turdur okunamıyor (hata: {_error_word(msgs.get(name))})."
         elif s is not None and s["hours_since_check"] is not None and s["hours_since_check"] > source_limit_hours(s):
             bad[name] = f"{name} {s['hours_since_check']:.0f} saattir taranamıyor."
-    ok = (set(sources) | set(COLLECTIVE)) - set(bad)
+    ok = (set(sources) | set(COLLECTIVE)) - set(bad) - skip
     alarms = []
     for name, text in bad.items():
         others = len(bad) - 1
@@ -70,8 +75,9 @@ def source_alarms(repo: Repository, sources: dict[str, dict]) -> tuple[list[tupl
 
 def check_source_alarms(repo: Repository) -> int:
     """Her tur çalışır. Gönderilen mesaj sayısını döner (alarm + düzelme)."""
-    sources = {s["name"]: s for s in repo.alarm_sources()}
-    alarms, ok = source_alarms(repo, sources)
+    paused = feed_switch.paused_platforms(repo)  # duraklatılmış sosyal kaynaklar arıza sayılmaz
+    sources = {s["name"]: s for s in repo.alarm_sources() if s["platform"] not in paused}
+    alarms, ok = source_alarms(repo, sources, skip=frozenset(feed_switch.COLLECTIVE[p] for p in paused))
     sent = 0
     for name, text in alarms:
         if repo.get_state(f"srcalarm:{name}"):

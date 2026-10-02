@@ -8,6 +8,10 @@ from infrastructure.fx import frankfurter
 class FakeRepo:
     def __init__(self, sources=(), recent=False):
         self._sources, self._recent, self.marked, self.conn = list(sources), recent, [], self
+        self.state = {"feed:instagram": "on", "feed:facebook": "on"}  # sosyal anahtar açık (varsayılan kapalı)
+
+    def get_state(self, key, default=None):
+        return self.state.get(key, default)
 
     def stale_sources(self):
         return self._sources

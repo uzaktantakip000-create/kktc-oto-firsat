@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from application.collect_facebook import MONTHLY_BUDGET_USD as FB_BUDGET
 from application.collect_instagram import MONTHLY_BUDGET_USD as IG_BUDGET
-from application import price_book_job
+from application import feed_switch, price_book_job
 from application.maintenance import summary_line
 from application.health import notify_owner, source_limit_hours
 from infrastructure.db.repository import Repository
@@ -30,12 +30,16 @@ def _money(repo: Repository, prefix: str, now: datetime) -> float:
         return 0.0
 
 
-def _is_late(r: dict) -> bool:
+def _is_late(r: dict, paused: dict | None = None) -> bool:
+    if r["platform"] in (paused or {}):
+        return False  # duraklatılmış sosyal kaynak gecikmiş sayılmaz
     return r["hours_since_check"] is None or r["hours_since_check"] > source_limit_hours(r)
 
 
-def _source_line(r: dict) -> str:
+def _source_line(r: dict, paused: dict | None = None) -> str:
     kind = KIND.get(r["platform"], r["platform"])
+    if r["platform"] in (paused or {}):
+        return f"📴 {kind}: {r['name']} · duraklatıldı"
     mark = "⚠️ GECİKMİŞ —" if _is_late(r) else "✅"
     return f"{mark} {kind}: {r['name']} · {_ago(r['hours_since_check'])} · {r['fresh_n']} güncel ilan, bugün {r['new_24h']} yeni"
 
@@ -54,7 +58,8 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
     scanned = [r for r in rows if r["status"] in ("aktif", "deneme")]
     open_n = [r for r in scanned if r["alert_level"] == "yesil"]
     shadow_n = [r for r in scanned if r["alert_level"] != "yesil"]
-    late = [r for r in scanned if _is_late(r)]
+    paused = feed_switch.paused_platforms(repo, now)
+    late = [r for r in scanned if _is_late(r, paused)]
 
     sent24 = repo.conn.execute(
         "SELECT count(DISTINCT listing_id) FILTER (WHERE tier='guclu') AS strong FROM alerts "
@@ -73,15 +78,17 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
         lines.append(f"⚠️ {len(late)} yerde gecikme var (aşağıda işaretli).")
     else:
         lines.append("✅ Sistem çalışıyor, her yere zamanında bakılıyor.")
+    if paused:
+        lines.append(feed_switch.pause_text(paused))
     if last_tick:
         lines.append(f"Son kontrol saat {datetime.fromisoformat(last_tick).astimezone(KKTC):%H:%M}. Her 15 dakikada bir tekrar bakılır.")
 
     lines += ["", f"📣 SANA HABER VEREN YERLER ({len(open_n)})", "Burada iyi bir fırsat görürsem hemen yazarım."]
-    lines += [_source_line(r) for r in open_n]
+    lines += [_source_line(r, paused) for r in open_n]
     if shadow_n:
-        lines += ["", f"🗒 SADECE GÜNLÜK ÖZETE GİRENLER ({len(shadow_n)})",
-                  "Buralara bakıyorum ama anlık haber vermiyorum (sen kapattın ya da çok yanlış fiyat çıktığı için ben düşürdüm)."]
-        lines += [_source_line(r) for r in shadow_n]
+        lines += ["", f"🗒 BİLDİRİM VERMEYENLER ({len(shadow_n)})",
+                  "Buralara bakıyorum ama haber vermiyorum, sadece ölçüyorum (sen kapattın ya da çok yanlış fiyat çıktığı için ben düşürdüm)."]
+        lines += [_source_line(r, paused) for r in shadow_n]
 
     try:
         fun = json.loads(repo.get_state(f"fb_funnel:{now:%Y-%m}", "{}") or "{}")
@@ -109,9 +116,10 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
         f"• Facebook'ta bu ay {fun['gonderi']} gönderiye baktım: {fun.get('ilan', 0)} araç ilanı çıktı. Ayıklananlar: "
         f"{fun.get('fiyat_yok', 0)} araç gönderisi fiyat yazmıyor, {fun.get('yil_yok', 0)} yıl yazmıyor, "
         f"{fun.get('marka_yok', 0) + fun.get('arac_degil', 0)} araba değil.",
-    ] if fun.get("gonderi") else []) + [
+    ] if fun.get("gonderi") else []) + ([
         f"• Bu ay Apify'a harcanan: Facebook ${_money(repo, 'fb_spend', now):.2f} (sınır {FB_BUDGET:.0f}$), "
         f"Instagram ${_money(repo, 'ig_spend', now):.2f} (sınır {IG_BUDGET:.0f}$).",
+    ] if len(paused) < len(feed_switch.PLATFORMS) else []) + [
         "",
         "ℹ️ 'Güncel ilan' = son 60 günde yayınlanıp hâlâ satışta görünenler. Daha eski ilanları fiyat karşılaştırmasına katmıyorum.",
     ]

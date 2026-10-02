@@ -111,7 +111,7 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
         api(token, "sendMessage", chat_id=chat_id, text=reply[:3900], disable_web_page_preview=True)
 
 
-PAS_LIMIT = 3  # aynı modele bu kadar "pas" deyince özete almayı öneririm
+PAS_LIMIT = 3  # aynı modele bu kadar "pas" deyince kapatmayı öneririm
 
 
 def _maybe_ask_mute(repo: Repository, token: str, owner: str, listing_id) -> None:
@@ -121,8 +121,8 @@ def _maybe_ask_mute(repo: Repository, token: str, owner: str, listing_id) -> Non
         return
     repo.set_state(f"mute_asked:{key}", "1")  # her model için bir kez sorulur
     api(token, "sendMessage", chat_id=owner,
-        text=f"{brand} {model} ilanlarına {n} kez 'pas' dedin. Bu modeli anlık 🟢 yerine günlük özete alayım mı?",
-        reply_markup={"inline_keyboard": [[{"text": "✅ Evet, özete al", "callback_data": f"mute:evet:{key}"[:64]},
+        text=f"{brand} {model} ilanlarına {n} kez 'pas' dedin. Bu modelin 🟢 bildirimlerini kapatayım mı?",
+        reply_markup={"inline_keyboard": [[{"text": "✅ Evet, kapat", "callback_data": f"mute:evet:{key}"[:64]},
                                            {"text": "❌ Hayır, olduğu gibi", "callback_data": f"mute:hayir:{key}"[:64]}]]})
 
 
