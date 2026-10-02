@@ -42,8 +42,8 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
         sources = [x for x in repo.sources("facebook", ("aktif", "deneme")) if "/groups/" in x["url"]]
         try:
             for name, st in collect_facebook_groups(repo, token, sources, reader=llm_reader.from_env(repo)).items():
-                print(f"{name}: çekilen={st.fetched} yeni={st.new} llm_okudu={st.llm_read} ilan_değil={st.skipped} "
-                      f"tahmini_maliyet=${st.spent_usd}")
+                print(f"{name}: çekilen={st.fetched} yeni={st.new} llm_okudu={st.llm_read} km_okudu={st.km_read} foto_okudu={st.photo_read} "
+                      f"ilan_değil={st.skipped} tahmini_maliyet=${st.spent_usd}")
             track_collect(repo, "Facebook grupları")
         except Exception as e:
             msg = redact(f"{type(e).__name__}: {str(e)[:150]}")

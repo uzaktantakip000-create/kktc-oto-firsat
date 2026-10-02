@@ -11,7 +11,9 @@ concurrency:
 jobs:
   tick:
     runs-on: ubuntu-latest
-    timeout-minutes: 14
+    timeout-minutes: 20  # tur kendi 13 dk bütçesini tutar (entrypoints/tick.py); sınır yalnızca güvenlik ağı
+    env:
+      PYTHONUNBUFFERED: "1"  # iptal edilen turda log kaybolmasın
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

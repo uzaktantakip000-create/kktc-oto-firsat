@@ -1,4 +1,5 @@
 import json
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from dataclasses import replace
@@ -6,6 +7,7 @@ from dataclasses import replace
 from application.llm_reader import LlmReader, listing_fields
 from domain.freetext_parser import diagnose, parse_freetext
 from infrastructure.collectors import facebook_groups
+from infrastructure.collectors.apify_run import ApifyRunError
 from infrastructure.collectors.facebook_groups import RawGroupPost
 from infrastructure.db.repository import Repository
 from infrastructure.fx.frankfurter import gbp_rate
@@ -14,6 +16,8 @@ MONTHLY_BUDGET_USD = 60.0  # aylık Apify harcama tavanı (grup toplama); aşıl
 MAX_PHOTO_READS = 30  # tur başına en çok fotoğraftan fiyat okuma (yapay zekâ görsel okuması)
 MAX_ITEMS_PER_GROUP = 40
 MAX_HOURS = 14
+LLM_BUDGET_S = 100  # yapay zekâ okuma aşaması (km, yazı, fotoğraf) bu süreyi aşarsa kalan gönderiler sonraki tura bırakılır (tick 14 dk'da kesiliyordu)
+MAX_KM_READS = 25  # tur başına en çok km tamamlama okuması (ilan başına ≈$0,0002; günlük yapay zekâ tavanı ayrıca geçerli)
 
 
 @dataclass
@@ -23,6 +27,7 @@ class FbStats:
     skipped: int = 0  # ilan değil / fiyat-yıl-marka belirsiz: HİÇBİR ŞEY saklanmaz
     spent_usd: float = 0.0
     llm_read: int = 0  # kural okuyamadı (fiyat/yıl yazım biçimi), yapay zekâ okudu (en fazla 🟡)
+    km_read: int = 0  # fiyat yazıda var ama km yok: yapay zekâ km'yi okudu (yalnızca alıntısı metinde olan km)
     photo_read: int = 0  # fiyatı yazıda olmayan araç gönderisi: ilk fotoğraftaki fiyat okundu (extraction_by='llm')
     reasons: dict[str, int] = field(default_factory=dict)  # ilan sayılmayan gönderilerin nedeni (sayaç)
 
@@ -103,6 +108,7 @@ def _count_funnel(repo: Repository, result: dict[str, FbStats], now: datetime) -
     for st in result.values():
         total["gonderi"] = total.get("gonderi", 0) + st.fetched
         total["ilan"] = total.get("ilan", 0) + (st.fetched - st.skipped)
+        total["km_okundu"] = total.get("km_okundu", 0) + st.km_read
         for why, n in st.reasons.items():
             total[why] = total.get(why, 0) + n
     repo.set_state(key, json.dumps(total))
@@ -121,12 +127,19 @@ def collect_facebook_groups(repo: Repository, apify_token: str, sources: list[di
     last = min((s["last_checked_at"] for s in sources if s["last_checked_at"]), default=None)
     hours = MAX_HOURS if last is None else min(MAX_HOURS, max(2, int((now - last) / timedelta(hours=1)) + 1))
     by_url = {s["url"].rstrip("/"): s for s in sources}
-    posts, spent, _rows = fetch(apify_token, list(by_url), hours, MAX_ITEMS_PER_GROUP)
+    try:
+        posts, spent, _rows = fetch(apify_token, list(by_url), hours, MAX_ITEMS_PER_GROUP)
+    except ApifyRunError as e:  # çalıştırma başladı ve ücretlendi ama veri alınamadı: harcama yine de kaydedilir
+        repo.set_state(key, f"{spent_month + e.cost_usd:.4f}")
+        print(f"Facebook: çalıştırma başarısız, maliyet ${e.cost_usd:.4f} kaydedildi (ay: ${spent_month + e.cost_usd:.2f} / ${MONTHLY_BUDGET_USD:.0f})")
+        raise
     repo.set_state(key, f"{spent_month + spent:.4f}")
+    print(f"Facebook: tur maliyeti ${spent:.4f} (ay: ${spent_month + spent:.2f} / ${MONTHLY_BUDGET_USD:.0f})")
     result = {s["name"]: FbStats() for s in sources}
     known = {s["id"]: repo.known_item_ids(s["id"]) for s in sources} if reader else {}
     newest: dict[str, datetime] = {}
-    photos = 0
+    photos = km_reads = 0
+    llm_deadline = time.monotonic() + LLM_BUDGET_S
     tried = _photo_tried(repo)  # aynı gönderiye (pencereler örtüşür) ikinci kez görsel okuma parası harcanmasın
     for post in posts:
         source = by_url.get(post.group_url)
@@ -137,13 +150,21 @@ def collect_facebook_groups(repo: Repository, apify_token: str, sources: list[di
         if post.posted_at and (source["name"] not in newest or post.posted_at > newest[source["name"]]):
             newest[source["name"]] = post.posted_at
         data = listing_data(post, source)
+        if (data is not None and data["km"] is None and reader and km_reads < MAX_KM_READS
+                and time.monotonic() < llm_deadline and post.post_id not in known.get(source["id"], ())):
+            km_reads += 1  # fiyat yazıda var ama km yok: tek ucuz yapay zekâ okuması km'yi tamamlar (kaynak gönderi metni, alıntı doğrulamalı)
+            read = reader.read(post.text)
+            if read is not None and read.is_car and read.km:
+                data["km"] = read.km
+                st.km_read += 1
         if data is None:
             why = diagnose(post.text)
-            if reader and why in LLM_RETRY and post.post_id not in known.get(source["id"], ()):  # araç gönderisi ama kural okuyamadı: yapay zekâ bir kez dener
+            if reader and why in LLM_RETRY and time.monotonic() < llm_deadline and post.post_id not in known.get(source["id"], ()):  # araç gönderisi ama kural okuyamadı: yapay zekâ bir kez dener
                 data = llm_listing_data(post, source, reader)
                 if data:
                     st.llm_read += 1
             if data is None and reader and why == "fiyat_yok" and post.image_url and photos < MAX_PHOTO_READS \
+                    and time.monotonic() < llm_deadline \
                     and post.post_id not in known.get(source["id"], ()) \
                     and post.post_id not in tried:  # fiyat yazıda yok: ilk fotoğrafa bak
                 photos += 1
