@@ -3,7 +3,7 @@
 -- sahibindenarabakibris.com: Disallow boş). Sahibin kararı: yeni kaynaklar ilk günden anlık bildirir (🆕 etiketiyle).
 INSERT INTO sources (platform,name,url,kind,region,status,priority,discovered_by,alert_level) VALUES
 ('web','KibrisCars','https://kibriscars.com/','ilan_sitesi','KKTC','aktif',2,'arama','yesil'),
-('web','PazarKibris','https://pazarkibris.com/','ilan_sitesi','KKTC','aktif',2,'arama','yesil')
+('web','PazarKibris','https://pazarkibris.com/','ilan_sitesi','KKTC','aday',3,'arama','yesil')  -- deneme: 80 ilandan yalnız 4'ünde fiyat; şimdilik taranmaz
 ON CONFLICT (url) DO NOTHING;
 -- Sahibinden Araba Kibris tohum kaydı 002'de 'aday' olarak var: etkinleştir.
 UPDATE sources SET status='aktif', alert_level='yesil', name='SahibindenArabaKibris'
