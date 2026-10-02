@@ -29,6 +29,11 @@ VARIANT_MIN_ROWS = 5
 VARIANT_MIN_SELLERS = 3
 MAX_PLAUSIBLE_KM = 600_000  # üstü yazım hatası (veri bakımı da bunu karantinaya alır)
 ROBUST_K = 2.5  # artık > K·1.4826·MAD ise aykırı
+B_KM_WEAK = -0.005  # tahmin anında güvenlik ağı: km eğimi bundan zayıf (ya da pozitif) kullanılmaz
+B_KM_REFIT = -0.010  # uydurmada eğim bundan zayıfsa veri yanıltıcı (km, yaşla karışıyor): sabit öncelle yeniden uydurulur
+B_KM_PRIOR = -0.012  # 10.000 km başına ~%1,2 (mantıklı alt tahmin)
+DENSE_WINDOW = 2  # hedef yıl ± bu kadar yıl içinde ...
+DENSE_MIN_ROWS = 3  # ... eğri satırı en az bu kadar olmalı (veri boşluğunda ara değer üretilmez)
 
 
 @dataclass(frozen=True)
@@ -49,10 +54,18 @@ class Curve:
     mean_age: float = 0.0  # merkezleme için
     mean_km10: float = 0.0  # merkezleme için (km/10000)
     km_per_year: float = 15_000.0  # bu modelde yıl başına ortalama km (B satırlarının ref_km'si için)
+    year_counts: dict = field(default_factory=dict)  # yıl -> eğriye giren satır sayısı (boş = bilinmiyor, kapı uygulanmaz)
 
     def predict_ln(self, year: int, km: int) -> float:
-        """ln(fiyat) tahmini."""
-        return self.a + self.b_age * ((self.ref_year - year) - self.mean_age) + self.b_km * (km / 10_000 - self.mean_km10)
+        """ln(fiyat) tahmini. Güvenlik ağı: km eğimi en fazla B_KM_WEAK (eski/yanıltıcı eğri yüksek km'li aracı şişirmesin)."""
+        return (self.a + self.b_age * ((self.ref_year - year) - self.mean_age)
+                + min(self.b_km, B_KM_WEAK) * (km / 10_000 - self.mean_km10))
+
+    def dense_at(self, year: int) -> bool:
+        """Hedef yıl ± DENSE_WINDOW içinde yeterli satır var mı (yoksa eğri veri boşluğunu enterpolasyonla doldurur)."""
+        if not self.year_counts:
+            return True
+        return sum(self.year_counts.get(y, 0) for y in range(year - DENSE_WINDOW, year + DENSE_WINDOW + 1)) >= DENSE_MIN_ROWS
 
 
 @dataclass(frozen=True)
@@ -154,6 +167,28 @@ def _ridge(pts: list[tuple], ref_year: int, lam: float):
     return ma, mk, my, (t1 * s22 - t2 * s12) / det, (s11 * t2 - s12 * t1) / det
 
 
+def _ridge_fixed_km(pts: list[tuple], ref_year: int, lam: float, b_km: float):
+    """km eğimi sabit: ln p − b_km·km10 yalnızca yaşa ridge ile uydurulur. Dönen _ridge ile aynı biçimde."""
+    sw = sum(p[1] for p in pts)
+    if sw <= 0:
+        return None
+    ma = sum(p[1] * (ref_year - p[2]) for p in pts) / sw
+    mk = sum(p[1] * p[3] for p in pts) / sw
+    ys = [p[4] - b_km * p[3] for p in pts]
+    my = sum(p[1] * y for p, y in zip(pts, ys)) / sw
+    s11 = lam + sum(p[1] * ((ref_year - p[2]) - ma) ** 2 for p in pts)
+    t1 = sum(p[1] * ((ref_year - p[2]) - ma) * (y - my) for p, y in zip(pts, ys))
+    return ma, mk, my + b_km * mk, t1 / s11, b_km
+
+
+def _fit_pts(pts: list[tuple], ref_year: int, lam: float):
+    """Ridge; km eğimi B_KM_REFIT'ten zayıfsa B_KM_PRIOR'a sabitleyip yeniden uydurur."""
+    fit = _ridge(pts, ref_year, lam)
+    if fit is not None and fit[4] > B_KM_REFIT:
+        fit = _ridge_fixed_km(pts, ref_year, lam, B_KM_PRIOR)
+    return fit
+
+
 def _residuals(pts: list[tuple], fit: tuple, ref_year: int) -> list[float]:
     ma, mk, my, b1, b2 = fit
     return [p[4] - my - b1 * ((ref_year - p[2]) - ma) - b2 * (p[3] - mk) for p in pts]
@@ -170,7 +205,7 @@ def fit_curve(rows: list[dict], weights: list[float] | None, brand_norm: str, mo
 
     if not enough(pts):
         return None
-    fit = _ridge(pts, ref_year, s.ridge_lambda)
+    fit = _fit_pts(pts, ref_year, s.ridge_lambda)
     if fit is None:
         return None
     res = _residuals(pts, fit, ref_year)  # tek sağlam geçiş: MAD'e göre aykırıları at, yeniden uydur
@@ -178,7 +213,7 @@ def fit_curve(rows: list[dict], weights: list[float] | None, brand_norm: str, mo
     if mad > 0:
         keep = [p for p, r in zip(pts, res) if abs(r - statistics.median(res)) <= ROBUST_K * 1.4826 * mad]
         if len(keep) < len(pts) and enough(keep):
-            refit = _ridge(keep, ref_year, s.ridge_lambda)
+            refit = _fit_pts(keep, ref_year, s.ridge_lambda)
             if refit is not None:
                 pts, fit = keep, refit
                 res = _residuals(pts, fit, ref_year)
@@ -192,7 +227,7 @@ def fit_curve(rows: list[dict], weights: list[float] | None, brand_norm: str, mo
         brand_norm, model_norm, my, b_age, b_km, sigma, len(pts), len({p[2] for p in pts}),
         len({_skey(p[0], i) for i, p in enumerate(pts)}), min(p[2] for p in pts), max(p[2] for p in pts),
         int(max(p[3] for p in pts) * 10_000), ref_year, ma, mk,
-        statistics.median(p[3] * 10_000 / a for p, a in zip(pts, ages)))
+        statistics.median(p[3] * 10_000 / a for p, a in zip(pts, ages)), dict(Counter(p[2] for p in pts)))
 
 
 # --- durum makinesi ---
@@ -244,7 +279,7 @@ def _adjust_params(curve: Curve | None) -> tuple[float, float]:
     """Yıl ve km düzeltmesi katsayıları (ln ölçeği); değer kazandıran (pozitif) katsayı kullanılmaz."""
     if curve is None:
         return DEFAULT_B_AGE, DEFAULT_B_KM
-    return min(curve.b_age, 0.0), min(curve.b_km, 0.0)
+    return min(curve.b_age, 0.0), min(curve.b_km, B_KM_WEAK)
 
 
 def _row_from_comps(comps: list[dict], year: int, curve: Curve | None, s: Settings):
@@ -346,8 +381,10 @@ def build_book(pool: list[dict], sales: list[dict], now: datetime, prev: PriceBo
                 vres = _row_from_comps(vc, y, curve, s)
                 if vres:
                     put(b, m, v, y, *vres, "A", sales_m)
-        if curve:  # B: eğri aralığında, oturmuş/şüpheli A satırı olmayan yıllar (ince A'nın yerine eğri değeri geçer)
+        if curve:  # B: eğri aralığında (±2 yılda ≥3 satır olan yıllar), oturmuş/şüpheli A satırı olmayan yıllar
             for y in range(curve.min_year, curve.max_year + 1):
+                if not curve.dense_at(y):
+                    continue
                 a_row = book.row(b, m, y)
                 if a_row and a_row.status != STATUS_THIN:
                     continue
@@ -385,6 +422,8 @@ def estimate_from_book(listing: dict, book: PriceBook, s: Settings) -> Estimate 
     km = effective_km(listing)
     if km is None or not c.min_year - 1 <= year <= c.max_year + 1 or km > c.max_km * 1.1 or c.sellers < s.est_min_curve_sellers:
         return None
+    if not c.dense_at(year):
+        return None  # hedef yılın çevresinde veri yok: eğri iki uç arasında tahmin yürütür, güvenilmez
     value = math.exp(c.predict_ln(year, km))
     return Estimate(value, value * math.exp(-s.est_z * c.sigma), "B", c.n, c.sellers, c.sigma, book.row(b, m, year))
 

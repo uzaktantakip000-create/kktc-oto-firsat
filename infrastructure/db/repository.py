@@ -266,7 +266,7 @@ class Repository:
                           AS price_changed_at
                FROM (SELECT DISTINCT ON (listing_id) * FROM evaluations ORDER BY listing_id, evaluated_at DESC) e
                JOIN listings l ON l.id = e.listing_id JOIN sources s ON s.id = l.source_id
-               WHERE e.tier = %s AND s.alert_level = 'yesil' AND l.is_active AND l.karantina_nedeni IS NULL AND e.evaluated_at > NOW() - make_interval(hours => %s)
+               WHERE e.tier = %s AND s.alert_level = 'yesil' AND l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL AND e.evaluated_at > NOW() - make_interval(hours => %s)
                  AND EXISTS (SELECT 1 FROM subscribers sub WHERE sub.status = 'onayli' AND NOT EXISTS (
                        SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.chat_id = sub.chat_id AND a.tier = %s))
                ORDER BY e.profit_pct DESC""",
@@ -459,7 +459,7 @@ class Repository:
             (listing_id, chat_id, tier, str(msg_id)),
         )
 
-    def acquire_lock(self, name: str, minutes: int = 30) -> str | None:
+    def acquire_lock(self, name: str, minutes: int = 16) -> str | None:
         """İki iş akışının aynı anda değerlendirip çift bildirim yollamasını önler. Kilit 'minutes' sonra kendiliğinden düşer.
         Dönen belirteç (kilidi alış zamanı) release_lock'a verilir; böylece geç biten çalışma başkasının kilidini silmez."""
         row = self.conn.execute(
@@ -470,6 +470,15 @@ class Repository:
             (f"lock:{name}", minutes),
         ).fetchone()
         return row["value"] if row else None
+
+    def reset_evaluations(self, days: int = 7) -> int:
+        """Kural sürümü değişince: son 'days' günün değerlendirmelerini, aktif ve HİÇ bildirimi olmayan ilanlar için siler
+        (yeniden değerlendirilsin). Bildirimi (alerts) olan ilana dokunulmaz. Dönen: silinen satır sayısı."""
+        cur = self.conn.execute(
+            """DELETE FROM evaluations e USING listings l
+               WHERE l.id = e.listing_id AND l.is_active AND e.evaluated_at > NOW() - make_interval(days => %s)
+                 AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = e.listing_id)""", (days,))
+        return cur.rowcount
 
     def release_lock(self, name: str, token: str) -> None:
         self.conn.execute(

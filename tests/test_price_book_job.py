@@ -132,7 +132,7 @@ def test_store_load_book_and_disabled_models():
     row = dict(brand_norm="Toyota", model_norm="vitz", variant="", year=2015, value_gbp=8000.0, low_gbp=7000.0, high_gbp=9000.0, ref_km=None,
                n=10, sellers=5, method="A", status="oturmus", cand_value=None, cand_nights=0, sales_n=0, sales_median_gbp=None)
     cur = dict(brand_norm="Toyota", model_norm="vitz", a=9.0, b_age=-0.09, b_km=-0.03, sigma=0.15, n=40, years=9, sellers=30, min_year=2010,
-               max_year=2020, max_km=200_000, ref_year=2026, mean_age=10.0, mean_km10=10.0, km_per_year=12_000.0)
+               max_year=2020, max_km=200_000, ref_year=2026, mean_age=10.0, mean_km10=10.0, km_per_year=12_000.0, year_counts="2015:5,2016:3")
     conn = FakeConn({"price_book": [row], "price_curves": [cur]})
     original = conn.execute
 
@@ -144,6 +144,7 @@ def test_store_load_book_and_disabled_models():
     conn.execute = execute
     book = PriceBookStore(conn).load_book()
     assert book.row("Toyota", "vitz", 2015).value_gbp == 8000 and book.curve("Toyota", "vitz").km_per_year == 12_000
+    assert book.curve("Toyota", "vitz").year_counts == {2015: 5, 2016: 3}
     assert book.disabled_models == {("Honda", "fit"), ("Opel", "astra"), ("Opel", "corsa")}
 
 

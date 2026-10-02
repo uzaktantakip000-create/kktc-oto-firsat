@@ -6,6 +6,8 @@ from domain.settings import Settings
 GAP_LABELS = {
     "km_yok": "km yazmıyor",
     "para_birimi_tahmin": "para birimi tahmin",
+    "tl_fiyat": "fiyat TL: TL ilanları piyasada genelde %6-10 düşük görünüyor; kontrol et",
+    "fiyat_asiri_dusuk": "fiyat emsallerin yarısından düşük (az emsal): yazım hatası ya da tuzak olabilir",
     "model_yok": "model okunamadı",
     "km_yuksek": "km emsallerden çok yüksek",
     "ucuz_ceyrek_degil": "fiyat benzer araçların en ucuz çeyreğinde değil",
@@ -25,6 +27,8 @@ def data_gaps(listing: dict, market: Market, settings: Settings | None = None) -
         gaps.append("km_yok")
     if listing.get("currency_guess"):
         gaps.append("para_birimi_tahmin")
+    if listing.get("currency") == "TRY":
+        gaps.append("tl_fiyat")  # TL ilanlar tabloya göre %6-10 ucuz görünür: 🟢/🟠 olmaz (en fazla 🟡)
     if not listing.get("model_norm"):
         gaps.append("model_yok")
     if listing.get("extraction_by") == "llm":

@@ -80,7 +80,8 @@ def _market_assessment(listing: dict, market: Market, price: float, text: str, b
     if downgraded:  # eksik/şüpheli veriyle 🟢 yok: en fazla 🟡
         tier = Tier.NEGOTIABLE
     final = ProfitResult(profit.exit_price_gbp, profit.profit_gbp, profit.profit_pct, profit.confidence, tier)
-    return Assessment(market, final, blocking, warnings, gaps if downgraded else [], text)
+    absurd = market.n < 8 and price < market.median_gbp * s.absurd_price_ratio  # evaluate_profit bunu 'yok' yaptı: kırmızı bayrak
+    return Assessment(market, final, blocking, warnings, gaps if downgraded else ["fiyat_asiri_dusuk"] if absurd else [], text)
 
 
 def _estimated_assessment(listing: dict, market: Market | None, a: Assessment | None, price: float, text: str,
@@ -88,7 +89,8 @@ def _estimated_assessment(listing: dict, market: Market | None, a: Assessment | 
     """🟠 tahmini fırsat: az emsalde (yöntem B) değer tablosunun eğrisine göre ≥%30 ucuz. Hiçbir koşul sağlanmazsa None.
     Muhafazakâr: çıkış fiyatı değerden değil, eğrinin ALT sınırından hesaplanır."""
     if (not s.estimated_alerts or blocking or listing.get("karantina_nedeni") or listing.get("currency_guess")
-            or listing.get("steering") == "LHD"):  # sol direksiyon: eğri sağ direksiyonla kurulu
+            or listing.get("steering") == "LHD"  # sol direksiyon: eğri sağ direksiyonla kurulu
+            or listing.get("currency") == "TRY"):  # TL ilanlar tabloya göre %6-10 ucuz görünür: 🟠 olmaz
         return None
     if market is not None and market.n >= 8:
         return None  # yeterli emsal var: 🟢/🟡 yolu karar verir
@@ -104,6 +106,8 @@ def _estimated_assessment(listing: dict, market: Market | None, a: Assessment | 
         return None
     if market is not None and price > s.est_a_agree_ratio * market.median_gbp:
         return None  # emsal varsa onunla çelişmesin
+    if market is not None and price < s.absurd_price_ratio * market.median_gbp:
+        return None  # emsalin yarısından ucuz: yazım hatası/tuzak, 🟠 değil
     tier, gaps = _apply_user_decisions(listing, s, price, Tier.ESTIMATED, [])
     if tier is not Tier.ESTIMATED or gaps:
         return None  # engelli marka/satıcı, bütçe üstü, sessiz model

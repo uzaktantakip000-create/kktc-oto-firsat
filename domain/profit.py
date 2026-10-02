@@ -67,8 +67,11 @@ def evaluate_profit(
     # Küçük araçlarda %20 az para eder: asgari net kâr yoksa 🟢 verilmez (🟡 olarak kalır)
     if tier is Tier.STRONG and profit < s.min_strong_profit_gbp:
         tier = Tier.NEGOTIABLE
-    # Emsal medyanının %50'sinden düşük fiyat: muhtemelen yanlış yazım, 🟢 verilmez
-    if buy_price_gbp < market_median_gbp * s.absurd_price_ratio and tier is Tier.STRONG:
-        tier = Tier.NEGOTIABLE
+    # Emsal medyanının %50'sinden düşük fiyat: muhtemelen yanlış yazım; 🟢 verilmez, az emsalde (<8) hiç bildirim yok
+    if buy_price_gbp < market_median_gbp * s.absurd_price_ratio:
+        if tier is Tier.STRONG:
+            tier = Tier.NEGOTIABLE
+        if comparables_n < 8:
+            tier = Tier.NONE
 
     return ProfitResult(exit_price, profit, pct, confidence, tier)

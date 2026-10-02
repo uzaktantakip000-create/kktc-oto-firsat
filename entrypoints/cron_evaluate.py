@@ -20,7 +20,7 @@ from application.source_guard import demote_failing_sources
 from application.status import send_morning_status
 from domain.comparables import nearest_comparables
 from domain.profit import Tier
-from domain.settings import Settings
+from domain.settings import RULES_VERSION, Settings
 from infrastructure.config import load_env, redact, require
 from infrastructure.db.repository import Repository
 from infrastructure.fx import frankfurter
@@ -43,9 +43,24 @@ def main() -> None:
         repo.release_lock(LOCK, token)
 
 
+def apply_rules_version(repo: Repository) -> int:
+    """Kural sürümü bot_state'tekinden farklıysa bildirimsiz yeni değerlendirmeleri sil (hemen yeni kurallarla yenilenir), sürümü yaz."""
+    if repo.get_state("rules_version") == RULES_VERSION:
+        return 0
+    n = repo.reset_evaluations(7)
+    repo.set_state("rules_version", RULES_VERSION)
+    return n
+
+
 def run(repo: Repository) -> None:
     token = require("TELEGRAM_BOT_TOKEN")
     owner = require("TELEGRAM_CHAT_ID")
+    try:
+        n = apply_rules_version(repo)
+        if n:
+            print(f"kural sürümü {RULES_VERSION}: {n} değerlendirme yenilenecek")
+    except Exception as e:  # sürüm işi değerlendirmeyi engellemesin
+        print("kural sürümü uygulanamadı:", type(e).__name__, redact(str(e))[:150])
     try:
         poll_bot(repo, token, owner_chat_id=owner)  # önce abone onayları ve komutlar
     except Exception as e:  # bot komutları değerlendirmeyi engellemesin

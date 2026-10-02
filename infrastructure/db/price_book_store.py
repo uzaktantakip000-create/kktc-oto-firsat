@@ -7,6 +7,14 @@ _ROW_COLS = [f.name for f in fields(BookRow)]
 _CURVE_COLS = [f.name for f in fields(Curve)]
 
 
+def _pack_years(d: dict) -> str:
+    return ",".join(f"{y}:{n}" for y, n in sorted(d.items()))
+
+
+def _unpack_years(v: str | None) -> dict[int, int]:
+    return {int(y): int(n) for y, n in (x.split(":") for x in (v or "").split(",") if ":" in x)}
+
+
 def _pairs(value: str | None) -> set[tuple[str, str]]:
     return {tuple(x.split("|", 1)) for x in (value or "").split(",") if "|" in x}
 
@@ -26,7 +34,7 @@ class PriceBookStore:
             row = BookRow(**{k: r[k] for k in _ROW_COLS})
             book.rows[(row.brand_norm, row.model_norm, row.variant, row.year)] = row
         for r in self.conn.execute(f"SELECT {','.join(_CURVE_COLS)} FROM price_curves").fetchall():
-            c = Curve(**{k: r[k] for k in _CURVE_COLS})
+            c = Curve(**{k: (_unpack_years(r[k]) if k == "year_counts" else r[k]) for k in _CURVE_COLS})
             book.curves[(c.brand_norm, c.model_norm)] = c
         book.disabled_models = _pairs(self._state("est_disabled")) | _pairs(self._state("est_unreliable"))
         return book
@@ -44,7 +52,8 @@ class PriceBookStore:
                 if book.curves:
                     cur.executemany(
                         f"INSERT INTO price_curves ({','.join(_CURVE_COLS)}) VALUES ({','.join(['%s'] * len(_CURVE_COLS))})",
-                        [[getattr(c, k) for k in _CURVE_COLS] for c in book.curves.values()])
+                        [[_pack_years(c.year_counts) if k == "year_counts" else getattr(c, k) for k in _CURVE_COLS]
+                         for c in book.curves.values()])
 
     def add_sale(self, sale: dict) -> None:
         keys = ["brand_norm", "model_norm", "brand", "model", "year", "km", "price_amount", "currency", "price_gbp"]

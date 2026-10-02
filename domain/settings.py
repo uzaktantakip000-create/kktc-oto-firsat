@@ -1,5 +1,7 @@
 from pydantic import BaseModel
 
+RULES_VERSION = "2026-10-02"  # değerleme kuralları değişince artır: son 7 günün (bildirimsiz) değerlendirmeleri yeniden yapılır
+
 
 class Settings(BaseModel):
     strong_threshold: float = 0.20
