@@ -1,0 +1,27 @@
+name: Probe (geçici erişim testi)
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install .
+      - run: |
+          python - <<'PY'
+          import re, time
+          from infrastructure.http.browserlike import BrowserlikeClient
+          with BrowserlikeClient() as c:
+              r = c.get("https://galerimplus.com/sitemap-listings.xml")
+              urls = re.findall(r"<loc>(https://galerimplus\.com/araclar/[^<]+)</loc>", r.text)
+              print("sitemap", r.status_code, len(urls))
+              for u in ["https://galerimplus.com/"] + urls[:2]:
+                  time.sleep(3)
+                  r = c.get(u)
+                  print(r.status_code, u[:60], "blocked" if "you have been blocked" in r.text.lower() else "ok", len(r.text))
+          PY
