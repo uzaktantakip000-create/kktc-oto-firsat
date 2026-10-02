@@ -9,6 +9,7 @@ dependencies = [
     "psycopg[binary]>=3",
     "python-telegram-bot>=21",
     "apify-client",
+    "scrapling[fetchers]>=0.4",  # tarayıcı parmak izli HTTP (curl_cffi); tarayıcı kurulumu gerekmez
 ]
 
 [tool.pytest.ini_options]

@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from domain.caption_parser import normalize_phone
 from domain.engine import engine_liters
 from domain.price import parse_price
+from infrastructure.http.browserlike import new_browserlike_client
 
 BASE = "https://kibriscars.com"
 SITEMAP = f"{BASE}/listing-sitemap.xml"
@@ -159,8 +160,9 @@ def fetch_detail(client: httpx.Client, entry: Entry) -> dict | None:
     return parse_detail(r.text)
 
 
-def new_client() -> httpx.Client:
-    return httpx.Client(headers={"User-Agent": UA}, follow_redirects=True)
+def new_client():
+    """Veri merkezi engelini (GitHub Actions 403/429) aşmak için tarayıcı parmak izli istemci; Scrapling yoksa httpx."""
+    return new_browserlike_client(UA)
 
 
 def polite_sleep() -> None:

@@ -20,7 +20,7 @@ SCHEDULE = {
     "mezunum": (30, 60),  # küçük site; 3 sn aralıklı nazik tarama
     "kibriscars": (30, 60),  # durgun site (ayda birkaç ilan); 3 sn aralıklı nazik tarama
     "pazarkibris": (30, 60),  # liste sayfası başına tek istek (veri sayfaya gömülü)
-    "sahibindenarabakibris": (720, 720),  # durgun site (Mart'tan beri ~4 ilan); 30 dk'da bir 429 "çok fazla istek" verdi: günde 2 kez
+    "sahibindenarabakibris": (60, 120),  # durgun site (Mart'tan beri ~4 ilan); GitHub IP'sine 429 veriyordu, tarayıcı parmak izli istemciyle (browserlike) geri döndü
     "instagram": (15, 120),  # özel satıcılar burada; ücret gönderi başına ve imleçle yalnızca yeni gönderi çekilir: sık bakmak ucuz
     "facebook": (120, 480),  # gündüz 2 saatte bir, gece 8 saatte bir (kullanıcı kararı); gönderi başına ücret, aylık tavan collect_facebook'ta
 }

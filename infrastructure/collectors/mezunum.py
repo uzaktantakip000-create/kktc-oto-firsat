@@ -7,10 +7,10 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-import httpx
 from selectolax.parser import HTMLParser
 
 from domain.caption_parser import normalize_phone
+from infrastructure.http.browserlike import new_browserlike_client
 
 BASE = "https://mezunumsatiyorumkibris.com.tr"
 LIST_URL = BASE + "/ilanlar/kktc-araba"
@@ -31,8 +31,9 @@ def polite_sleep() -> None:
     time.sleep(CRAWL_DELAY)
 
 
-def new_client() -> httpx.Client:
-    return httpx.Client(headers={"User-Agent": UA}, follow_redirects=True, timeout=30)
+def new_client():
+    """Veri merkezi engelini (GitHub Actions 403/429) aşmak için tarayıcı parmak izli istemci; Scrapling yoksa httpx."""
+    return new_browserlike_client(UA)
 
 
 def parse_list(html: str) -> list[Entry]:
