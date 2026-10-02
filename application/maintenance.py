@@ -35,7 +35,7 @@ def summary_line(repo: Repository) -> str | None:
         return None
     if not r:
         return None
-    short = {"fiyat_ucuz_supheli": "fiyat çok ucuz", "fiyat_pahali_supheli": "fiyat çok pahalı",
+    short = {"fiyat_yer_tutucu": "fiyat yer tutucu", "fiyat_ucuz_supheli": "fiyat çok ucuz", "fiyat_pahali_supheli": "fiyat çok pahalı",
              "yil_supheli": "yıl makul değil", "km_supheli": "km makul değil"}
     parts = ", ".join(f"{n} {short.get(k, k)}" for k, n in r["nedenler"].items())
     return (f"• Gece bakımı: {r['kontrol']} ilan tarandı, {r['karantina']} şüpheli ilan karantinada"

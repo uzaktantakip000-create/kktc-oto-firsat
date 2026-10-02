@@ -5,12 +5,19 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 
+import httpx
 from apify_client import ApifyClient
 
 ACTOR = "memo23/facebook-public-group-posts-scraper"
 START_COST = 0.008  # çalıştırma başlangıç ücreti (GB başına)
 POST_COST = 0.0015  # gönderi başına
 _ID = re.compile(r"/permalink/(\d+)")
+MAX_IMAGE_BYTES = 5_000_000  # fotoğraftan fiyat okuma: bundan büyük görsel indirilmez
+IMAGE_TIMEOUT = 15
+# Aktörün görsel alanı örnek veriyle DOĞRULANMADI (kayıtlı ham satır yok): bilinen/olası anahtarlar sırayla denenir
+_IMAGE_KEYS = ("image", "imageUrl", "image_url", "full_picture", "picture", "thumbnail", "photo", "photoUrl",
+               "media", "images", "photos", "attachments", "attachment")
+_IMG_URL = re.compile(r"^https?://\S+$")
 
 
 @dataclass(frozen=True)
@@ -20,6 +27,56 @@ class RawGroupPost:
     posted_at: datetime | None
     text: str
     group_url: str  # çalıştırmaya verilen grup adresi (kaynağı bulmak için)
+    image_url: str | None = None  # gönderinin ilk fotoğrafı (yalnızca fiyatı yazıda olmayan araç gönderisinde okunur)
+
+
+def _first_image(value, depth: int = 0) -> str | None:
+    """Görsel alanından (metin, sözlük ya da liste) ilk http(s) görsel adresi."""
+    if isinstance(value, str):
+        return value if _IMG_URL.match(value) else None
+    if depth > 3:
+        return None
+    if isinstance(value, dict):
+        for k in ("uri", "url", "src", "photo_image", "image", "full_picture", "original", "large", "thumbnail"):
+            if k in value and (u := _first_image(value[k], depth + 1)):
+                return u
+    elif isinstance(value, list):
+        for v in value:
+            if u := _first_image(v, depth + 1):
+                return u
+    return None
+
+
+def item_image(item: dict) -> str | None:
+    for key in _IMAGE_KEYS:
+        if key in item and (u := _first_image(item[key])):
+            return u
+    return None
+
+
+def fetch_image(url: str, client: httpx.Client | None = None) -> tuple[bytes, str] | None:
+    """Fotoğrafı indirir: yalnızca image/*, en çok 5 MB, 15 sn. Başarısızlıkta None (gönderi fotoğrafsız ele alınır)."""
+    own = client is None
+    client = client or httpx.Client(follow_redirects=True, timeout=IMAGE_TIMEOUT)
+    try:
+        with client.stream("GET", url, timeout=IMAGE_TIMEOUT) as r:
+            mime = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
+            if r.status_code != 200 or not mime.startswith("image/"):
+                return None
+            size = int(r.headers.get("content-length") or 0)
+            if size > MAX_IMAGE_BYTES:
+                return None
+            data = bytearray()
+            for chunk in r.iter_bytes():
+                data += chunk
+                if len(data) > MAX_IMAGE_BYTES:
+                    return None
+            return (bytes(data), mime) if data else None
+    except (httpx.HTTPError, ValueError):
+        return None
+    finally:
+        if own:
+            client.close()
 
 
 def parse_item(item: dict) -> RawGroupPost | None:
@@ -37,6 +94,7 @@ def parse_item(item: dict) -> RawGroupPost | None:
         posted_at=datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else None,
         text=text,
         group_url=(item.get("inputUrl") or "").rstrip("/"),
+        image_url=item_image(item),
     )
 
 

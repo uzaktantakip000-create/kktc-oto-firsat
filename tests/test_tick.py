@@ -7,17 +7,18 @@ NIGHT = datetime(2026, 10, 2, 1, 0, tzinfo=timezone.utc)  # KKTC 04:00
 
 
 def test_first_run_everything_is_due():
-    assert set(due_jobs(DAY, {})) == {"kktcar", "kibrisarabaal", "instagram", "facebook", "mezunum"}
+    assert set(due_jobs(DAY, {})) == {"kktcar", "kibrisarabaal", "instagram", "facebook", "mezunum", "kibriscars", "pazarkibris", "sahibindenarabakibris"}
 
 
 def test_only_jobs_whose_interval_passed_are_due():
     last = {"kktcar": DAY - timedelta(minutes=16), "kibrisarabaal": DAY - timedelta(minutes=5),
-            "instagram": DAY - timedelta(minutes=13), "facebook": DAY - timedelta(minutes=60), "mezunum": DAY - timedelta(minutes=10)}
+            "instagram": DAY - timedelta(minutes=13), "facebook": DAY - timedelta(minutes=60), "mezunum": DAY - timedelta(minutes=10),
+            "kibriscars": DAY - timedelta(minutes=10), "pazarkibris": DAY - timedelta(minutes=10), "sahibindenarabakibris": DAY - timedelta(minutes=10)}
     assert set(due_jobs(DAY, last)) == {"kktcar", "instagram"}  # instagram gündüz 15 dk (13 dk geçti, 3 dk tolerans)
 
 
 def test_night_runs_less_often():
-    last = {j: NIGHT - timedelta(minutes=20) for j in ("kktcar", "kibrisarabaal", "instagram", "facebook", "mezunum")}
+    last = {j: NIGHT - timedelta(minutes=20) for j in ("kktcar", "kibrisarabaal", "instagram", "facebook", "mezunum", "kibriscars", "pazarkibris", "sahibindenarabakibris")}
     assert due_jobs(NIGHT, last) == []  # gece aralıkları 30/60/120 dk
 
 

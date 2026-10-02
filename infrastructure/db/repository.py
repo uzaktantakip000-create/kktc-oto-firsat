@@ -1,7 +1,7 @@
 import psycopg
 from psycopg.rows import dict_row
 
-from domain.normalize import normalize_brand, normalize_model
+from domain.normalize import normalize_brand, normalize_model, reclassify_non_car
 
 
 class Repository:
@@ -64,7 +64,8 @@ class Repository:
     @staticmethod
     def norm_keys(brand: str | None, model: str | None) -> dict:
         b = normalize_brand(brand)
-        return {"brand_norm": b, "model_norm": normalize_model(b, model)}
+        m = normalize_model(b, model)
+        return {"brand_norm": reclassify_non_car(b, m, model), "model_norm": m}  # motosiklet/kamyon araba markası altında kalmasın
 
     # --- değerleme ---
     def market_pool(self, days: int = 120) -> list[dict]:

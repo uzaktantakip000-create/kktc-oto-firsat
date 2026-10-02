@@ -1,6 +1,7 @@
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
 
 from application.llm_reader import LlmReader, listing_fields
 from domain.freetext_parser import diagnose, parse_freetext
@@ -9,7 +10,8 @@ from infrastructure.collectors.facebook_groups import RawGroupPost
 from infrastructure.db.repository import Repository
 from infrastructure.fx.frankfurter import gbp_rate
 
-MONTHLY_BUDGET_USD = 45.0  # aylık Apify harcama tavanı (grup toplama); aşılırsa o ay toplama durur (kullanıcı kararı: gündüz 2 saatte bir)
+MONTHLY_BUDGET_USD = 60.0  # aylık Apify harcama tavanı (grup toplama); aşılırsa o ay toplama durur (kullanıcı kararı: gündüz 2 saatte bir; 45 -> 60)
+MAX_PHOTO_READS = 30  # tur başına en çok fotoğraftan fiyat okuma (yapay zekâ görsel okuması)
 MAX_ITEMS_PER_GROUP = 40
 MAX_HOURS = 14
 
@@ -21,6 +23,7 @@ class FbStats:
     skipped: int = 0  # ilan değil / fiyat-yıl-marka belirsiz: HİÇBİR ŞEY saklanmaz
     spent_usd: float = 0.0
     llm_read: int = 0  # kural okuyamadı (fiyat/yıl yazım biçimi), yapay zekâ okudu (en fazla 🟡)
+    photo_read: int = 0  # fiyatı yazıda olmayan araç gönderisi: ilk fotoğraftaki fiyat okundu (extraction_by='llm')
     reasons: dict[str, int] = field(default_factory=dict)  # ilan sayılmayan gönderilerin nedeni (sayaç)
 
 
@@ -59,6 +62,33 @@ def llm_listing_data(post: RawGroupPost, source: dict, reader: LlmReader) -> dic
             "currency_guess": False, "negotiable": False} | fields
 
 
+PHOTO_TRIED_KEY = "fb_photo_tried"
+PHOTO_TRIED_KEEP = 600
+
+
+def _photo_tried(repo: Repository) -> list[str]:
+    try:
+        return list(json.loads(repo.get_state(PHOTO_TRIED_KEY, "[]") or "[]"))
+    except ValueError:
+        return []
+
+
+def photo_listing_data(post: RawGroupPost, source: dict, reader: LlmReader, fetch_image) -> dict | None:
+    """Fiyatı yazıda olmayan araç gönderisi: ilk fotoğraftaki yazı okunur, gönderi metnine eklenir, aynı okuma yolu (kural, sonra
+    yapay zekâ) yeniden çalışır. Sonuç HER ZAMAN extraction_by='llm': 🟢 olamaz, emsale girmez; 🟠 için bağımsız ikinci okuma gerekir."""
+    img = fetch_image(post.image_url)
+    if img is None:
+        return None
+    text = reader.read_image(*img)
+    if not text:
+        return None
+    combined = replace(post, text=f"{post.text}\n{text}")
+    data = listing_data(combined, source) or llm_listing_data(combined, source, reader)
+    if data is None:
+        return None
+    return data | {"extraction_by": "llm", "raw_text": combined.text}
+
+
 def _month_key(now: datetime) -> str:
     return f"fb_spend:{now:%Y-%m}"
 
@@ -80,7 +110,7 @@ def _count_funnel(repo: Repository, result: dict[str, FbStats], now: datetime) -
 
 def collect_facebook_groups(repo: Repository, apify_token: str, sources: list[dict],
                             fetch=facebook_groups.fetch_group_posts, now: datetime | None = None,
-                            reader: LlmReader | None = None) -> dict[str, FbStats]:
+                            reader: LlmReader | None = None, fetch_image=facebook_groups.fetch_image) -> dict[str, FbStats]:
     now = now or datetime.now(timezone.utc)
     if not sources:
         return {}
@@ -96,6 +126,8 @@ def collect_facebook_groups(repo: Repository, apify_token: str, sources: list[di
     result = {s["name"]: FbStats() for s in sources}
     known = {s["id"]: repo.known_item_ids(s["id"]) for s in sources} if reader else {}
     newest: dict[str, datetime] = {}
+    photos = 0
+    tried = _photo_tried(repo)  # aynı gönderiye (pencereler örtüşür) ikinci kez görsel okuma parası harcanmasın
     for post in posts:
         source = by_url.get(post.group_url)
         if source is None:
@@ -111,12 +143,26 @@ def collect_facebook_groups(repo: Repository, apify_token: str, sources: list[di
                 data = llm_listing_data(post, source, reader)
                 if data:
                     st.llm_read += 1
+            if data is None and reader and why == "fiyat_yok" and post.image_url and photos < MAX_PHOTO_READS \
+                    and post.post_id not in known.get(source["id"], ()) \
+                    and post.post_id not in tried:  # fiyat yazıda yok: ilk fotoğrafa bak
+                photos += 1
+                tried.append(post.post_id)
+                data = photo_listing_data(post, source, reader, fetch_image)
+                if data:
+                    st.photo_read += 1
+                    st.reasons["foto_fiyat"] = st.reasons.get("foto_fiyat", 0) + 1
+                elif why == "fiyat_yok":
+                    st.reasons["foto_okunamadi"] = st.reasons.get("foto_okunamadi", 0) + 1
+            elif data is None and why == "fiyat_yok" and not post.image_url:
+                st.reasons["foto_url_yok"] = st.reasons.get("foto_url_yok", 0) + 1  # aktör görsel alanı vermedi (şablon kontrolü için sayaç)
             if data is None:
                 st.skipped += 1
                 st.reasons[why] = st.reasons.get(why, 0) + 1
                 continue
         if repo.upsert_listing(source["id"], post.post_id, data):
             st.new += 1
+    repo.set_state(PHOTO_TRIED_KEY, json.dumps(tried[-PHOTO_TRIED_KEEP:]))
     _count_funnel(repo, result, now)
     share = round(spent / len(sources), 4)
     for source in sources:

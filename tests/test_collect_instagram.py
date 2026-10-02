@@ -73,4 +73,4 @@ def test_account_without_posts_gets_a_cursor_so_it_joins_the_main_group(monkeypa
 def test_monthly_budget_blocks_collection():
     import pytest
     with pytest.raises(RuntimeError, match="tavan"):
-        ci.collect_sources(FakeRepo(spent="8.0"), "tok", [dict(id="A", name="A", url="https://www.instagram.com/a/", cursor=None)])
+        ci.collect_sources(FakeRepo(spent=str(ci.MONTHLY_BUDGET_USD)), "tok", [dict(id="A", name="A", url="https://www.instagram.com/a/", cursor=None)])
