@@ -369,3 +369,56 @@ Kullanıcı isteği: Facebook'ta Kuzey Kıbrıs araç satış grupları (Marketp
 - **Kaynak keşfi (`application/discovery.py`, ücretsiz):** ilan metinlerinde ≥2 ilanda anılan @hesaplar haftada bir "Ekle / Geç" düğmeleriyle sahibe önerilir; onay olmadan hiçbir hesap taranmaz. (Apify hashtag keşfi YAPILMADI.)
 - **Instagram maliyet hatası (düzeltildi):** imleçsiz yeni iki hesap yüzünden her tur tüm hesapların son 3 günü yeniden çekiliyordu (80 gönderi ≈ $0,136/tur; 15 dk'da günde ≈$8) ve sabitlenmiş gönderiler her çağrıda ücretleniyordu. Şimdi `skipPinnedPosts`, her tur yalnızca önceki turdan (`ig_watermark` − 20 dk) sonrası, imleçsiz hesaplar ayrı tek seferlik çağrı (gönderi yoksa imleç verilir). Gerçek Apify ölçümü (02.10): Facebook 2 saatlik pencere ≈100 gönderi ≈ $0,24/çalıştırma → gündüz 2 saatte bir **≈$50–60/ay** (tavan $45: ay sonuna doğru Facebook durabilir; karar kullanıcıda).
 - **Ölçümler:** satılan ilanların son istenen fiyatı / aktif medyan ≈ 0,99 (67 ilan) → ilanlar zaten piyasa fiyatından çıkıyor, pazarlık payı bu veriyle ölçülemez; %5 çarpanı korunur, gerçek alış/satış bilgisi gerekir.
+
+## 22. Değer tablosu ve 🟠 tahmini fırsat (02.10.2026)
+
+Sahibin kararları:
+- Değerden %30+ ucuz ilan hemen gelir, 🟠 etiketiyle. Günlük sınır yok; yalnızca arıza freni var: bir turda 15'ten fazla 🟠 çıkarsa tek özet mesaj gider.
+- Tablo Telegram'dan sorulur: `/fiyat corolla 2014`.
+- Varyant ayrımı otomatiktir.
+- Gerçek satışlar `/satti` ile girilir; eğride 3 kat ağırlık alır.
+- Değer bir gecede %15'ten fazla değişirse satır şüpheli olur, 2 gece aynı kalırsa kabul edilir.
+- Bütçe: Facebook $60, Instagram $10, günlük yapay zekâ tavanı $0.40.
+
+**Değer tablosu**
+- Yeri: `domain/price_book.py`, `application/price_book_job.py`, `infrastructure/db/price_book_store.py`. Migration 013 eklendi (tablolar `price_book`, `price_curves`, `owner_sales`; `evaluations.method`).
+- Her gece UTC 0–3 arası kurulur. Üç yöntem var:
+  - **A:** aynı model, yıl ±1, fiyatlar aynı yıl/km'ye çekilir, medyan alınır. Satıcı başına en fazla 2 ilan.
+  - **B:** model eğrisi, ridge `ln p ~ yaş + km/10k`. Koşul: ≥8 ilan, ≥3 yıl, σ ≤ 0,30. Galeriler eğride düşük ağırlık alır.
+  - **C:** marka eğrisi; yalnızca bilgi verir.
+- Gece öz-kontrolü: son 30 günün ilanları eğriyle karşılaştırılır. Modelin ortanca hatası %25'ten büyükse o model 🟠 için kapanır.
+- İlk kurulum: 1.094 satır, 47 eğri, isabet %88. Fiyatı bilinen güncel araç oranı %45 → %70.
+
+**🟠 tahmini fırsat**
+- Karar yeri: `application/evaluate.assess_listing`. Yalnızca emsal yoksa ya da 8'den azsa devreye girer.
+- Koşullar:
+  - fiyat ≤ 0,80 × eğrinin alt sınırı, alt sınır = değer·exp(−1,53σ)
+  - alt sınır·0,95 − fiyat − £300 ≥ £750
+  - fiyat ≥ değerin %40'ı
+  - emsal varsa fiyat ≤ emsal medyanının %85'i
+  - km ve yıl biliniyor, eğri aralığında
+  - sol direksiyon değil, eğride ≥5 satıcı
+- Her 🟠 adayı yapay zekâ ile bağımsız ikinci okumadan geçer. Okuma `sorun` alanını da doldurur: hasar, pert, borç, gümrük vb. için birebir alıntı ister.
+  - Uyuşmazlık ya da sorun çıkarsa 🟠 → 🟡 olur.
+  - Fiyatı yapay zekânın okuduğu ilan, ancak ikinci okuma fiyatı doğrularsa 🟠 olur.
+- Öğrenme (`application/estimate_guard.py`):
+  - Bir modelin 🟠'una 30 günde 2 kez "yanlış fiyat" ya da "kusurlu" basılırsa o model 🟠 vermez.
+  - Son 10 🟠'nın 5'i yanlış işaretlenirse eşik 0,05 sıkılaşır.
+- Kuru deneme (`admin_cli shadow-tahmini --days 14`): 10 aday çıktı, 2'si aktif ilandı (2017 A180 £9.000, 2008 Auris £4.084). Kalanlar satılmış ilanlardı.
+
+**Kuru denemede bulunan hata**
+- KibrisArabaAl'da "Yıl:" alanı plakasız araçta kayıt yılını gösteriyor (2022), ilan başlığında ise model yılı yazıyor (2013).
+- Artık iki yıl çelişirse eski yıl alınıyor. Mevcut 97 ilan URL'deki yılla düzeltildi.
+
+**Yeni kaynaklar (migration 014)**
+- KibrisCars ve SahibindenArabaKibris aktif, anlık bildirir.
+- PazarKibris aday kaldı: ilanların yalnızca %5'inde fiyat var.
+- 75 ilan araba markasından çıkarıldı: motosiklet, kamyon, tekne.
+- Yeni tuzak kelimeleri: pert, airbag, vuruk, su basmış.
+- Facebook'ta fiyatı yazmayan gönderinin ilk fotoğrafı okunur. Sonuç `extraction_by='llm'` olur, en fazla 🟡/🟠.
+
+**Açık konular**
+- Facebook aktörünün görsel alanı doğrulanmadı; `foto_url_yok` sayacına bakılacak.
+- Toyota Corolla eğrisi yok: veri 1993–99 ve 2020–25 olarak iki uca bölünmüş, σ 0,32 çıkıyor.
+- KKTCar'daki eski TL fiyatlı satılmış ilanlar bugünkü kurla ucuz görünüyor olabilir; kontrol edilecek.
+- `same_car` km karşılaştırmasında `effective_km` kullanmıyor.
