@@ -83,6 +83,12 @@ def parse_detail(html: str) -> dict | None:
         year = int(node.get("vehicleModelDate") or re.sub(r"\D", "", f.get("Yıl:", "")))
     except ValueError:
         return None
+    # Satıcının başlığı ("2013 Model Otomatik Nissan Juke") ile "Yıl:" alanı (plakasız araçta çoğu zaman ithal/kayıt yılı: 2022)
+    # çelişebiliyor: eski yılı al (değeri düşük tahmin eder; yanlış 🟢/🟠 yerine kaçan fırsat)
+    h1 = tree.css_first("h1")
+    m = re.match(r"\s*((?:19|20)\d{2})\s+model\b", h1.text(strip=True).lower()) if h1 else None
+    if m and 1970 <= int(m.group(1)) < year:
+        year = int(m.group(1))
     price = offer.get("price")
     amount = float(price) if price not in (None, "") else None
     currency = offer.get("priceCurrency") or None

@@ -58,3 +58,9 @@ def test_template_change_is_unreadable_not_gone():
     assert fetch_detail(_Client(_Resp(200, same, "<html><body>yeni tasarım</body></html>")), _entry()) is None  # tekrar denenir
     assert fetch_detail(_Client(_Resp(200, same, HTML)), _entry())["brand"] == "Mazda"
     assert fetch_detail(_Client(_Resp(503, same)), _entry()) is None
+
+
+def test_baslik_yili_ile_alan_yili_celisirse_eski_yil_alinir():
+    # Sayfada "Yıl: 2022" (plakasız aracın kayıt yılı) ama başlık "2013 Model Otomatik Nissan Juke"
+    d = parse_detail((Path(__file__).parent / "fixtures/kibrisarabaal_detail_juke_year.html").read_text())
+    assert d["year"] == 2013 and d["brand"] == "Nissan"
