@@ -12,6 +12,7 @@ from application.collect_mezunum import collect_mezunum
 from application.collect_kktcarabam import collect_kktcarabam
 from application import llm_reader
 from application.health import report_collect_errors
+from application.source_alarm import track_collect
 from infrastructure.config import load_env, redact, require
 from infrastructure.fx import frankfurter
 from infrastructure.db.repository import Repository
@@ -29,10 +30,12 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
                                            reader=llm_reader.from_env(repo)).items():
                 print(f"{name}: çekilen={st.fetched} yeni={st.new} parser={st.parsed} llm_okudu={st.llm_read} "
                       f"okunamadı={st.needs_llm - st.llm_read} satıldı={st.sold}")
+            track_collect(repo, "Instagram (toplu)")
         except Exception as e:
             msg = redact(f"{type(e).__name__}: {str(e)[:150]}")
             print(f"Instagram (toplu): HATA {msg}")
             errors.append(("Instagram (toplu)", msg))
+            track_collect(repo, "Instagram (toplu)", msg)
         return errors
     if job == "facebook":
         token = require("APIFY_TOKEN")
@@ -41,10 +44,12 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
             for name, st in collect_facebook_groups(repo, token, sources, reader=llm_reader.from_env(repo)).items():
                 print(f"{name}: çekilen={st.fetched} yeni={st.new} llm_okudu={st.llm_read} ilan_değil={st.skipped} "
                       f"tahmini_maliyet=${st.spent_usd}")
+            track_collect(repo, "Facebook grupları")
         except Exception as e:
             msg = redact(f"{type(e).__name__}: {str(e)[:150]}")
             print(f"Facebook grupları: HATA {msg}")
             errors.append(("Facebook grupları", msg))
+            track_collect(repo, "Facebook grupları", msg)
         return errors
     needle, fn = {"kktcar": ("kktcar.com", collect_kktcar), "kktcarabam": ("kktcarabam.com", collect_kktcarabam),
                     "kibrisarabaal": ("kibrisarabaal.com", collect_kibrisarabaal),
@@ -56,10 +61,12 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
         if needle in source["url"]:
             try:
                 print(f"{source['name']}: {fn(repo, source)}")
+                track_collect(repo, source["name"])
             except Exception as e:
                 msg = redact(f"{type(e).__name__}: {str(e)[:150]}")
                 print(f"{source['name']}: HATA {msg}")
                 errors.append((source["name"], msg))
+                track_collect(repo, source["name"], msg)
     return errors
 
 

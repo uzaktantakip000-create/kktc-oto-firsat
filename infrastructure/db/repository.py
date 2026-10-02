@@ -368,6 +368,56 @@ class Repository:
             (window, max_bad),
         ).fetchall()
 
+    def recent_opportunities(self, limit: int = 10) -> list[dict]:
+        """Gönderilmiş son 🟢/🟠 fırsatlar (en yeni önce, ilan başına tek satır) ve sahibin son düğme cevabı (/son komutu)."""
+        return self.conn.execute(
+            """SELECT l.id, l.url, l.year, l.brand, l.model, l.price_gbp::float8 AS price_gbp, x.tier, x.sent_at,
+                      e.median::float8 AS median_gbp,
+                      (SELECT f.action FROM feedback f WHERE f.listing_id = l.id AND f.action NOT LIKE 'audit_%%'
+                       ORDER BY f.created_at DESC LIMIT 1) AS feedback
+               FROM (SELECT listing_id, tier, MIN(sent_at) AS sent_at FROM alerts
+                     WHERE tier IN ('guclu','tahmini') GROUP BY listing_id, tier) x
+               JOIN listings l ON l.id = x.listing_id
+               LEFT JOIN LATERAL (SELECT market_median_gbp AS median FROM evaluations WHERE listing_id = l.id
+                                  ORDER BY evaluated_at DESC LIMIT 1) e ON TRUE
+               ORDER BY x.sent_at DESC LIMIT %s""", (limit,)).fetchall()
+
+    def week_alert_counts(self, days: int = 7) -> dict[str, int]:
+        """Son 'days' günde gönderilen fırsat sayısı (ilan bazında): {'guclu': n, 'tahmini': n}."""
+        rows = self.conn.execute(
+            """SELECT tier, count(DISTINCT listing_id) AS n FROM alerts
+               WHERE tier IN ('guclu','tahmini') AND sent_at > NOW() - make_interval(days => %s) GROUP BY tier""", (days,)).fetchall()
+        return {r["tier"]: r["n"] for r in rows}
+
+    def week_feedback_counts(self, days: int = 7) -> dict[str, int]:
+        """Son 'days' günde basılan düğmeler (denetim hariç): {eylem: adet}."""
+        rows = self.conn.execute(
+            """SELECT action, count(*) AS n FROM feedback
+               WHERE action NOT LIKE 'audit_%%' AND created_at > NOW() - make_interval(days => %s) GROUP BY action""", (days,)).fetchall()
+        return {r["action"]: r["n"] for r in rows}
+
+    def alert_marks_since(self, prefix: str, days: int = 7) -> list[str]:
+        """'alert:<prefix>...' işaretlerinden son 'days' günde atılanların anahtar sonekleri (öğrenme olayları için)."""
+        rows = self.conn.execute(
+            """SELECT substr(key, %s) AS rest FROM bot_state
+               WHERE key LIKE %s AND value ~ '^[0-9]{4}-' AND value::timestamptz > NOW() - make_interval(days => %s)""",
+            (len("alert:" + prefix) + 1, "alert:" + prefix + "%", days)).fetchall()
+        return [r["rest"] for r in rows]
+
+    def source_names(self, ids: list[str]) -> list[str]:
+        return [r["name"] for r in self.conn.execute(
+            "SELECT name FROM sources WHERE id::text = ANY(%s) ORDER BY name", (ids,)).fetchall()]
+
+    def alarm_sources(self) -> list[dict]:
+        """Anlık kaynak alarmı için: aktif ve en az bir kez taranmış kaynaklar, son başarılı taramadan beri geçen saatle."""
+        return self.conn.execute(
+            """SELECT id, name, platform, url, EXTRACT(EPOCH FROM (NOW() - last_checked_at)) / 3600 AS hours_since_check
+               FROM sources WHERE status = 'aktif' AND last_checked_at IS NOT NULL""").fetchall()
+
+    def state_with_prefix(self, prefix: str) -> dict[str, str]:
+        rows = self.conn.execute("SELECT key, value FROM bot_state WHERE key LIKE %s", (prefix + "%",)).fetchall()
+        return {r["key"][len(prefix):]: r["value"] for r in rows}
+
     def mentioned_handles(self, days: int = 30, min_posts: int = 2) -> list[dict]:
         """İlan metinlerinde '@hesap' olarak anılan hesaplar ve kaç farklı ilanda anıldıkları (kaynak keşfi için)."""
         return self.conn.execute(

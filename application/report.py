@@ -1,10 +1,13 @@
 """Haftalık rapor (Telegram, sahibe): sistem sağlıklı mı, alarmlar işe yarıyor mu?"""
+import json
+
 from application.backtest import run_backtest
 from application.health import notify_owner
 from infrastructure.db.repository import Repository
 
 FEEDBACK_LABELS = {"ilgilendim": "ilgilendim", "pas": "pas", "yanlis_fiyat": "yanlış fiyat",
                    "satilmis": "zaten satılmış", "kusurlu": "kusurlu/sahte"}
+NUDGE = "Düğmelere basarsan sistem senin zevkine göre öğrenir; bu hafta hiç basılmadı."
 
 
 def _pct(part, whole) -> str:
@@ -41,16 +44,63 @@ def quality_card(repo: Repository) -> list[str]:
     return out
 
 
+def _learned(repo: Repository) -> list[str]:
+    """Bu hafta sistemin kendiliğinden yaptığı değişiklikler (sade cümlelerle)."""
+    out = []
+    models = [m.replace("|", " ") for m in repo.alert_marks_since("est_off:")]
+    if models:
+        out.append("🟠 vermeyi bıraktığım modeller (çok 'yanlış' dedin): " + ", ".join(sorted(models)))
+    if repo.alert_marks_since("est_tighten"):
+        try:
+            out.append(f"🟠 için eşiği sıkılaştırdım: fiyat artık en kötü ihtimal değerin "
+                       f"%{float(repo.get_state('cfg:est_min_discount_to_lower')) * 100:.0f}'i ya da altında olmalı")
+        except (TypeError, ValueError):
+            out.append("🟠 için eşiği sıkılaştırdım")
+    ids = repo.alert_marks_since("guard:")
+    names = repo.source_names(ids) if ids else []
+    if names:
+        out.append("anlık bildirimden günlük özete aldığım kaynaklar: " + ", ".join(names))
+    muted = [m for m in (repo.get_state("cfg:muted_models", "") or "").split(",") if m]
+    if muted:
+        out.append(f"günlük özete aldığın model sayısı (toplam): {len(muted)}")
+    return out
+
+
+def _book_line(repo: Repository) -> str | None:
+    try:
+        r = json.loads(repo.get_state("pb:stats") or "")
+        line = f"Değer tablomda {r['rows']} model-yıl satırı var, {r['settled']} tanesi sağlam"
+    except (ValueError, KeyError, TypeError):
+        return None
+    if r.get("error") is not None:
+        line += f", isabet %{max(0, round(100 - r['error'] * 100))}"
+    return line
+
+
+def karne_lines(repo: Repository) -> list[str]:
+    """Haftalık karne: kaç fırsat gitti, düğmelere basıldı mı, sistem ne öğrendi, değer tablosu nasıl."""
+    sent, fb = repo.week_alert_counts(7), repo.week_feedback_counts(7)
+    n_sent, n_fb = sent.get("guclu", 0) + sent.get("tahmini", 0), sum(fb.values())
+    lines = ["🏁 Haftalık karne", f"• Bu hafta sana {sent.get('guclu', 0)} tane 🟢 ve {sent.get('tahmini', 0)} tane 🟠 fırsat gönderdim."]
+    if n_fb:
+        split = ", ".join(f"{FEEDBACK_LABELS.get(a, a)} {n}" for a, n in sorted(fb.items(), key=lambda x: -x[1]))
+        lines.append(f"• Düğmeye bastığın: {n_fb} ({split})")
+    elif n_sent:
+        lines.append("• " + NUDGE)
+    learned = _learned(repo)
+    lines.append("• Bu hafta kendiliğinden öğrendiklerim:" + ("" if learned else " bir şey değiştirmedim."))
+    lines += [f"   - {x}" for x in learned]
+    book = _book_line(repo)
+    if book:
+        lines.append("• 📘 " + book)
+    return lines
+
+
 def weekly_report_text(repo: Repository) -> str:
     q = lambda sql, *a: repo.conn.execute(sql, a).fetchall()
     lines = ["📊 Haftalık rapor (son 7 gün)"]
 
-    alerts = q("SELECT tier, count(*) n FROM alerts WHERE sent_at > NOW() - interval '7 days' GROUP BY tier")
-    lines.append("🔔 Gönderilen bildirim: " + (", ".join(f"{a['tier']}={a['n']}" for a in alerts) or "yok"))
-
-    fb = q("SELECT action, count(*) n FROM feedback WHERE created_at > NOW() - interval '7 days' GROUP BY action")
-    lines.append("👍 Geri bildirim: " + (", ".join(f"{FEEDBACK_LABELS.get(f['action'], f['action'])}={f['n']}" for f in fb)
-                                       or "henüz yok — düğmelere basarsan sistem öğrenir"))
+    lines += karne_lines(repo)
 
     for s in q("SELECT name, listings_7d, status FROM sources WHERE status IN ('aktif','deneme') "
                "AND (platform='instagram' OR url LIKE '%%kktcar%%' OR url LIKE '%%kibrisarabaal%%') ORDER BY name"):
