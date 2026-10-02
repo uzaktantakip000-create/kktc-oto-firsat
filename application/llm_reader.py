@@ -7,15 +7,18 @@ from datetime import datetime, timezone
 
 from application.evaluate import Evaluated
 from domain.llm_read import LlmRead, compare, parse_llm_read
+from domain.profit import Tier
 from infrastructure.db.repository import Repository
 from infrastructure.fx.frankfurter import gbp_rate
 from infrastructure.llm import openrouter
 
-DAILY_BUDGET_USD = 0.15  # günlük yapay zekâ okuma harcama tavanı (aylık ≈ $4.5)
+DAILY_BUDGET_USD = 0.40  # günlük yapay zekâ okuma harcama tavanı (🟠 ikinci okuma + Facebook fotoğraf okuma dahil)
 SOCIAL = ("instagram", "facebook")
 FREE_TEXT = ("parser_serbest", "llm")  # serbest metinden okunan ilan (site olsa bile) bağımsız okumadan geçer
 UNCHECKED = "yapay zekâ kontrolü yapılamadı (kontrol edilmedi)"
 UNCONFIRMED = "yapay zekâ fiyatı doğrulayamadı"
+OK_CHECK = "✅ Yapay zekâ ilanı bağımsız okudu, fiyat uyuşuyor"
+OK_CHECK_EST = "✅ Yapay zekâ ilanı bağımsız okudu: fiyat uyuşuyor, ucuzluk için gizli sorun görmedi"
 
 
 class LlmReader:
@@ -84,33 +87,65 @@ def listing_fields(read: LlmRead | None) -> dict | None:
     }
 
 
+def _drop(repo: Repository, ev: Evaluated, flags: list[str], verdict: str) -> None:
+    repo.downgrade_evaluation(ev.listing["id"], flags)
+    repo.set_state(_verify_key(ev), verdict)
+
+
+def _verify_key(ev: Evaluated) -> str:
+    """🟠 için fiyat da anahtarda: fiyat değişince eski 'tamam/kötü' kararı geçerli sayılmaz."""
+    est = ev.profit is not None and ev.profit.tier is Tier.ESTIMATED
+    return f"verify:{ev.listing['id']}" + (f":t{ev.listing.get('price_gbp')}" if est else "")
+
+
 def verify_candidates(repo: Repository, reader: LlmReader | None, evs: list[Evaluated]) -> list[Evaluated]:
-    """Sosyal medyadan gelen 🟢 adaylarını bağımsız okutur. Uyuşmazlık: 🟡'ye düşür ve listeden çıkar.
-    Okuma yapılamazsa ilan notla birlikte gider (hız kaybolmasın)."""
+    """Sosyal medyadan gelen 🟢 adaylarını ve (kaynak fark etmeksizin) tüm 🟠 adaylarını bağımsız okutur. Uyuşmazlık ya da
+    'ucuzluğun gizli nedeni' (hasar/pert/borç...) bulunursa: 🟡'ye düşür ve listeden çıkar. Okuma yapılamazsa ilan notla
+    birlikte gider (hız kaybolmasın); istisna: fiyatını yapay zekâ okuyan 🟠 ikinci okuma doğrulamazsa 🟡'de kalır."""
     kept = []
     for ev in evs:
-        free = ev.listing.get("platform") in SOCIAL or ev.listing.get("extraction_by") in FREE_TEXT
-        if not free or reader is None:
+        est = ev.profit is not None and ev.profit.tier is Tier.ESTIMATED
+        llm_priced = est and ev.listing.get("extraction_by") == "llm"
+        free = est or ev.listing.get("platform") in SOCIAL or ev.listing.get("extraction_by") in FREE_TEXT
+        if not free:
             kept.append(ev)
             continue
-        cached = repo.get_state(f"verify:{ev.listing['id']}")
-        if cached == "ok":
-            ev.checks.append("✅ Yapay zekâ ilanı bağımsız okudu, fiyat uyuşuyor")
+        if reader is None:
+            if llm_priced:
+                _drop(repo, ev, ["llm_okudu"], "bad")
+                continue
+            if est:
+                ev.warnings.append(UNCHECKED)
             kept.append(ev)
+            continue
+        key = _verify_key(ev)
+        cached = repo.get_state(key)
+        if cached == "ok":
+            ev.checks.append(OK_CHECK_EST if est else OK_CHECK)
+            kept.append(ev)
+            continue
+        if cached == "bad" and est:
+            repo.downgrade_evaluation(ev.listing["id"], ["llm_okudu"] if llm_priced else [])  # önceki karar: yine 🟡
             continue
         read = reader.read(ev.listing.get("raw_text") or "")
         if read is None:
+            if llm_priced:
+                _drop(repo, ev, ["llm_okudu"], "bad")  # fiyatı yapay zekâdan gelen 🟠 doğrulanamadan gitmez
+                continue
             ev.warnings.append(UNCHECKED)
             kept.append(ev)
             continue
         reasons, price_ok = compare(ev.listing, read)
         if reasons:
-            repo.downgrade_evaluation(ev.listing["id"], reasons)
-            repo.set_state(f"verify:{ev.listing['id']}", "bad")
+            flags = reasons + ([f"sorun: «{read.problem}»"] if read.problem else [])
+            _drop(repo, ev, flags, "bad")
+            continue
+        if llm_priced and not price_ok:
+            _drop(repo, ev, ["llm_okudu"], "bad")
             continue
         if price_ok:
-            repo.set_state(f"verify:{ev.listing['id']}", "ok")
-            ev.checks.append("✅ Yapay zekâ ilanı bağımsız okudu, fiyat uyuşuyor")
+            repo.set_state(key, "ok")
+            ev.checks.append(OK_CHECK_EST if est else OK_CHECK)
         else:
             ev.warnings.append(UNCONFIRMED)
         kept.append(ev)

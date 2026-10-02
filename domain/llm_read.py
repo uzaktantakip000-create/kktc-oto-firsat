@@ -23,6 +23,7 @@ MISMATCH_LABELS = {
     "okuma_direksiyon": "yapay zekâ direksiyonu farklı okudu",
     "okuma_pesinat": "yapay zekâ: peşinat/kredi/borç devri var",
     "okuma_satildi": "yapay zekâ: ilan satılmış görünüyor",
+    "okuma_sorun": "yapay zekâ: ilanda sorun belirtisi var",  # alıntı notta/red_flags'te ayrıca gider
 }
 
 
@@ -38,6 +39,7 @@ class LlmRead:
     steering: str | None = None  # RHD / LHD
     credit_or_deposit: bool = False
     sold: bool = False
+    problem: str | None = None  # ucuzluğun gizli nedeni (hasar/pert/borç...): ilandan birebir doğrulanmış alıntı
 
 
 def _squash(text: str) -> str:
@@ -88,6 +90,9 @@ def parse_llm_read(data, text: str) -> LlmRead | None:
         out.steering = data["direksiyon"]
     out.credit_or_deposit = data.get("pesinat_veya_kredi_devri") is True
     out.sold = data.get("satildi") is True
+    quote = data.get("sorun_alinti")
+    if data.get("sorun") is True and quote_in_text(quote, text):  # uydurma alıntı = sorun yok
+        out.problem = " ".join(quote.split())[:100]
     return out
 
 
@@ -117,4 +122,6 @@ def compare(listing: dict, read: LlmRead) -> tuple[list[str], bool]:
         reasons.append("okuma_pesinat")
     if read.sold:
         reasons.append("okuma_satildi")
+    if read.problem:
+        reasons.append("okuma_sorun")
     return reasons, price_confirmed

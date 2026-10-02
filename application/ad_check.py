@@ -3,7 +3,7 @@ taranan ilanlarla AYNI kurallarla değerlendirilir (application.evaluate.assess_
 Telegram dışına gönderilmez (yapay zekâ okuması hariç; telefon/e-posta maskelenir)."""
 from datetime import datetime, timezone
 
-from application.evaluate import assess_listing, confidence_label
+from application.evaluate import assess_listing, confidence_label, load_book
 from application.llm_reader import LlmReader, listing_fields
 from domain.caption_parser import ParsedCaption
 from domain.comparables import nearest_comparables
@@ -67,6 +67,21 @@ def build_reply(listing: dict, by: str, a, comps: list[dict], s: Settings) -> st
         lines.append("❔ Bu araç için yeterli emsal yok (en az 3 farklı satıcıdan benzer ilan gerekir). Piyasa fiyatını bulamadım.")
         return "\n".join(lines)
     p, m = a.profit, a.market
+    if p.tier is Tier.ESTIMATED:  # az emsal: değer tablosu eğrisinden tahmin (emsal listesi yok)
+        lines += [
+            "🟠 TAHMİNİ FIRSAT — az emsal, kendin de kontrol et",
+            f"📘 Tablo değeri ~{_fmt_money(m.median_gbp)} (en kötü ihtimalle {_fmt_money(m.low_gbp)}) → "
+            f"~%{(1 - listing['price_gbp'] / m.median_gbp) * 100:.0f} ucuz · {m.n} ilanlık fiyat eğrisi",
+            f"💰 En kötü ihtimalle satılabilir ~{_fmt_money(p.exit_price_gbp)} · tahmini kâr ~{_fmt_money(p.profit_gbp)} "
+            f"(masraf {_fmt_money(s.fixed_cost_gbp)} düşüldü)",
+        ]
+        if listing.get("extraction_by") == "llm":
+            lines.append("⚠️ Bilgileri yapay zekâ okudu; fiyatı ve km'yi ilanla karşılaştır")
+        if a.warnings:
+            lines.append("⚠️ Dikkat: " + ", ".join(a.warnings))
+        if listing.get("steering") is None:
+            lines.append("❓ Direksiyon yazmıyor (sağ varsayıldı) — sor")
+        return "\n".join(lines)
     if a.blocking:
         verdict = "🚫 Tuzak işareti var: " + ", ".join(a.blocking)
     elif p.tier is Tier.STRONG:
@@ -107,8 +122,8 @@ def analyze_text(repo: Repository, text: str, reader: LlmReader | None, s: Setti
     if not s.min_plausible_price_gbp <= listing["price_gbp"] <= s.max_plausible_price_gbp:
         return f"🤔 Fiyat mantıksız görünüyor ({_fmt_money(listing['price_gbp'])}); eksik/fazla rakam olabilir. Fiyatı kontrol edip tekrar gönder."
     pool = [r for r in repo.market_pool(days=s.comparable_window_days + 30) if is_car_brand(r.get("brand_norm"))]
-    a = assess_listing(listing, pool, s)
-    comps = nearest_comparables(listing, pool, a.market, 3, s) if a else []
+    a = assess_listing(listing, pool, s, load_book(repo) if s.estimated_alerts else None)
+    comps = nearest_comparables(listing, pool, a.market, 3, s) if a and a.method == "A" else []
     return build_reply(listing, by, a, comps, s)
 
 

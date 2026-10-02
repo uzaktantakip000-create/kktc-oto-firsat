@@ -11,6 +11,8 @@ GAP_LABELS = {
     "ucuz_ceyrek_degil": "fiyat benzer araçların en ucuz çeyreğinde değil",
     "plaka_uyari": "TR/yabancı plaka yazıyor",
     "sessiz_model": "bu modele 3 kez 'pas' dedin (özete alındı)",
+    "deger_supheli": "değer tablosu bu modelde yeni değişti, bekleniyor",
+    "tahmini_az_emsal": "az emsal: değer tablosu eğrisinden tahmin",
     "llm_okudu": "kural okuyamadı, yapay zekâ okudu (kontrol et)",
 }
 GAP_LABELS.update(MISMATCH_LABELS)
