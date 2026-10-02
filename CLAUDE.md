@@ -12,7 +12,7 @@ Bu repo, KKTC'deki araç ilanlarını (Instagram, Facebook, Telegram, ilan sitel
 - Mimari: Clean Architecture monolit — `domain/` (dış bağımlılık yok) · `application/` · `infrastructure/` · `entrypoints/`. Plugin sistemi, mikroservis, event bus YOK.
 - Python 3.12, Pydantic v2, httpx + selectolax (web), Apify (Instagram/Facebook), Supabase Postgres, Telegram Bot API (httpx), GitHub Actions cron (Railway ücretsiz planda kurulamadı, bırakıldı).
 - LLM: Claude Haiku 4.5 ilan okuma (önce kural tabanlı parser, olmazsa Haiku), Claude Sonnet 5.5 sadece fırsat adaylarının son kontrolü.
-- `robots.txt` ile otomatik erişimi reddeden siteler (kibrisaraba.com, galerimplus.com, illakiburada.com) taranmaz.
+- kibrisaraba.com, galerimplus.com, illakiburada.com: sahibin kararıyla (02.10.2026) yalnızca herkese açık ilan sayfaları, nazik hızda okunur; giriş/CAPTCHA çözme yok.
 - Sistem öneri verir; otomatik mesaj, teklif veya satın alma YOK.
 - API anahtarları sadece ortam değişkenlerinden okunur; koda veya repoya yazılmaz. `.env` gitignore'da.
 
