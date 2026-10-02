@@ -120,3 +120,20 @@ def test_owner_plain_text_is_checked_but_friend_text_and_commands_are_not(monkey
     bot_poll._handle_message(repo, "tok", "1", _msg(2, "2015 Toyota Vitz 5000£"))  # arkadaş: değerlendirilmez
     bot_poll._handle_message(repo, "tok", "1", _msg(1, "/kaynaklar"))                 # komut: ilan sayılmaz
     assert len(asked) == 1
+
+
+def test_owner_price_book_commands_are_routed(monkeypatch):
+    from application import bot_poll
+    sent = []
+    monkeypatch.setattr(bot_poll, "api", lambda token, method, **kw: sent.append(kw["text"]))
+    monkeypatch.setattr(bot_poll.price_book_cmd, "fiyat_reply", lambda repo, args: f"fiyat:{args}")
+    monkeypatch.setattr(bot_poll.price_book_cmd, "record_sale", lambda repo, args: f"satti:{args}")
+    monkeypatch.setattr(bot_poll.settings_store, "set_estimated", lambda repo, args: f"tahmini:{args}")
+    monkeypatch.setattr(bot_poll.ad_check, "handle", lambda *a: sent.append("ILAN") or "ilan")
+    repo = PollRepo()
+    bot_poll._handle_message(repo, "tok", "1", _msg(1, "/fiyat Corolla 2014"))
+    bot_poll._handle_message(repo, "tok", "1", _msg(1, "/satti corolla 2014 120000km 7200"))
+    bot_poll._handle_message(repo, "tok", "1", _msg(1, "/tahmini kapat"))
+    bot_poll._handle_message(repo, "tok", "1", _msg(2, "/fiyat corolla 2014"))  # arkadaş: komut çalışmaz
+    assert sent == ["fiyat: corolla 2014", "satti: corolla 2014 120000km 7200", "tahmini: kapat"]
+    assert "/fiyat" in bot_poll.WELCOME_OWNER and "/satti" in bot_poll.WELCOME_OWNER and "/tahmini" in bot_poll.WELCOME_OWNER

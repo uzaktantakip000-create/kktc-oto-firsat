@@ -74,3 +74,17 @@ def test_morning_status_only_in_morning_window(monkeypatch):
 def test_source_limits_per_platform():
     assert health.source_limit_hours({"url": "https://www.facebook.com/groups/1", "platform": "facebook"}) == 12
     assert health.source_limit_hours({"url": "https://kibrisarabaal.com", "platform": "web"}) == 3
+
+
+def test_status_uses_book_coverage_when_available(monkeypatch):
+    monkeypatch.setattr(status.price_book_job, "coverage", lambda repo, now=None: (60, 20, 100))
+    monkeypatch.setattr(status.price_book_job, "summary_line", lambda repo: "📘 Değer tablosu: 400 model-yıl, 300 oturmuş, 4 şüpheli · isabet %88")
+    text = status.build_status(FakeRepo([src("KKTCar")]), NOW)
+    assert "Fiyatını bildiğim araç: 80 / 100 (%80) — benzer ilanla 60, değer eğrisiyle 20" in text
+    assert "• 📘 Değer tablosu: 400 model-yıl, 300 oturmuş, 4 şüpheli · isabet %88" in text
+    assert "Fiyatını karşılaştırabildiğim" not in text
+
+
+def test_status_falls_back_without_book():
+    text = status.build_status(FakeRepo([src("KKTCar")]), NOW)  # sahte repoda tablo yok: eski hesap
+    assert "Fiyatını karşılaştırabildiğim araç: 40 / 100 (%40)" in text and "📘" not in text

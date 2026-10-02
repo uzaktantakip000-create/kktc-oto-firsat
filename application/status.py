@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from application.collect_facebook import MONTHLY_BUDGET_USD as FB_BUDGET
 from application.collect_instagram import MONTHLY_BUDGET_USD as IG_BUDGET
+from application import price_book_job
 from application.maintenance import summary_line
 from application.health import notify_owner, source_limit_hours
 from infrastructure.db.repository import Repository
@@ -87,13 +88,24 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
     except ValueError:
         fun = {}
     pct = f" (%{cover['ok'] * 100 // cover['total']})" if cover["total"] else ""
+    try:
+        book_cover = price_book_job.coverage(repo, now)  # değer tablosu varsa kapsam onunla hesaplanır
+        book_line = price_book_job.summary_line(repo)
+    except Exception:  # tablo henüz kurulmadı/okunamadı: eski hesaba dön
+        book_cover = book_line = None
+    if book_cover and book_cover[2]:
+        a, b, total = book_cover
+        cover_line = (f"• Fiyatını bildiğim araç: {a + b} / {total} (%{(a + b) * 100 // total}) — benzer ilanla {a}, "
+                      f"değer eğrisiyle {b}. Kalanı için yeterli veri yok.")
+    else:
+        cover_line = f"• Fiyatını karşılaştırabildiğim araç: {cover['ok']} / {cover['total']}{pct}. Kalanı için benzer ilan yetmiyor."
     lines += [
         "",
         "📈 BUGÜNE KADAR",
         f"• Son 24 saatte sana {sent24['strong']} fırsat gönderdim.",
-        f"• Fiyatını karşılaştırabildiğim araç: {cover['ok']} / {cover['total']}{pct}. Kalanı için benzer ilan yetmiyor.",
+        cover_line,
         f"• Senin düğme basışların: {fb_n} (en az {FEEDBACK_TARGET} olunca sistem senin zevkine göre ayarlanmaya başlar).",
-    ] + ([summary_line(repo)] if summary_line(repo) else []) + ([
+    ] + ([summary_line(repo)] if summary_line(repo) else []) + ([f"• {book_line}"] if book_line else []) + ([
         f"• Facebook'ta bu ay {fun['gonderi']} gönderiye baktım: {fun.get('ilan', 0)} araç ilanı çıktı. Ayıklananlar: "
         f"{fun.get('fiyat_yok', 0)} araç gönderisi fiyat yazmıyor, {fun.get('yil_yok', 0)} yıl yazmıyor, "
         f"{fun.get('marka_yok', 0) + fun.get('arac_degil', 0)} araba değil.",

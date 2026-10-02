@@ -1,13 +1,15 @@
 """Bot komutlarını Actions çalışması sırasında getUpdates ile işler (7/24 açık sunucu gerektirmez)."""
 import httpx
 
-from application import ad_check, discovery, llm_reader, settings_store, sources_cmd, status
+from application import ad_check, discovery, llm_reader, price_book_cmd, settings_store, sources_cmd, status
 from application.notify import TelegramError, api
 from infrastructure.db.repository import Repository
 
 FEEDBACK_ACTIONS = ("ilgilendim", "pas", "yanlis_fiyat", "satilmis", "kusurlu", "audit_dogru", "audit_yanlis")
 WELCOME_OWNER = ("Merhaba! Fırsat bildirimleri bu sohbete gelecek. /dur ile durdurabilir, /basla ile açabilirsin.\n"
                  "Sistemin durumu için /durum, kaynak listesi için /kaynaklar.\n"
+                 "Araç değeri için /fiyat corolla 2014, gerçek bir satışı girmek için /satti corolla 2014 120000km 7200, "
+                 "🟠 tahmini fırsat bildirimlerini açıp kapatmak için /tahmini ac ya da /tahmini kapat.\n"
                  "Bir ilanı (yazı ya da ekran görüntüsü) bana gönderirsen piyasayla karşılaştırıp cevap veririm; cevap en geç ~15 dk içinde gelir.")
 
 
@@ -72,6 +74,12 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
         api(token, "sendMessage", chat_id=chat_id, text=settings_store.set_threshold(repo, text[len("/esik"):]))
     elif chat_id == owner and text.split()[:1] == ["/butce"]:
         api(token, "sendMessage", chat_id=chat_id, text=settings_store.set_budget(repo, text[len("/butce"):]))
+    elif chat_id == owner and text.split()[:1] == ["/fiyat"]:
+        api(token, "sendMessage", chat_id=chat_id, text=price_book_cmd.fiyat_reply(repo, text[len("/fiyat"):]), disable_web_page_preview=True)
+    elif chat_id == owner and text.split()[:1] == ["/satti"]:
+        api(token, "sendMessage", chat_id=chat_id, text=price_book_cmd.record_sale(repo, text[len("/satti"):]))
+    elif chat_id == owner and text.split()[:1] == ["/tahmini"]:
+        api(token, "sendMessage", chat_id=chat_id, text=settings_store.set_estimated(repo, text[len("/tahmini"):]))
     elif chat_id == owner and text.split()[:1] in (["/istemiyorum"], ["/istiyorum"]):
         cmd = text.split()[0]
         api(token, "sendMessage", chat_id=chat_id, text=settings_store.block_brand(repo, text[len(cmd):], cmd == "/istemiyorum"))

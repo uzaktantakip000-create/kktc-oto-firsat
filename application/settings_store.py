@@ -25,6 +25,12 @@ def load_settings(repo: Repository) -> Settings:
         budget = repo.get_state("cfg:max_buy_gbp")
         if budget:
             s.max_buy_gbp = float(budget)
+        est = repo.get_state("cfg:estimated_alerts")
+        if est in ("0", "1"):
+            s.estimated_alerts = est == "1"
+        lower = repo.get_state("cfg:est_min_discount_to_lower")
+        if lower:
+            s.est_min_discount_to_lower = float(lower)
     except ValueError:
         pass
     s.blocked_brands = _list(repo, "cfg:blocked_brands")
@@ -58,6 +64,19 @@ def set_budget(repo: Repository, arg: str) -> str:
     return f"Tamam. Bundan sonra £{int(digits):,} üstü ilanlar için bildirim göndermeyeceğim.".replace(",", ".")
 
 
+def set_estimated(repo: Repository, arg: str) -> str:
+    """/tahmini ac | kapat: 🟠 tahmini fırsat bildirimleri (az emsalli araçlar için değer eğrisiyle)."""
+    word = (arg or "").strip().lower().replace("ç", "c").replace("ı", "i")
+    if word in ("ac", "acik", "on", "1"):
+        repo.set_state("cfg:estimated_alerts", "1")
+    elif word in ("kapat", "kapali", "off", "0"):
+        repo.set_state("cfg:estimated_alerts", "0")
+    else:
+        now = "açık" if load_settings(repo).estimated_alerts else "kapalı"
+        return f"🟠 tahmini fırsat bildirimleri şu an {now}. Kullanım: /tahmini ac  ya da  /tahmini kapat"
+    return f"🟠 tahmini fırsat bildirimleri {'açık' if word in ('ac', 'acik', 'on', '1') else 'kapalı'}"
+
+
 def block_brand(repo: Repository, arg: str, block: bool) -> str:
     brand = normalize_brand((arg or "").strip())
     if not brand:
@@ -85,5 +104,8 @@ def describe(repo: Repository) -> str:
         "• İstenmeyen markalar: " + (", ".join(s.blocked_brands) or "yok") + "  → /istemiyorum fiat",
         "• Sadece özete düşen modeller: " + (", ".join(m.replace("|", " ") for m in s.muted_models) or "yok") + "  (3 kez 'pas' deyince sorarım)",
         f"• Kara listedeki satıcı: {len(s.blocked_phones)}  ('kusurlu/sahte' dediklerin)",
+        "• 🟠 Tahmini fırsat bildirimleri (az emsal, değer eğrisiyle): " + ("açık" if s.estimated_alerts else "kapalı")
+        + ("" if s.est_min_discount_to_lower == d.est_min_discount_to_lower
+           else f" (alt sınırın %{s.est_min_discount_to_lower * 100:.0f}'i)") + "  → /tahmini kapat",
         f"• Fırsat sıklığı: 🟡 eşik %{s.negotiable_threshold * 100:.0f}, masraf £{s.fixed_cost_gbp:.0f}, hızlı satış çarpanı {s.quick_sale_factor}",
     ])

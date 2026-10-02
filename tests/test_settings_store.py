@@ -52,3 +52,15 @@ def test_user_decisions_change_the_verdict():
     assert run(deal, Settings(blocked_phones=["905330000001"])) is Tier.NONE       # kusurlu satıcı
     assert run(deal, Settings(muted_models=["Toyota|vitz"])) is Tier.NEGOTIABLE    # 3 kez pas
     assert run(deal, Settings(strong_threshold=0.80)) is Tier.NEGOTIABLE           # /esik 80 (pratikte) -> 🟡
+
+
+def test_estimated_toggle_persists_and_shows_in_describe():
+    st = Store()
+    assert ss.load_settings(st).estimated_alerts is True  # varsayılan açık
+    assert ss.set_estimated(st, " kapat") == "🟠 tahmini fırsat bildirimleri kapalı"
+    assert ss.load_settings(st).estimated_alerts is False and "Tahmini fırsat bildirimleri (az emsal, değer eğrisiyle): kapalı" in ss.describe(st)
+    assert ss.set_estimated(st, "aç") == "🟠 tahmini fırsat bildirimleri açık"
+    assert ss.load_settings(st).estimated_alerts is True
+    assert "şu an açık" in ss.set_estimated(st, "") and "Kullanım" in ss.set_estimated(st, "belki")
+    st.d["cfg:est_min_discount_to_lower"] = "0.7"
+    assert ss.load_settings(st).est_min_discount_to_lower == 0.7 and "%70" in ss.describe(st)
