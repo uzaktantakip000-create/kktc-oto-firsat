@@ -43,6 +43,7 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
                 print(f"{name}: çekilen={st.fetched} yeni={st.new} parser={st.parsed} llm_okudu={st.llm_read} "
                       f"okunamadı={st.needs_llm - st.llm_read} satıldı={st.sold}")
             track_collect(repo, "Instagram (toplu)")
+            feed_switch.clear_grace(repo, "instagram")
         except Exception as e:
             if _provider_limit(repo, "instagram", e):
                 return errors
@@ -59,6 +60,7 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
                 print(f"{name}: çekilen={st.fetched} yeni={st.new} llm_okudu={st.llm_read} km_okudu={st.km_read} foto_okudu={st.photo_read} "
                       f"ilan_değil={st.skipped} tahmini_maliyet=${st.spent_usd}")
             track_collect(repo, "Facebook grupları")
+            feed_switch.clear_grace(repo, "facebook")
         except Exception as e:
             if _provider_limit(repo, "facebook", e):
                 return errors

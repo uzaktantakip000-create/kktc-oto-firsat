@@ -44,9 +44,9 @@ def source_limit_hours(source: dict) -> int:
 def source_problems(repo: Repository) -> list[tuple[str, str]]:
     """(anahtar, mesaj) listesi: uzun süredir kontrol edilmeyen veya haftadır yeni ilan getirmeyen kaynaklar."""
     problems = []
-    paused = feed_switch.paused_platforms(repo)  # duraklatılmış sosyal kaynak "taranmıyor/susuyor" uyarısı vermez
+    quiet = feed_switch.quiet_platforms(repo)  # duraklatılmış (ya da yeni devam eden, henüz toplanmamış) sosyal kaynak uyarı vermez
     for s in repo.stale_sources():
-        if s["platform"] in paused:
+        if s["platform"] in quiet:
             continue
         limit_h = source_limit_hours(s)
         if s["hours_since_check"] > limit_h:

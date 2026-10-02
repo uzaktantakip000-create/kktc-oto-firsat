@@ -1,7 +1,9 @@
 """Sosyal medya (Instagram/Facebook) toplama anahtarı.
 Durum bot_state'te: `feed:<platform>` = "on" ise toplanır, yoksa/başka ise KAPALI (varsayılan: kapalı; sağlayıcı bağlanınca "on" yazılır).
 `feed:paused_until:<sağlayıcı>` = ISO zaman: sağlayıcı kota/yetki hatası (HTTP 403) verince yazılır, süre dolunca toplama kendiliğinden döner.
-Duraklatılmış platform: iş atlanır, kaynak alarmı/sağlık uyarısı susar, sahibe tek mesaj gider, /durum "📴" der."""
+Duraklatılmış platform: iş atlanır, kaynak alarmı/sağlık uyarısı susar, sahibe tek mesaj gider, /durum "📴" der.
+Duraklama BİTİNCE (süre doldu ya da anahtar açıldı) ilk toplama bitene kadar "bekleme payı" sürer (`feed:grace:<platform>`): kaynakların son
+tarama zamanı eski olduğundan, ilk toplamadan önce çalışan değerlendirme sahte "taranamıyor" alarmı üretmesin."""
 from datetime import datetime, timedelta, timezone
 
 PLATFORMS = ("instagram", "facebook")
@@ -32,6 +34,24 @@ def paused_platforms(repo, now: datetime | None = None) -> dict[str, str]:
         if until is not None and until > now:
             out[p] = LIMIT
     return out
+
+
+def note_pauses(repo, paused: dict[str, str]) -> None:
+    """Duraklatılmış platformlara bekleme payı işareti koyar (her tick; zaten işaretliyse yazmaz)."""
+    for p in paused:
+        if repo.get_state(f"feed:grace:{p}") != "1":
+            repo.set_state(f"feed:grace:{p}", "1")
+
+
+def clear_grace(repo, platform: str) -> None:
+    """Duraklama sonrası ilk başarılı toplama bitti: alarmlar normale döner."""
+    if repo.get_state(f"feed:grace:{platform}") == "1":
+        repo.set_state(f"feed:grace:{platform}", "0")
+
+
+def quiet_platforms(repo, now: datetime | None = None) -> set[str]:
+    """Kaynak başına "taranamıyor/susuyor" uyarıları susan platformlar: duraklatılmışlar + duraklamadan yeni çıkıp henüz toplanmamışlar."""
+    return set(paused_platforms(repo, now)) | {p for p in PLATFORMS if repo.get_state(f"feed:grace:{p}") == "1"}
 
 
 def is_provider_limit(exc: BaseException) -> bool:

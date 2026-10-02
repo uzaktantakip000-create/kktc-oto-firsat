@@ -16,6 +16,9 @@ jobs:
       PYTHONUNBUFFERED: "1"  # iptal edilen turda log kaybolmasın
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: live   # yalnızca testi geçmiş sürüm (bkz. ci.yml)
+      - run: git log -1 --format='canlı sürüm %h %s'
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

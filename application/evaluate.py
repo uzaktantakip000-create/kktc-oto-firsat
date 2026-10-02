@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from domain.alert_policy import send_floor_ok
 from domain.comparables import Market, find_market
 from domain.data_gate import below_cheap_quartile, data_gaps
+from domain.model_ambiguity import model_ambiguous
 from domain.profit import Confidence, ProfitResult, Tier, evaluate_profit
 from domain.normalize import is_car_brand
 from domain.price_book import STATUS_SUSPECT, BookRow, Estimate, PriceBook, estimate_from_book
@@ -91,7 +92,8 @@ def _estimated_assessment(listing: dict, market: Market | None, a: Assessment | 
     Muhafazakâr: çıkış fiyatı değerden değil, eğrinin ALT sınırından hesaplanır."""
     if (not s.estimated_alerts or blocking or listing.get("karantina_nedeni") or listing.get("currency_guess")
             or listing.get("steering") == "LHD"  # sol direksiyon: eğri sağ direksiyonla kurulu
-            or listing.get("currency") == "TRY"):  # TL ilanlar tabloya göre %6-10 ucuz görünür: 🟠 olmaz
+            or listing.get("currency") == "TRY"  # TL ilanlar tabloya göre %6-10 ucuz görünür: 🟠 olmaz
+            or model_ambiguous(listing)):  # karışık model anahtarında eğri de karışıktır
         return None
     if market is not None and market.n >= 8:
         return None  # yeterli emsal var: 🟢/🟡 yolu karar verir

@@ -235,3 +235,92 @@ def test_other_apify_errors_are_still_failures(monkeypatch):
     assert errors and errors[0][0] == "Instagram (toplu)"
     assert repo.state["fail:Instagram (toplu)"] == "1"
     assert feed_switch.paused_platforms(repo) == {}
+
+
+# --- duraklama bitince bekleme payı: ilk toplamadan önce sahte "taranamıyor" alarmı çıkmaz ---
+
+def _resumed_repo(**extra):
+    """Anahtar açıldı (ya da limit süresi doldu) ama ilk toplama henüz çalışmadı: kaynakların son taraması günler önce."""
+    repo = FakeRepo(ON | {"feed:grace:instagram": "1", "feed:grace:facebook": "1"} | extra,
+                    sources=[src("a", "instagram", 200), src("g", "facebook", 90)])
+    return repo
+
+
+def test_tick_marks_paused_platforms_with_grace():
+    repo = FakeRepo()
+    feed_switch.note_pauses(repo, feed_switch.paused_platforms(repo, NOW))
+    assert repo.state["feed:grace:instagram"] == "1" and repo.state["feed:grace:facebook"] == "1"
+
+
+def test_resumed_but_not_yet_collected_platform_is_quiet():
+    repo = _resumed_repo()
+    assert feed_switch.paused_platforms(repo, NOW) == {}  # toplama çalışabilir
+    assert feed_switch.quiet_platforms(repo, NOW) == {"instagram", "facebook"}  # ama uyarılar susar
+
+
+def test_no_false_stale_alarm_right_after_resume(monkeypatch):
+    out = []
+    monkeypatch.setattr(source_alarm, "notify_owner", lambda repo, key, text, repeat_hours=12: out.append(text) or True)
+    assert source_alarm.check_source_alarms(_resumed_repo()) == 0 and out == []
+    assert health.source_problems(FakeRepo(ON | {"feed:grace:instagram": "1"},
+                                           stale=[dict(id="1", name="ig", platform="instagram", url="https://x", created_at=None,
+                                                       listings_7d=0, hours_since_check=300)])) == []
+
+
+def test_real_failures_after_resume_still_alarm(monkeypatch):
+    """Bekleme payı yalnız "eski tarama zamanı"nı susturur; toplama gerçekten 3 tur hata verirse alarm gelir."""
+    out = []
+    monkeypatch.setattr(source_alarm, "notify_owner", lambda repo, key, text, repeat_hours=12: out.append(text) or True)
+    repo = _resumed_repo(**{"fail:Instagram (toplu)": "3", "failmsg:Instagram (toplu)": "RuntimeError: x"})
+    assert source_alarm.check_source_alarms(repo) == 1 and "Instagram (toplu) 3 turdur okunamıyor" in out[0]
+
+
+def test_successful_collect_clears_grace_and_alarms_return(monkeypatch):
+    monkeypatch.setenv("APIFY_TOKEN", "t")
+    monkeypatch.setattr(cron_collect.llm_reader, "from_env", lambda repo: None)
+    monkeypatch.setattr(cron_collect, "collect_sources", lambda *a, **k: {})
+    repo = _resumed_repo()
+    assert cron_collect.run("instagram", repo) == []
+    assert repo.state["feed:grace:instagram"] == "0" and repo.state["feed:grace:facebook"] == "1"  # yalnız o platform
+    assert feed_switch.quiet_platforms(repo, NOW) == {"facebook"}
+
+
+def test_failed_collect_keeps_grace(monkeypatch):
+    monkeypatch.setenv("APIFY_TOKEN", "t")
+    monkeypatch.setattr(cron_collect.llm_reader, "from_env", lambda repo: None)
+
+    def boom(*a, **k):
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(cron_collect, "collect_sources", boom)
+    repo = _resumed_repo()
+    cron_collect.run("instagram", repo)
+    assert repo.state["feed:grace:instagram"] == "1"
+
+
+def test_status_does_not_call_just_resumed_source_late():
+    rows = [dict(name="IG", platform="instagram", url="https://instagram.com/a", status="aktif", alert_level="yesil", hours_since_check=200, new_24h=0, fresh_n=5)]
+
+    class Rows:
+        def __init__(self, r):
+            self.r = r
+
+        def fetchall(self):
+            return self.r
+
+        def fetchone(self):
+            return self.r[0]
+
+    class StatusRepo(FakeRepo):
+        def execute(self, sql, params=None):
+            if "FROM sources s" in sql:
+                return Rows(rows)
+            if "FROM alerts" in sql:
+                return Rows([{"strong": 0}])
+            if "LATERAL" in sql:
+                return Rows([{"total": 10, "ok": 4}])
+            return Rows([{"n": 0}])
+
+    text = status.build_status(StatusRepo(ON | {"feed:grace:instagram": "1", "tick:last": "2026-10-02T09:00:00+00:00"}), NOW)
+    assert "GECİKMİŞ" not in text and "gecikme" not in text.lower()
+    assert "Sistem çalışıyor" in text

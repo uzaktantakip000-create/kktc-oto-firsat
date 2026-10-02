@@ -12,6 +12,8 @@ def same_car(a: dict, b: dict) -> bool:
     pa, pb = a.get("price_gbp"), b.get("price_gbp")
     price_close = bool(pa and pb) and abs(pa - pb) <= 0.15 * max(pa, pb)
     phone_match = bool(a.get("seller_phone")) and a.get("seller_phone") == b.get("seller_phone")
+    if a["model_norm"] is None and not phone_match:
+        return False  # model bilinmiyorsa "ikisi de bilinmiyor" aynı model demek değildir; yalnızca aynı telefon ayırt eder
     ka, kb = a.get("km"), b.get("km")
     if ka and kb:
         # km farklıysa farklı araçtır; km aynıysa telefon ya da yakın fiyat da gerekir.

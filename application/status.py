@@ -30,13 +30,15 @@ def _money(repo: Repository, prefix: str, now: datetime) -> float:
         return 0.0
 
 
-def _is_late(r: dict) -> bool:
+def _is_late(r: dict, quiet: set | frozenset = frozenset()) -> bool:
+    if r["platform"] in quiet:
+        return False  # duraklamadan yeni çıkmış sosyal kaynak: ilk toplama bitene kadar gecikmiş sayılmaz
     return r["hours_since_check"] is None or r["hours_since_check"] > source_limit_hours(r)
 
 
-def _source_line(r: dict) -> str:
+def _source_line(r: dict, quiet: set | frozenset = frozenset()) -> str:
     kind = KIND.get(r["platform"], r["platform"])
-    mark = "⚠️ GECİKMİŞ —" if _is_late(r) else "✅"
+    mark = "⚠️ GECİKMİŞ —" if _is_late(r, quiet) else "✅"
     return f"{mark} {kind}: {r['name']} · {_ago(r['hours_since_check'])} · {r['fresh_n']} güncel ilan, bugün {r['new_24h']} yeni"
 
 
@@ -57,7 +59,8 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
     scanned = [r for r in scanned_all if r["platform"] not in paused]
     open_n = [r for r in scanned if r["alert_level"] == "yesil"]
     shadow_n = [r for r in scanned if r["alert_level"] != "yesil"]
-    late = [r for r in scanned if _is_late(r)]
+    quiet = feed_switch.quiet_platforms(repo, now)
+    late = [r for r in scanned if _is_late(r, quiet)]
 
     sent24 = repo.conn.execute(
         "SELECT count(DISTINCT listing_id) FILTER (WHERE tier='guclu') AS strong FROM alerts "
@@ -82,11 +85,11 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
         lines.append(f"Son kontrol saat {datetime.fromisoformat(last_tick).astimezone(KKTC):%H:%M}. Her 15 dakikada bir tekrar bakılır.")
 
     lines += ["", f"📣 SANA HABER VEREN YERLER ({len(open_n)})", "Burada iyi bir fırsat görürsem hemen yazarım."]
-    lines += [_source_line(r) for r in open_n]
+    lines += [_source_line(r, quiet) for r in open_n]
     if shadow_n:
         lines += ["", f"🗒 BİLDİRİM VERMEYENLER ({len(shadow_n)})",
                   "Buralara bakıyorum ama haber vermiyorum, sadece ölçüyorum (sen kapattın ya da çok yanlış fiyat çıktığı için ben düşürdüm)."]
-        lines += [_source_line(r) for r in shadow_n]
+        lines += [_source_line(r, quiet) for r in shadow_n]
 
     if paused_n:
         counts = {p: sum(1 for r in paused_n if r["platform"] == p) for p in feed_switch.PLATFORMS}

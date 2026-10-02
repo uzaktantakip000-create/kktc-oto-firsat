@@ -111,6 +111,7 @@ def main() -> None:
     if paused:
         print("duraklatılmış sosyal kaynaklar:", ", ".join(f"{p} ({why})" for p, why in paused.items()))
         try:
+            feed_switch.note_pauses(repo, paused)  # duraklama bitince ilk toplamaya kadar sahte "taranamıyor" alarmı çıkmasın
             feed_switch.announce_pause(repo, notify_owner, now)  # sahibe tek mesaj (aynı durum için tekrar yazmaz)
         except Exception as e:  # duyuru toplamayı engellemesin
             print("duraklatma duyurusu gönderilemedi:", type(e).__name__)

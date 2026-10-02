@@ -1,6 +1,7 @@
 """Eksik/şüpheli veriyle 🟢 verilmesini engelleyen kural (en fazla 🟡)."""
 from domain.comparables import Market, effective_km
 from domain.llm_read import MISMATCH_LABELS
+from domain.model_ambiguity import model_ambiguous
 from domain.settings import Settings
 
 GAP_LABELS = {
@@ -9,6 +10,7 @@ GAP_LABELS = {
     "tl_fiyat": "fiyat TL: TL ilanları piyasada genelde %6-10 düşük görünüyor; kontrol et",
     "fiyat_asiri_dusuk": "fiyat emsallerin yarısından düşük (az emsal): yazım hatası ya da tuzak olabilir",
     "model_yok": "model okunamadı",
+    "model_belirsiz": "model karışık havuzda (ör. CX-3/CX-5, Yaris/Yaris Cross): fiyat kıyası güvenilmez",
     "km_yuksek": "km emsallerden çok yüksek",
     "ucuz_ceyrek_degil": "fiyat benzer araçların en ucuz çeyreğinde değil",
     "plaka_uyari": "TR/yabancı plaka yazıyor",
@@ -31,6 +33,8 @@ def data_gaps(listing: dict, market: Market, settings: Settings | None = None) -
         gaps.append("tl_fiyat")  # TL ilanlar tabloya göre %6-10 ucuz görünür: 🟢/🟠 olmaz (en fazla 🟡)
     if not listing.get("model_norm"):
         gaps.append("model_yok")
+    elif model_ambiguous(listing):
+        gaps.append("model_belirsiz")  # farklı modeller aynı anahtarda (geçici yama; kalıcısı model adı tablosu)
     if listing.get("extraction_by") == "llm":
         gaps.append("llm_okudu")  # yapay zekâ okuması tek başına 🟢 vermez
     km, med = effective_km(listing), market.median_km

@@ -76,7 +76,8 @@ def source_alarms(repo: Repository, sources: dict[str, dict],
 def check_source_alarms(repo: Repository) -> int:
     """Her tur çalışır. Gönderilen mesaj sayısını döner (alarm + düzelme)."""
     paused = feed_switch.paused_platforms(repo)  # duraklatılmış sosyal kaynaklar arıza sayılmaz
-    sources = {s["name"]: s for s in repo.alarm_sources() if s["platform"] not in paused}
+    quiet = feed_switch.quiet_platforms(repo)  # + duraklamadan yeni çıkıp henüz toplanmamışlar: kaynak başına "taranamıyor" uyarısı yok
+    sources = {s["name"]: s for s in repo.alarm_sources() if s["platform"] not in quiet}
     alarms, ok = source_alarms(repo, sources, skip=frozenset(feed_switch.COLLECTIVE[p] for p in paused))
     sent = 0
     for name, text in alarms:
