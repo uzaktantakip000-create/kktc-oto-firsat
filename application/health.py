@@ -22,8 +22,9 @@ def notify_owner(repo: Repository, key: str, text: str, repeat_hours: int = REPE
 
 
 def report_collect_errors(repo: Repository, errors: list[tuple[str, str]]) -> None:
+    """Tek seferlik hata sahibe yazılmaz (gürültü): 3 tur üst üste süren arızayı application/source_alarm.py bildirir."""
     for name, message in errors:
-        notify_owner(repo, f"collect:{name}", f"⚠️ Toplama hatası — {name}\n{message[:300]}", repeat_hours=6)
+        print(f"toplama hatası — {name}: {message[:300]}")
 
 
 def source_limit_hours(source: dict) -> int:
