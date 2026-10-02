@@ -8,15 +8,20 @@ from decimal import Decimal
 import httpx
 from apify_client import ApifyClient
 
+from infrastructure.collectors.apify_run import ApifyRunError, run_actor, run_cost
+
 ACTOR = "memo23/facebook-public-group-posts-scraper"
 START_COST = 0.008  # çalıştırma başlangıç ücreti (GB başına)
 POST_COST = 0.0015  # gönderi başına
 _ID = re.compile(r"/permalink/(\d+)")
 MAX_IMAGE_BYTES = 5_000_000  # fotoğraftan fiyat okuma: bundan büyük görsel indirilmez
 IMAGE_TIMEOUT = 15
-# Aktörün görsel alanı örnek veriyle DOĞRULANMADI (kayıtlı ham satır yok): bilinen/olası anahtarlar sırayla denenir
-_IMAGE_KEYS = ("image", "imageUrl", "image_url", "full_picture", "picture", "thumbnail", "photo", "photoUrl",
-               "media", "images", "photos", "attachments", "attachment")
+RUN_TIMEOUT = timedelta(minutes=5)  # tick toplam süresi < 13 dk kalsın (gerçek çalıştırma 1–2,5 dk sürüyor)
+# Gerçek veriyle doğrulandı (02.10.2026): görsel `attachments[]` listesindedir; her eleman {__typename:'Photo', thumbnail:<cdn url>,
+# photo_image:{uri,height,width}, id, url:<facebook.com FOTOĞRAF SAYFASI (HTML), görsel DEĞİL>}. Eski kod 'url'u görsel sanıyordu.
+# Diğer anahtarlar başka aktör sürümleri için yedek.
+_IMAGE_KEYS = ("attachments", "image", "imageUrl", "image_url", "full_picture", "picture", "thumbnail", "photo", "photoUrl",
+               "media", "images", "photos", "attachment")
 _IMG_URL = re.compile(r"^https?://\S+$")
 
 
@@ -37,7 +42,8 @@ def _first_image(value, depth: int = 0) -> str | None:
     if depth > 3:
         return None
     if isinstance(value, dict):
-        for k in ("uri", "url", "src", "photo_image", "image", "full_picture", "original", "large", "thumbnail"):
+        # 'url' bilerek yok: attachments elemanında facebook.com sayfa bağlantısıdır, görsel değil
+        for k in ("uri", "photo_image", "src", "image", "full_picture", "original", "large", "thumbnail"):
             if k in value and (u := _first_image(value[k], depth + 1)):
                 return u
     elif isinstance(value, list):
@@ -106,7 +112,8 @@ def estimate_cost(n_groups: int, max_items: int) -> float:
 def fetch_group_posts(token: str, group_urls: list[str], hours: int, max_items: int) -> tuple[list[RawGroupPost], float, int]:
     """Gruplardaki son `hours` saatin gönderileri. Döner: (gönderiler, tahmini maliyet USD, Apify'ın döndürdüğü satır sayısı)."""
     client = ApifyClient(token)
-    run = client.actor(ACTOR).call(
+    run = run_actor(
+        client, ACTOR,
         run_input={
             "startUrls": group_urls,
             "maxItems": max_items,
@@ -117,16 +124,16 @@ def fetch_group_posts(token: str, group_urls: list[str], hours: int, max_items: 
             "includeCommentReplies": False,
         },
         max_total_charge_usd=Decimal(str(estimate_cost(len(group_urls), max_items))),
-        run_timeout=timedelta(minutes=10),
-        logger=None,
+        run_timeout=RUN_TIMEOUT, min_cost=START_COST, label="facebook",
     )
-    if run is None:
-        raise RuntimeError("Apify çalıştırması başlamadı")
     posts, rows = [], 0
-    for item in client.dataset(run.default_dataset_id).iterate_items():
-        rows += 1
-        post = parse_item(item)
-        if post:
-            posts.append(post)
-    spent = max(float(getattr(run, "usage_total_usd", 0) or 0), START_COST + rows * POST_COST)
+    try:
+        for item in client.dataset(run.default_dataset_id).iterate_items():
+            rows += 1
+            post = parse_item(item)
+            if post:
+                posts.append(post)
+    except Exception as e:  # çalıştırma bitti ve ücretlendi; veri okunamasa da harcama kaydedilmeli
+        raise ApifyRunError(f"Apify verisi okunamadı ({type(e).__name__})", run_cost(run, START_COST)) from e
+    spent = run_cost(run, START_COST + rows * POST_COST)
     return posts, round(spent, 4), rows

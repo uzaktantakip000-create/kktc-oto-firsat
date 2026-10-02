@@ -358,7 +358,7 @@ Kullanıcı isteği: Facebook'ta Kuzey Kıbrıs araç satış grupları (Marketp
 **Sessiz arıza korumaları (`application/safeguards.py`):** KibrisArabaAl: yalnızca 404/410 ya da ilan sayfası olmayan yönlendirme "kaldırıldı" sayılır; 200 ama JSON-LD yoksa okunamadı (tekrar denenir). Site haritası önceki turun %70'inin altına inerse toplu pasifleştirme yapılmaz + uyarı; bir turda çekilenlerin yarısı okunamıyorsa "şablon değişmiş olabilir" uyarısı (KKTCar da).
 **Değerleme düzeltmeleri (veriyle bulundu):** 3-7 emsalli ilan 🟢 olmaz (en fazla 🟡; `Settings.low_confidence_can_alert=False`) — gölgedeki 16 KibrisArabaAl 🟢 adayının 14'ü bu gruptaydı ve çoğu sahte (küçük havuz); 🟡 özet artık düşük güvenlileri de gösterir ("DÜŞÜK — kontrol et"). Eski araçta <1000 km "bilinmiyor" sayılır (`effective_km`: 370 = 370.000; KibrisArabaAl'da 76 ilan) → km_yok ⇒ en fazla 🟡. `Mercedes - Benz` yazımı normalleşmiyordu (304 ilan ayrı havuzdaydı): düzeltildi ve veritabanında yeniden anahtarlandı. Motosiklet/tekne/karavan/ticari kategoriler (`NON_CAR_BRANDS`) değerlendirilmez, emsale girmez.
 **Kaynak seviyeleri:** migration 009 ile taranan tüm kaynaklar `yesil` (anlık); `sari` = özete düşmüş. Otomatik düşürme (`application/source_guard.py`): son 10 🟢'nin ≥3'üne "yanlış fiyat/kusurlu" denmişse kaynak `sari` olur ve sahibe haber gider; geri açma `/kaynak_seviye <ad> yesil`. Not: geri bildirim şu an 0; asıl koruma yapay zekâ okumasıdır.
-**Tick:** sıra = siteler → değerlendir → Instagram/Facebook → değerlendir (yavaş Apify turu site bildirimlerini geciktirmesin); Instagram gündüz 15 dk; Apify çalıştırmalarına süre sınırı (Instagram 8 dk, Facebook 10 dk).
+**Tick:** sıra = siteler → değerlendir → Instagram/Facebook → değerlendir (yavaş Apify turu site bildirimlerini geciktirmesin); Instagram gündüz 15 dk; Apify çalıştırmalarına süre sınırı (02.10: Instagram 4 dk, Facebook 5 dk, bkz. §24).
 **Yapılmayacak:** 14 gün gölge/terfi karnesi, pHash, Marketplace, ML fiyat tahmini, kapalı grupları otomatik tarama.
 
 ### 21.1 Uygulanan taşlar (02.10.2026)
@@ -419,7 +419,7 @@ Sahibin kararları:
 - Facebook'ta fiyatı yazmayan gönderinin ilk fotoğrafı okunur. Sonuç `extraction_by='llm'` olur, en fazla 🟡/🟠.
 
 **Açık konular**
-- Facebook aktörünün görsel alanı doğrulanmadı; `foto_url_yok` sayacına bakılacak.
+- (Çözüldü, §24) Facebook görsel alanı `attachments[].photo_image.uri`.
 - Toyota Corolla eğrisi yok: veri 1993–99 ve 2020–25 olarak iki uca bölünmüş, σ 0,32 çıkıyor.
 - KKTCar'daki eski TL fiyatlı satılmış ilanlar bugünkü kurla ucuz görünüyor olabilir; kontrol edilecek.
 - `same_car` km karşılaştırmasında `effective_km` kullanmıyor.

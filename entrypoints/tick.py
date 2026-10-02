@@ -1,6 +1,8 @@
 """Tek zamanlayıcı girişi. Dışarıdan her 15 dakikada tetiklenir (GitHub kendi saati ek yedek).
 Her tetiklemede: sırası gelen toplayıcıları çalıştırır, sonra değerlendirir (bildirimler, bot komutları).
 Hangi işin ne zaman çalıştığı veritabanında (bot_state 'tick:<iş>') tutulur: iki tetikleme üst üste gelse de iş tekrar etmez."""
+import sys
+import time
 from datetime import datetime, timedelta, timezone
 
 from application.health import report_collect_errors
@@ -26,7 +28,11 @@ SCHEDULE = {
 }
 
 
-SLOW_JOBS = ("instagram", "facebook")  # Apify çalıştırmaları dakikalar sürebilir
+SLOW_JOBS = ("facebook", "instagram")  # Apify çalıştırmaları dakikalar sürebilir; seyrek olan (Facebook) önce: zaman payı ona öncelikli
+TICK_BUDGET_S = 13 * 60  # tüm tur bu süreyi aşmamalı (iş akışı sınırı 20 dk; 14,4 dk'da iptal olan turlar bu yüzden eklendi)
+# Bir yavaş işe başlamak için kalması gereken en az süre (en kötü durum: Apify süre sınırı + bekleme payı + okuma aşaması + değerlendirme).
+# Yetmezse iş ATLANIR ve 'tick:<iş>' yazılmaz: bir sonraki tetiklemede (15 dk) çalışır.
+MIN_LEFT_S = {"facebook": 10 * 60, "instagram": 6 * 60}
 
 
 def due_jobs(now: datetime, last_runs: dict[str, datetime | None]) -> list[str]:
@@ -52,7 +58,39 @@ def heartbeat_gap(now: datetime, last_tick: datetime | None) -> int | None:
     return minutes if GAP_ALERT_MIN <= minutes <= 3 * 24 * 60 else None
 
 
+def has_time(left_s: float, job: str) -> bool:
+    return left_s >= MIN_LEFT_S.get(job, 0)
+
+
+def run_batch(batch: list[str], repo, now: datetime, started: float, errors: list[tuple[str, str]],
+              runner=cron_collect.run, clock=time.monotonic) -> None:
+    """İşleri sırayla çalıştırır. `tick:<iş>` YALNIZCA iş bitince (başarı ya da yakalanmış hata) yazılır: tur ortada
+    iptal edilirse iş bir sonraki tetiklemede yeniden denenir. Her işin süresi log'a yazılır."""
+    for job in batch:
+        left = TICK_BUDGET_S - (clock() - started)
+        if not has_time(left, job):
+            print(f"iş {job}: atlandı (kalan {int(left)} sn < gereken {MIN_LEFT_S[job]} sn), sonraki turda", flush=True)
+            continue
+        t0 = clock()
+        try:
+            errors.extend(runner(job, repo))
+        except Exception as e:  # bir kaynağın çökmesi diğerlerini ve değerlendirmeyi durdurmasın
+            msg = redact(f"{type(e).__name__}: {str(e)[:150]}")
+            print(f"{job}: HATA {msg}", flush=True)
+            errors.append((job, msg))
+        repo.set_state(f"tick:{job}", now.isoformat())  # hata olsa da hemen tekrar denenmesin
+        print(f"iş {job}: {clock() - t0:.0f} sn", flush=True)
+
+
+def timed_evaluate(label: str) -> None:
+    t0 = time.monotonic()
+    cron_evaluate.main()
+    print(f"iş {label}: {time.monotonic() - t0:.0f} sn", flush=True)
+
+
 def main() -> None:
+    sys.stdout.reconfigure(line_buffering=True)  # iş akışı iptal edilse bile loglar kaybolmasın
+    started = time.monotonic()
     load_env()
     repo = Repository(require("DATABASE_URL"))
     frankfurter.use_store(repo)
@@ -71,24 +109,15 @@ def main() -> None:
     print("sırası gelen işler:", jobs or "yok")
     errors: list[tuple[str, str]] = []
 
-    def run_jobs(batch: list[str]) -> None:
-        for job in batch:
-            repo.set_state(f"tick:{job}", now.isoformat())  # hata olsa da hemen tekrar denenmesin
-            try:
-                errors.extend(cron_collect.run(job, repo))
-            except Exception as e:  # bir kaynağın çökmesi diğerlerini ve değerlendirmeyi durdurmasın
-                msg = redact(f"{type(e).__name__}: {str(e)[:150]}")
-                print(f"{job}: HATA {msg}")
-                errors.append((job, msg))
-
     # Hızlı siteler önce toplanıp değerlendirilir: yavaş bir Apify turu site bildirimlerini geciktirmesin
-    run_jobs([j for j in jobs if j not in SLOW_JOBS])
-    cron_evaluate.main()
-    slow = [j for j in jobs if j in SLOW_JOBS]
+    run_batch([j for j in jobs if j not in SLOW_JOBS], repo, now, started, errors)
+    timed_evaluate("değerlendirme")
+    slow = [j for j in SLOW_JOBS if j in jobs]
     if slow:
-        run_jobs(slow)
-        cron_evaluate.main()
+        run_batch(slow, repo, now, started, errors)
+        timed_evaluate("değerlendirme (2)")
     report_collect_errors(repo, errors)
+    print(f"tur toplam: {time.monotonic() - started:.0f} sn", flush=True)
 
 
 if __name__ == "__main__":

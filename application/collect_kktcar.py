@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+import httpx
 
 from application.safeguards import check_read_rate, sitemap_shrunk
 from infrastructure.collectors import kktcar
@@ -26,7 +27,10 @@ def _gbp(data: dict) -> float | None:
 def refresh_active(repo: Repository, source: dict, client, stats: KktcarStats, limit: int = 25, hours: int = 6) -> None:
     """Aktif ilanların en eski kontrol edilenlerini yeniden okur: fiyat düştü mü, satıldı/arşivlendi mi."""
     for row in repo.stale_active(source["id"], hours, limit):
-        data = kktcar.fetch_detail(client, kktcar.SitemapEntry(row["url"], row["source_item_id"], None))
+        try:
+            data = kktcar.fetch_detail(client, kktcar.SitemapEntry(row["url"], row["source_item_id"], None))
+        except httpx.HTTPError:  # zaman aşımı/ağ hatası: geçici, tek ilan yüzünden tur durmasın
+            data = None
         kktcar.polite_sleep()
         if not data:
             repo.touch(row["id"])  # okunamadı: sırayı kaydır, sonra tekrar dene (sitemap'ten kaybolursa zaten pasifleşir)
@@ -49,7 +53,10 @@ def collect_kktcar(repo: Repository, source: dict, max_new: int = 25) -> KktcarS
         todo.sort(key=lambda e: e.lastmod.timestamp() if e.lastmod else 0, reverse=True)
         for entry in todo[:max_new]:
             stats.fetched += 1
-            data = kktcar.fetch_detail(client, entry)
+            try:
+                data = kktcar.fetch_detail(client, entry)
+            except httpx.HTTPError:  # geçici hata: bu ilan sonraki turda yeniden denenir (okuma oranı korumasına sayılır)
+                data = None
             kktcar.polite_sleep()
             if not data:
                 stats.failed += 1

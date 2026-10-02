@@ -74,19 +74,26 @@ def collect_sources(repo: Repository, apify_token: str, sources: list[dict], fir
     watermark = repo.get_state("ig_watermark", "")
     names = {username_from_url(s["url"]).lower(): s for s in sources}
     posts = PostList()
-    if established:
-        if watermark and watermark > first_run:
-            since = (datetime.strptime(watermark, "%Y-%m-%dT%H:%M:%S") - timedelta(minutes=OVERLAP_MIN)).strftime("%Y-%m-%dT%H:%M:%S")
-        else:
-            since = max(min(s["cursor"] for s in established), first_run)
-        got = fetch_posts(apify_token, [username_from_url(s["url"]) for s in established], since)
-        posts.extend(got)
-        posts.cost_usd += getattr(got, "cost_usd", 0.0)
-    if fresh:
-        got = fetch_posts(apify_token, [username_from_url(s["url"]) for s in fresh], first_run)
-        posts.extend(got)
-        posts.cost_usd += getattr(got, "cost_usd", 0.0)
+    try:
+        if established:
+            if watermark and watermark > first_run:
+                since = (datetime.strptime(watermark, "%Y-%m-%dT%H:%M:%S") - timedelta(minutes=OVERLAP_MIN)).strftime("%Y-%m-%dT%H:%M:%S")
+            else:
+                since = max(min(s["cursor"] for s in established), first_run)
+            got = fetch_posts(apify_token, [username_from_url(s["url"]) for s in established], since)
+            posts.extend(got)
+            posts.cost_usd += getattr(got, "cost_usd", 0.0)
+        if fresh:
+            got = fetch_posts(apify_token, [username_from_url(s["url"]) for s in fresh], first_run)
+            posts.extend(got)
+            posts.cost_usd += getattr(got, "cost_usd", 0.0)
+    except Exception as e:  # çalıştırma başladıktan sonraki hata (süre aşımı, veri okunamadı): ücret yine de harcamaya yazılır
+        posts.cost_usd += getattr(e, "cost_usd", 0.0)
+        repo.set_state(key, f"{spent_month + posts.cost_usd:.4f}")
+        print(f"Instagram: çalıştırma başarısız, maliyet ${posts.cost_usd:.4f} kaydedildi (ay: ${spent_month + posts.cost_usd:.2f})")
+        raise
     repo.set_state(key, f"{spent_month + getattr(posts, 'cost_usd', 0.0):.4f}")
+    print(f"Instagram: tur maliyeti ${getattr(posts, 'cost_usd', 0.0):.4f} (ay: ${spent_month + getattr(posts, 'cost_usd', 0.0):.2f} / ${MONTHLY_BUDGET_USD:.0f})")
     repo.set_state("ig_watermark", now.strftime("%Y-%m-%dT%H:%M:%S"))  # Apify saatleri UTC
     by_source: dict[str, list[RawPost]] = {n: [] for n in names}
     for post in posts:
