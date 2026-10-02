@@ -30,6 +30,8 @@ def source_limit_hours(source: dict) -> int:
     """Bu süreyi aşan sessizlik arıza sayılır (çalışma aralığının yaklaşık 3-6 katı; tetikleyici/Actions gecikebilir)."""
     if "kktcarabam" in source["url"]:
         return 14  # 6 saatte bir
+    if "sahibindenarabakibris" in source["url"]:
+        return 6  # gündüz 60 dk, gece 120 dk
     if source["platform"] == "facebook":
         return 12  # gündüz 2 saatte bir, gece 8 saatte bir
     if source["platform"] == "instagram":

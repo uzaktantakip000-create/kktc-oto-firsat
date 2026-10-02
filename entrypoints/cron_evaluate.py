@@ -15,6 +15,7 @@ from application.liveness import recheck_before_send
 from application.notify import is_fresh, send_alerts
 from application.report import send_weekly_report
 from application.settings_store import load_settings
+from application.source_alarm import check_source_alarms
 from application.source_guard import demote_failing_sources
 from application.status import send_morning_status
 from domain.comparables import nearest_comparables
@@ -117,6 +118,7 @@ def run(repo: Repository) -> None:
                       ("sabah durumu", lambda: send_morning_status(repo)),
                       ("keşif", lambda: send_discovery(repo, token, owner)),
                       ("denetim", lambda: send_monthly_audit(repo, token, owner)),
+                      ("kaynak alarmı", lambda: check_source_alarms(repo)),  # sağlık uyarısından önce: aynı arıza ikinci kez yazılmasın
                       ("kaynak sağlığı", lambda: (check_sources(repo), send_weekly_report(repo)))):
         try:
             job()

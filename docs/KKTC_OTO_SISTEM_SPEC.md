@@ -423,3 +423,8 @@ Sahibin kararları:
 - Toyota Corolla eğrisi yok: veri 1993–99 ve 2020–25 olarak iki uca bölünmüş, σ 0,32 çıkıyor.
 - KKTCar'daki eski TL fiyatlı satılmış ilanlar bugünkü kurla ucuz görünüyor olabilir; kontrol edilecek.
 - `same_car` km karşılaştırmasında `effective_km` kullanmıyor.
+
+## 23. /son, anlık kaynak alarmı, haftalık karne (02.10.2026)
+- **/son** (`application/history_cmd.py`, `Repository.recent_opportunities`): gönderilmiş son 10 🟢/🟠, saat (KKTC), fiyat, medyana göre ucuzluk, sahibin düğme cevabı ve bağlantı.
+- **Anlık kaynak alarmı** (`application/source_alarm.py`, her tick'te `cron_evaluate` yan işi): `aktif` bir kaynak ya 3 tur üst üste hata verirse (`bot_state fail:<ad>`; `cron_collect.run` içinde `track_collect` günceller, başarıda sıfırlanır) ya da normal sınırdan (`source_limit_hours`) uzun süredir başarılı taranmadıysa sahibe TEK mesaj gider; düzelince bir kez "✅ tekrar çalışıyor" (`srcalarm:<ad>` bayrağı). "Yeni ilan gelmedi" değil "başarılı tarama yok" ölçülür: durgun siteler zaten ayda birkaç ilan getirir.
+- **Haftalık karne** (`application/report.py: karne_lines`): hafta içinde giden 🟢/🟠, düğme dağılımı (hiç basılmadıysa uyarı cümlesi), kendiliğinden öğrenilenler (🟠 durdurulan modeller, sıkılaşan eşik, özete düşen kaynaklar; `alert:est_off:*`, `alert:est_tighten`, `alert:guard:*` işaretlerinin zamanından), değer tablosu (`pb:stats`).

@@ -1,13 +1,13 @@
 """Bot komutlarını Actions çalışması sırasında getUpdates ile işler (7/24 açık sunucu gerektirmez)."""
 import httpx
 
-from application import ad_check, discovery, llm_reader, price_book_cmd, settings_store, sources_cmd, status
+from application import ad_check, discovery, history_cmd, llm_reader, price_book_cmd, settings_store, sources_cmd, status
 from application.notify import TelegramError, api
 from infrastructure.db.repository import Repository
 
 FEEDBACK_ACTIONS = ("ilgilendim", "pas", "yanlis_fiyat", "satilmis", "kusurlu", "audit_dogru", "audit_yanlis")
 WELCOME_OWNER = ("Merhaba! Fırsat bildirimleri bu sohbete gelecek. /dur ile durdurabilir, /basla ile açabilirsin.\n"
-                 "Sistemin durumu için /durum, kaynak listesi için /kaynaklar.\n"
+                 "Sistemin durumu için /durum, kaynak listesi için /kaynaklar, son gönderilen 10 fırsat için /son.\n"
                  "Araç değeri için /fiyat corolla 2014, gerçek bir satışı girmek için /satti corolla 2014 120000km 7200, "
                  "🟠 tahmini fırsat bildirimlerini açıp kapatmak için /tahmini ac ya da /tahmini kapat.\n"
                  "Bir ilanı (yazı ya da ekran görüntüsü) bana gönderirsen piyasayla karşılaştırıp cevap veririm; cevap en geç ~15 dk içinde gelir.")
@@ -68,6 +68,8 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
                     {"text": "⛔ Reddet", "callback_data": f"sub:reddedildi:{chat_id}"}]]})
     elif chat_id == owner and text.startswith("/durum"):
         api(token, "sendMessage", chat_id=chat_id, text=status.build_status(repo), disable_web_page_preview=True)
+    elif chat_id == owner and text.split()[:1] == ["/son"]:
+        api(token, "sendMessage", chat_id=chat_id, text=history_cmd.last_opportunities(repo)[:3900], disable_web_page_preview=True)
     elif chat_id == owner and text.split()[:1] == ["/ayarlar"]:
         api(token, "sendMessage", chat_id=chat_id, text=settings_store.describe(repo))
     elif chat_id == owner and text.split()[:1] == ["/esik"]:
