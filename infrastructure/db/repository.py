@@ -250,8 +250,9 @@ class Repository:
             (flags, listing_id),
         )
 
-    def pending_strong(self, hours: int = 36) -> list[dict]:
-        """Son 'hours' saatte 🟢 değerlendirilmiş, ama onaylı abonelerden en az birine henüz gitmemiş ilanlar."""
+    def pending_strong(self, hours: int = 36, tier: str = "guclu") -> list[dict]:
+        """Son 'hours' saatte 'tier' (varsayılan 🟢 'guclu'; 🟠 için 'tahmini') değerlendirilmiş, ama onaylı abonelerden
+        en az birine henüz gitmemiş ilanlar."""
         return self.conn.execute(
             """SELECT l.*, l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform, s.created_at AS source_created_at,
                       e.comparables_n, e.market_median_gbp::float8 AS market_median_gbp,
@@ -259,16 +260,50 @@ class Repository:
                       e.exit_price_gbp::float8 AS exit_price_gbp, e.profit_gbp::float8 AS profit_gbp,
                       e.profit_pct::float8 AS profit_pct, e.confidence, e.red_flags, e.year_span,
                       e.archived_share::float8 AS archived_share,
+                      COALESCE(to_jsonb(e) ->> 'method', 'A') AS method,  -- kolon (migration 013) yoksa da çalışır
                       (SELECT MAX(h.changed_at) FROM listing_history h WHERE h.listing_id = l.id AND h.field = 'price_gbp')
                           AS price_changed_at
                FROM (SELECT DISTINCT ON (listing_id) * FROM evaluations ORDER BY listing_id, evaluated_at DESC) e
                JOIN listings l ON l.id = e.listing_id JOIN sources s ON s.id = l.source_id
-               WHERE e.tier = 'guclu' AND s.alert_level = 'yesil' AND l.is_active AND l.karantina_nedeni IS NULL AND e.evaluated_at > NOW() - make_interval(hours => %s)
+               WHERE e.tier = %s AND s.alert_level = 'yesil' AND l.is_active AND l.karantina_nedeni IS NULL AND e.evaluated_at > NOW() - make_interval(hours => %s)
                  AND EXISTS (SELECT 1 FROM subscribers sub WHERE sub.status = 'onayli' AND NOT EXISTS (
-                       SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.chat_id = sub.chat_id AND a.tier = 'guclu'))
+                       SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.chat_id = sub.chat_id AND a.tier = %s))
                ORDER BY e.profit_pct DESC""",
-            (hours,),
+            (tier, hours, tier),
         ).fetchall()
+
+    def first_seen_since(self, days: int) -> list[dict]:
+        """Son 'days' günde ilk görülen (ve görüldüğünde taze sayılacak) ilanlar: 🟠 kuru deneme için, yalnızca okur."""
+        return self.conn.execute(
+            """SELECT l.*, l.price_gbp::float8 AS price_gbp, l.engine_l::float8 AS engine_l, s.name AS source_name, s.platform
+               FROM listings l JOIN sources s ON s.id = l.source_id
+               WHERE l.first_seen_at > NOW() - make_interval(days => %s) AND l.price_gbp IS NOT NULL AND l.brand_norm IS NOT NULL
+                 AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL
+                 AND (l.posted_at IS NULL OR l.posted_at > l.first_seen_at - interval '4 days')
+               ORDER BY l.first_seen_at""", (days,)).fetchall()
+
+    def est_feedback_by_model(self, days: int = 30, min_bad: int = 2) -> list[dict]:
+        """🟠 bildirilen ilanlarda 'yanlış fiyat/kusurlu' denen DISTINCT ilan sayısı, model bazında (en az 'min_bad')."""
+        return self.conn.execute(
+            """SELECT l.brand_norm, l.model_norm, count(DISTINCT l.id) AS bad_n
+               FROM feedback f JOIN listings l ON l.id = f.listing_id
+               WHERE f.action IN ('yanlis_fiyat','kusurlu') AND f.created_at > NOW() - make_interval(days => %s)
+                 AND l.brand_norm IS NOT NULL AND l.model_norm IS NOT NULL
+                 AND EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.tier = 'tahmini')
+               GROUP BY l.brand_norm, l.model_norm HAVING count(DISTINCT l.id) >= %s""",
+            (days, min_bad)).fetchall()
+
+    def est_feedback_recent(self, limit: int = 10, after: str | None = None) -> list[bool]:
+        """Geri bildirim almış son 'limit' adet 🟠 ilan (en yeni önce): True = 'yanlış fiyat/kusurlu' denmiş.
+        'after' (zaman damgası metni) verilirse yalnızca ondan sonraki geri bildirimler sayılır."""
+        rows = self.conn.execute(
+            """SELECT bool_or(f.action IN ('yanlis_fiyat','kusurlu')) AS bad
+               FROM feedback f
+               WHERE f.created_at > COALESCE(%s::timestamptz, '-infinity'::timestamptz)
+                 AND EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = f.listing_id AND a.tier = 'tahmini')
+               GROUP BY f.listing_id ORDER BY max(f.created_at) DESC LIMIT %s""",
+            (after, limit)).fetchall()
+        return [bool(r["bad"]) for r in rows]
 
     def pending_negotiable(self, chat_id: str, hours: int = 48, limit: int = 30) -> list[dict]:
         """Son 'hours' saatte 🟡 değerlendirilmiş, güveni orta/yüksek, bu sohbete henüz özetlenmemiş aktif ilanlar."""

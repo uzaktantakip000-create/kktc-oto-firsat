@@ -116,6 +116,13 @@ def backfill_kaa() -> None:
             break
 
 
+def shadow_tahmini() -> None:
+    """🟠 kuru deneme (yalnızca okur): admin_cli shadow-tahmini --days 14"""
+    from application.price_book_shadow import run_shadow
+    days = int(sys.argv[sys.argv.index("--days") + 1]) if "--days" in sys.argv else 14
+    print(run_shadow(Repository(require("DATABASE_URL")), days))
+
+
 if __name__ == "__main__":
     load_env()
     {
@@ -127,4 +134,5 @@ if __name__ == "__main__":
         "kaa": backfill_kaa,
         "backtest": backtest,
         "report": weekly_report,
+        "shadow-tahmini": shadow_tahmini,
     }[sys.argv[1]]()

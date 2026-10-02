@@ -4,6 +4,7 @@ from domain.comparables import Market, find_market
 from domain.data_gate import below_cheap_quartile, data_gaps
 from domain.profit import Confidence, ProfitResult, Tier, evaluate_profit
 from domain.normalize import is_car_brand
+from domain.price_book import STATUS_SUSPECT, BookRow, Estimate, PriceBook, estimate_from_book
 from domain.red_flags import blocking_flags, plate_flags, urgency_signals, warning_flags
 from domain.settings import Settings
 from infrastructure.db.repository import Repository
@@ -18,6 +19,8 @@ class Evaluated:
     warnings: list[str]
     urgency: list[str]
     checks: list[str] = field(default_factory=list)  # ✅ ile gösterilen doğrulama satırları
+    method: str = "A"  # A = doğrudan emsal, B = değer tablosu eğrisi (🟠)
+    book_row: BookRow | None = None  # mesajda "📘 Değer tablosu" satırı için
 
 
 @dataclass
@@ -28,6 +31,21 @@ class Assessment:
     warnings: list[str]
     gaps: list[str]  # 🟢 iken düşürülmesine yol açan eksikler (düşürülmediyse boş)
     text: str
+    method: str = "A"
+    estimate: Estimate | None = None
+
+
+def load_book(repo) -> PriceBook | None:
+    """Değer tablosunu yükler. Modül/tablo yoksa ya da DB hatasında None (🟠 yolu kapalı kalır, eski davranış)."""
+    try:
+        from infrastructure.db.price_book_store import PriceBookStore
+    except ImportError:
+        return None
+    try:
+        return PriceBookStore(repo.conn).load_book()
+    except Exception as e:  # tablo hatası değerlendirmeyi engellemesin
+        print("değer tablosu yüklenemedi:", type(e).__name__, str(e)[:120])
+        return None
 
 
 def _apply_user_decisions(listing: dict, s: Settings, price: float, tier: Tier, gaps: list[str]) -> tuple[Tier, list[str]]:
@@ -38,27 +56,25 @@ def _apply_user_decisions(listing: dict, s: Settings, price: float, tier: Tier, 
         return Tier.NONE, gaps
     if listing.get("seller_phone") and listing["seller_phone"] in s.blocked_phones:
         return Tier.NONE, gaps
-    if tier is Tier.STRONG and f"{brand}|{model}" in s.muted_models:
+    if tier in (Tier.STRONG, Tier.ESTIMATED) and f"{brand}|{model}" in s.muted_models:
         gaps = gaps + ["sessiz_model"]
     return tier, gaps
 
 
-def assess_listing(listing: dict, pool: list[dict], s: Settings) -> Assessment | None:
-    """Tek ilanın piyasa değerlendirmesi (toplayıcı ilanları ve kullanıcının ilettiği ilanlar aynı kuralları kullanır).
-    Emsal yoksa None."""
-    price = float(listing["price_gbp"])
-    market = find_market(listing, pool, s)
-    if market is None:
-        return None
+def _market_assessment(listing: dict, market: Market, price: float, text: str, blocking: list[str], warnings: list[str],
+                       s: Settings, book: PriceBook | None) -> Assessment:
+    """Bugünkü 🟢/🟡 yolu (emsal medyanı)."""
     profit = evaluate_profit(price, market.median_gbp, market.n, s)
-    text = (listing.get("raw_text") or "") + " " + (listing.get("model") or "")
-    blocking, warnings = blocking_flags(text), warning_flags(text)
     gaps = data_gaps(listing, market, s)
     tier = Tier.NONE if blocking else profit.tier
     if tier is Tier.STRONG and not below_cheap_quartile(price, market):
         gaps = gaps + ["ucuz_ceyrek_degil"]  # medyandan %20 ucuz ama benzerlerin en ucuz çeyreğinde değil: sıradan fiyat
     if tier is Tier.STRONG and plate_flags(text):
         gaps = gaps + ["plaka_uyari"]
+    if tier is Tier.STRONG and book is not None and listing.get("year"):
+        row = book.row(listing.get("brand_norm"), listing.get("model_norm"), listing["year"], "")
+        if row is not None and row.status == STATUS_SUSPECT:
+            gaps = gaps + ["deger_supheli"]  # tablo bu modelde bir gecede çok oynadı: 🟢 bekler
     tier, gaps = _apply_user_decisions(listing, s, price, tier, gaps)
     downgraded = tier is Tier.STRONG and bool(gaps)
     if downgraded:  # eksik/şüpheli veriyle 🟢 yok: en fazla 🟡
@@ -67,9 +83,57 @@ def assess_listing(listing: dict, pool: list[dict], s: Settings) -> Assessment |
     return Assessment(market, final, blocking, warnings, gaps if downgraded else [], text)
 
 
-def evaluate_new(repo: Repository, settings: Settings | None = None) -> list[Evaluated]:
-    """Henüz değerlendirilmemiş aktif ilanları değerlendirir. Emsali olmayanlar bir sonraki turda tekrar denenir."""
+def _estimated_assessment(listing: dict, market: Market | None, a: Assessment | None, price: float, text: str,
+                          blocking: list[str], warnings: list[str], s: Settings, book: PriceBook) -> Assessment | None:
+    """🟠 tahmini fırsat: az emsalde (yöntem B) değer tablosunun eğrisine göre ≥%30 ucuz. Hiçbir koşul sağlanmazsa None.
+    Muhafazakâr: çıkış fiyatı değerden değil, eğrinin ALT sınırından hesaplanır."""
+    if (not s.estimated_alerts or blocking or listing.get("karantina_nedeni") or listing.get("currency_guess")
+            or listing.get("steering") == "LHD"):  # sol direksiyon: eğri sağ direksiyonla kurulu
+        return None
+    if market is not None and market.n >= 8:
+        return None  # yeterli emsal var: 🟢/🟡 yolu karar verir
+    if a is not None and a.profit.tier is Tier.STRONG:
+        return None
+    est = estimate_from_book(listing, book, s)
+    if est is None:
+        return None
+    exit_price = est.lower_gbp * s.quick_sale_factor
+    profit = exit_price - price - s.fixed_cost_gbp
+    if (price > s.est_min_discount_to_lower * est.lower_gbp or profit < s.min_strong_profit_gbp
+            or price < s.est_min_value_ratio * est.value_gbp):
+        return None
+    if market is not None and price > s.est_a_agree_ratio * market.median_gbp:
+        return None  # emsal varsa onunla çelişmesin
+    tier, gaps = _apply_user_decisions(listing, s, price, Tier.ESTIMATED, [])
+    if tier is not Tier.ESTIMATED or gaps:
+        return None  # engelli marka/satıcı, bütçe üstü, sessiz model
+    mk = Market(est.n, est.value_gbp, est.lower_gbp, est.value_gbp ** 2 / est.lower_gbp, 1, 0.0)  # üst sınır: değerin simetriği
+    result = ProfitResult(exit_price, profit, profit / price, Confidence.LOW, Tier.ESTIMATED)
+    return Assessment(mk, result, [], warnings, ["tahmini_az_emsal"], text, "B", est)
+
+
+def assess_listing(listing: dict, pool: list[dict], s: Settings, book: PriceBook | None = None) -> Assessment | None:
+    """Tek ilanın piyasa değerlendirmesi (toplayıcı ilanları ve kullanıcının ilettiği ilanlar aynı kuralları kullanır).
+    Emsal yoksa None. `book` verilirse: şüpheli tablo satırında 🟢 bekler, az emsalde 🟠 tahmini fırsat denenir."""
+    price = float(listing["price_gbp"])
+    market = find_market(listing, pool, s)
+    text = (listing.get("raw_text") or "") + " " + (listing.get("model") or "")
+    blocking, warnings = blocking_flags(text), warning_flags(text)
+    a = _market_assessment(listing, market, price, text, blocking, warnings, s, book) if market is not None else None
+    if book is None:
+        return a
+    return _estimated_assessment(listing, market, a, price, text, blocking, warnings, s, book) or a
+
+
+_LOAD = object()
+
+
+def evaluate_new(repo: Repository, settings: Settings | None = None, book=_LOAD) -> list[Evaluated]:
+    """Henüz değerlendirilmemiş aktif ilanları değerlendirir. Emsali olmayanlar bir sonraki turda tekrar denenir.
+    Değer tablosu (book) bir kez yüklenir; verilmezse kendisi yükler, yüklenemezse eski davranış (🟠 yok)."""
     s = settings or Settings()
+    if book is _LOAD:
+        book = load_book(repo) if s.estimated_alerts else None
     pool = [r for r in repo.market_pool(days=s.comparable_window_days + 30) if is_car_brand(r.get("brand_norm"))]
     results = []
     for listing in repo.unevaluated_active():
@@ -81,7 +145,7 @@ def evaluate_new(repo: Repository, settings: Settings | None = None) -> list[Eva
             repo.save_evaluation(listing["id"], {"comparables_n": 0, "confidence": Confidence.NONE.value,
                                                  "tier": Tier.NONE.value, "red_flags": ["fiyat_gecersiz"]})
             continue
-        a = assess_listing(listing, pool, s)
+        a = assess_listing(listing, pool, s, book)
         if a is None:
             continue
         market, profit = a.market, a.profit
@@ -100,23 +164,27 @@ def evaluate_new(repo: Repository, settings: Settings | None = None) -> list[Eva
                 "confidence": profit.confidence.value,
                 "tier": profit.tier.value,
                 "red_flags": a.blocking + a.warnings + a.gaps,  # "bu yüzden 🟢 değil" sadece gerçekten düşürüldüyse
+                **({"method": a.method} if a.method != "A" else {}),  # A = kolon varsayılanı
             },
         )
-        results.append(Evaluated(listing, market, profit, a.blocking, a.warnings, urgency_signals(a.text)))
+        results.append(Evaluated(listing, market, profit, a.blocking, a.warnings, urgency_signals(a.text), method=a.method))
     return results
 
 
-def pending_alerts(repo: Repository, hours: int = 36) -> list[Evaluated]:
-    """Gönderilmesi gereken 🟢 fırsatlar: yeni değerlendirilenler + daha önce gönderilemeyenler (hata, hız sınırı, yeni abone)."""
+def pending_alerts(repo: Repository, hours: int = 36, tier: Tier = Tier.STRONG, book: PriceBook | None = None) -> list[Evaluated]:
+    """Gönderilmesi gereken fırsatlar (varsayılan 🟢; tier=Tier.ESTIMATED ile 🟠): yeni değerlendirilenler + daha önce
+    gönderilemeyenler (hata, hız sınırı, yeni abone). `book` verilirse mesaja "📘 Değer tablosu" satırı için satır eklenir."""
     out = []
-    for r in repo.pending_strong(hours):
+    for r in repo.pending_strong(hours, tier.value):
         text = (r["raw_text"] or "") + " " + (r["model"] or "")
         med = r["market_median_gbp"]
         market = Market(r["comparables_n"], med, r["market_low_gbp"] or med, r["market_high_gbp"] or med,
                         r["year_span"] or 1, r["archived_share"] or 0.0)
         profit = ProfitResult(r["exit_price_gbp"], r["profit_gbp"], r["profit_pct"] / 100,
-                              Confidence(r["confidence"]), Tier.STRONG)
-        out.append(Evaluated(r, market, profit, [], list(r["red_flags"] or []), urgency_signals(text)))
+                              Confidence(r["confidence"]), tier)
+        flags = [f for f in (r["red_flags"] or []) if f != "tahmini_az_emsal"]  # iç işaret mesajda görünmez
+        row = book.row(r.get("brand_norm"), r.get("model_norm"), r["year"], "") if book is not None and r.get("year") else None
+        out.append(Evaluated(r, market, profit, [], flags, urgency_signals(text), method=r.get("method") or "A", book_row=row))
     return out
 
 

@@ -7,7 +7,8 @@ from application.maintenance import run_maintenance
 from application.dedupe import mark_duplicates
 from application.digest import send_daily_digest
 from application.discovery import send_discovery
-from application.evaluate import evaluate_new, pending_alerts
+from application.estimate_guard import guard_estimates
+from application.evaluate import evaluate_new, load_book, pending_alerts
 from application.health import check_sources
 from application import llm_reader
 from application.liveness import recheck_before_send
@@ -17,6 +18,7 @@ from application.settings_store import load_settings
 from application.source_guard import demote_failing_sources
 from application.status import send_morning_status
 from domain.comparables import nearest_comparables
+from domain.profit import Tier
 from domain.settings import Settings
 from infrastructure.config import load_env, redact, require
 from infrastructure.db.repository import Repository
@@ -64,9 +66,17 @@ def run(repo: Repository) -> None:
         run_maintenance(repo)  # geceleri günde bir: şüpheli ilanlar karantinaya (emsalden/bildirimden çıkar)
     except Exception as e:
         print("gece bakımı başarısız:", type(e).__name__, redact(str(e))[:150])
-    evaluated = evaluate_new(repo, settings)
+    try:
+        from application.price_book_job import run_price_book  # gece değer tablosu (kendi içinde günde bire sınırlı)
+        run_price_book(repo)
+    except ImportError:
+        pass
+    except Exception as e:  # tablo kurulamasa da değerlendirme sürer (eski tablo/emsal yolu)
+        print("değer tablosu kurulamadı:", type(e).__name__, redact(str(e))[:150])
+    book = load_book(repo) if settings.estimated_alerts else None  # tek kez yüklenir
+    evaluated = evaluate_new(repo, settings, book=book)
     # Yeni 🟢'ler + önceki turlarda gönderilemeyenler (hata, hız sınırı, sonradan onaylanan abone)
-    strong = [ev for ev in pending_alerts(repo)
+    strong = [ev for ev in pending_alerts(repo, book=book)
               if is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
                       platform=ev.listing.get("platform"))]
     strong = recheck_before_send(repo, strong)  # satılmış/fiyatı değişmiş ilan gönderilmez
@@ -90,7 +100,19 @@ def run(repo: Repository) -> None:
             except Exception as e:  # LLM hatası bildirimi engellemesin
                 print("LLM notu alınamadı:", type(e).__name__)
     sent = send_alerts(repo, token, strong, notes, comps=comps)
+    est_sent = 0
+    if settings.estimated_alerts and book is not None:  # 🟠 tahmini fırsat: ayrı gönderim (tablo yoksa hiç çıkmaz)
+        try:
+            est = [ev for ev in pending_alerts(repo, tier=Tier.ESTIMATED, book=book)
+                   if is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
+                               platform=ev.listing.get("platform"))]
+            est = recheck_before_send(repo, est)
+            est = llm_reader.verify_candidates(repo, llm_reader.from_env(repo), est)  # her kaynakta ikinci okuma + gizli sorun kontrolü
+            est_sent = send_alerts(repo, token, est, tier=Tier.ESTIMATED, s=settings)
+        except Exception as e:  # 🟠 hatası özet/rapor gibi yan işleri engellemesin
+            print("tahmini fırsat gönderimi başarısız:", type(e).__name__, redact(str(e))[:150])
     for name, job in (("kaynak düşürme", lambda: demote_failing_sources(repo)),
+                      ("tahmini öğrenme", lambda: guard_estimates(repo)),
                       ("özet", lambda: send_daily_digest(repo, token)),
                       ("sabah durumu", lambda: send_morning_status(repo)),
                       ("keşif", lambda: send_discovery(repo, token, owner)),
@@ -100,7 +122,7 @@ def run(repo: Repository) -> None:
             job()
         except Exception as e:  # yan işler ana bildirimi bozmasın
             print(f"{name} başarısız:", type(e).__name__, redact(str(e))[:150])
-    print(f"değerlendirilen={len(evaluated)} güçlü={len(strong)} bildirilen={sent}")
+    print(f"değerlendirilen={len(evaluated)} güçlü={len(strong)} bildirilen={sent} tahmini_bildirilen={est_sent}")
 
 
 if __name__ == "__main__":
