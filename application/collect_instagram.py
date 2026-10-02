@@ -9,7 +9,7 @@ from infrastructure.fx.frankfurter import gbp_rate
 
 
 OVERLAP_MIN = 20  # önceki turun sonundan bu kadar geriden başla (kaçan gönderi olmasın; bilinenler tekrar eklenmez)
-MONTHLY_BUDGET_USD = 8.0  # aylık Instagram (Apify) harcama tavanı; aşılırsa o ay toplama durur
+MONTHLY_BUDGET_USD = 10.0  # aylık Instagram (Apify) harcama tavanı; aşılırsa o ay toplama durur
 
 
 @dataclass

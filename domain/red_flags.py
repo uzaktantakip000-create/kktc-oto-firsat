@@ -5,6 +5,10 @@ from domain.caption_parser import tr_lower
 
 # Bildirimi engeller
 BLOCKING = {
+    # "pert kaydı yok", "ağır hasarsız" gibi olumsuzlamalar tetiklemez
+    "pert/ağır hasar": r"\bpert\b(?!\s*(kayd[ıi]\s*)?(yok|de[gğ]il|olmayan))|\ba[gğ][ıi]r hasar(?!s[ıi]z)(?!\s*(kayd[ıi]\s*)?(yok|de[gğ]il))",
+    "airbag açık/patlak": r"airbag(ler)?\s*(a[çc][ıi]k|patlak|patlam[ıi][şs]|yok)",
+    "vuruk/su basmış": r"\bvuruk\b|su bas(m[ıi][şs]|k[ıi]n)|sel (hasar|bask[ıi]n)",
     "hasarlı": r"hasarl[ıi]|kazal[ıi]|hasar kay[ıi]tl[ıi]",
     "motor/şanzıman sorunlu": r"motor(u)? (sorunlu|arizal[ıi]|bozuk)|[sş]anz[ıi]man(ı)? (sorunlu|ar[ıi]zal[ıi]|bozuk)",
     "as is / parça": r"\bas is\b|par[çc]a ara[çc]|par[çc]alik|[çc][ıi]kma motor|y[üu]r[üu]m[ıi]yor|[çc]al[ıi][şs]m[ıi]yor",
@@ -21,6 +25,7 @@ PLATE = {
 CUSTOMS_OK = r"g[üu]mr[üu]kl[üu]|g[üu]mr[üu][kğg][üu]?\s*([öo]dendi|tamam|[öo]denmi[şs])|evrak(lar[ıi])?\s*tam"
 # Sadece uyarır
 WARNING = {
+    "değişen var": r"de[gğ]i[şs]en(i)? var|de[gğ]i[şs]enli",
     "ufak masraf var": r"ufak (masraf|tamir)|k[üu][çc][üu]k (masraf|tamir)|masraf[ıi] var",
     "modifiyeli": r"stage ?[123]|chip ?tuning|modifiye|\b\d{3}\+? ?hp\b",
 }

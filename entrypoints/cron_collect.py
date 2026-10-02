@@ -1,9 +1,12 @@
-"""Toplayıcı girişi. Kullanım: python -m entrypoints.cron_collect [instagram | facebook | kktcar | kktcarabam | kibrisarabaal | mezunum | all]"""
+"""Toplayıcı girişi. Kullanım: python -m entrypoints.cron_collect [instagram | facebook | kktcar | kktcarabam | kibrisarabaal | mezunum | kibriscars | pazarkibris | sahibindenarabakibris | all]"""
 import sys
 
 from application.collect_facebook import collect_facebook_groups
 from application.collect_instagram import collect_sources
+from application.collect_kibriscars import collect_kibriscars
 from application.collect_kibrisarabaal import collect_kibrisarabaal
+from application.collect_pazarkibris import collect_pazarkibris
+from application.collect_sahibindenarabakibris import collect_sahibindenarabakibris
 from application.collect_kktcar import collect_kktcar
 from application.collect_mezunum import collect_mezunum
 from application.collect_kktcarabam import collect_kktcarabam
@@ -14,7 +17,7 @@ from infrastructure.fx import frankfurter
 from infrastructure.db.repository import Repository
 
 # ad -> (platform, url içinde geçen parça, toplayıcı)
-JOBS = ("instagram", "facebook", "kktcar", "kktcarabam", "kibrisarabaal", "mezunum")
+JOBS = ("instagram", "facebook", "kktcar", "kktcarabam", "kibrisarabaal", "mezunum", "kibriscars", "pazarkibris", "sahibindenarabakibris")
 
 
 def run(job: str, repo: Repository) -> list[tuple[str, str]]:
@@ -45,7 +48,10 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
         return errors
     needle, fn = {"kktcar": ("kktcar.com", collect_kktcar), "kktcarabam": ("kktcarabam.com", collect_kktcarabam),
                     "kibrisarabaal": ("kibrisarabaal.com", collect_kibrisarabaal),
-                    "mezunum": ("mezunumsatiyorumkibris.com.tr", lambda repo, src: collect_mezunum(repo, src, llm_reader.from_env(repo)))}[job]
+                    "mezunum": ("mezunumsatiyorumkibris.com.tr", lambda repo, src: collect_mezunum(repo, src, llm_reader.from_env(repo))),
+                    "kibriscars": ("kibriscars.com", collect_kibriscars),
+                    "pazarkibris": ("pazarkibris.com", lambda repo, src: collect_pazarkibris(repo, src, llm_reader.from_env(repo))),
+                    "sahibindenarabakibris": ("sahibindenarabakibris.com", collect_sahibindenarabakibris)}[job]
     for source in repo.sources("web", ("aktif", "deneme")):
         if needle in source["url"]:
             try:

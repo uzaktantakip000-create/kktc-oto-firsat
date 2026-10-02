@@ -18,6 +18,9 @@ SCHEDULE = {
     "kktcar": (15, 30),
     "kibrisarabaal": (15, 30),
     "mezunum": (30, 60),  # küçük site; 3 sn aralıklı nazik tarama
+    "kibriscars": (30, 60),  # durgun site (ayda birkaç ilan); 3 sn aralıklı nazik tarama
+    "pazarkibris": (30, 60),  # liste sayfası başına tek istek (veri sayfaya gömülü)
+    "sahibindenarabakibris": (30, 60),  # durgun site
     "instagram": (15, 120),  # özel satıcılar burada; ücret gönderi başına ve imleçle yalnızca yeni gönderi çekilir: sık bakmak ucuz
     "facebook": (120, 480),  # gündüz 2 saatte bir, gece 8 saatte bir (kullanıcı kararı); gönderi başına ücret, aylık tavan collect_facebook'ta
 }
