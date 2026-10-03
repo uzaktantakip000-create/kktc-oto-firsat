@@ -101,8 +101,13 @@ def test_dedupe_candidates_quick_returns_complete_groups_only_where_new_listings
     add_listing(c, sid, "y_old2", brand_norm="Honda", model_norm="fit", year=2014, first_seen_at=ago(days=20))  # yeni ilan YOK
     add_listing(c, sid, "z_old", brand_norm="Mazda", model_norm=None, first_seen_at=ago(days=30))
     add_listing(c, sid, "z_new", brand_norm="Mazda", model_norm=None)  # model bilinmeyen grup (NULL = NULL aynı grup)
-    assert items(db.dedupe_candidates(new_hours=3)) == {"x_old", "x_new", "z_old", "z_new"}
-    assert items(db.dedupe_candidates()) == {"x_old", "x_new", "y_old1", "y_old2", "z_old", "z_new"}
+    names = {r["id"]: r["source_item_id"] for r in c.execute("SELECT id, source_item_id FROM listings").fetchall()}  # dedupe_candidates kimlik döndürür
+
+    def found(rows):
+        return {names[r["id"]] for r in rows}
+
+    assert found(db.dedupe_candidates(new_hours=3)) == {"x_old", "x_new", "z_old", "z_new"}
+    assert found(db.dedupe_candidates()) == {"x_old", "x_new", "y_old1", "y_old2", "z_old", "z_new"}
 
 
 def test_release_orphan_duplicates_frees_only_active_copies_of_inactive_originals(db):
