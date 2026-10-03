@@ -71,7 +71,15 @@ class Repository:
         return {"brand_norm": reclassify_non_car(b, m, model), "model_norm": m}  # motosiklet/kamyon araba markası altında kalmasın
 
     # --- değerleme ---
-    def market_pool(self, days: int = 120) -> list[dict]:
+    def market_pool(self, days: int = 120, keys: list[tuple[str | None, str | None]] | None = None) -> list[dict]:
+        """Emsal havuzu. `keys` verilirse yalnız bu (brand_norm, model_norm) çiftlerinin ilanları gelir: `find_market` zaten
+        marka+model eşitliği şart koştuğu için sonuç aynıdır, ama okunan veri (Supabase çıkış kotası) çok azalır."""
+        key_sql, args = "", [days]
+        if keys is not None:
+            if not keys:
+                return []
+            key_sql = " AND concat_ws('|', brand_norm, COALESCE(model_norm, '')) = ANY(%s)"
+            args.append([f"{b}|{m or ''}" for b, m in keys])
         return self.conn.execute(
             """SELECT id, brand_norm, model_norm, year, km, steering, transmission, fuel, engine_l::float8 AS engine_l,
                       price_gbp::float8 AS price_gbp,
@@ -82,24 +90,31 @@ class Repository:
                  AND karantina_nedeni IS NULL
                  AND COALESCE(posted_at, data_as_of, first_seen_at) > NOW() - make_interval(days => %s)
                  AND NOT EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = listings.id
-                                 AND f.action IN ('yanlis_fiyat','kusurlu','audit_yanlis'))""",
-            (days,),
+                                 AND f.action IN ('yanlis_fiyat','kusurlu','audit_yanlis'))""" + key_sql,
+            args,
         ).fetchall()
 
-    def unevaluated_active(self, recheck_days: int = 3) -> list[dict]:
+    def unevaluated_active(self, recheck_days: int = 3, recent_hours: int | None = None) -> list[dict]:
         """Değerlendirilecek aktif ilanlar: hiç değerlendirilmemiş, fiyatı değişmiş ya da değerlendirmesi 'recheck_days'
-        günden eski (piyasa/emsal havuzu değişmiş olabilir). Mükerrer ilanlar atlanır."""
+        günden eski (piyasa/emsal havuzu değişmiş olabilir). Mükerrer ilanlar atlanır.
+        `recent_hours` verilirse HIZLI tur: yalnız son 'recent_hours' saatte görülüp hiç değerlendirilmemiş ya da fiyatı değişmiş
+        ilanlar (eski "emsal yok" birikimi ve 'recheck' dalı tam turda, saatte bir bakılır)."""
+        stale_sql, args = "OR last_ev.at < NOW() - make_interval(days => %s)", [recheck_days]
+        new_sql = "last_ev.at IS NULL"
+        if recent_hours is not None:
+            stale_sql, args = "", [recent_hours]
+            new_sql = "(last_ev.at IS NULL AND l.first_seen_at > NOW() - make_interval(hours => %s))"
         return self.conn.execute(
-            """SELECT l.*, l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform
+            f"""SELECT l.*, l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform
                FROM listings l JOIN sources s ON s.id=l.source_id
                LEFT JOIN LATERAL (SELECT MAX(evaluated_at) AS at FROM evaluations e WHERE e.listing_id=l.id) last_ev ON TRUE
                WHERE l.is_active AND l.duplicate_of IS NULL AND l.price_gbp IS NOT NULL AND l.brand_norm IS NOT NULL
                  AND l.karantina_nedeni IS NULL
-                 AND (last_ev.at IS NULL
-                      OR last_ev.at < NOW() - make_interval(days => %s)
+                 AND ({new_sql}
+                      {stale_sql}
                       OR EXISTS (SELECT 1 FROM listing_history h WHERE h.listing_id=l.id AND h.field='price_gbp'
                                  AND h.changed_at > last_ev.at))""",
-            (recheck_days,),
+            args,
         ).fetchall()
 
     def expire_unverifiable(self, days: int = 30) -> int:
@@ -127,13 +142,21 @@ class Repository:
         ).rowcount
         return phones, texts
 
-    def dedupe_candidates(self, days: int = 120) -> list[dict]:
+    def dedupe_candidates(self, days: int = 120, new_hours: int | None = None) -> list[dict]:
+        """Mükerrer taraması için ilanlar. `new_hours` verilirse yalnız son 'new_hours' saatte yeni ilan görülen (marka, model, yıl)
+        grupları gelir (gruplar tam gelir: eşleştirme sonucu tam taramayla aynıdır); eski gruplardaki değişimler saatlik tam turda yakalanır."""
+        extra, args = "", [days]
+        if new_hours is not None:
+            extra = """ AND EXISTS (SELECT 1 FROM listings n WHERE n.first_seen_at > NOW() - make_interval(hours => %s)
+                                    AND n.brand_norm = listings.brand_norm AND n.model_norm IS NOT DISTINCT FROM listings.model_norm
+                                    AND n.year = listings.year)"""
+            args.append(new_hours)
         return self.conn.execute(
             """SELECT id, brand_norm, model_norm, year, km, seller_phone, price_gbp::float8 AS price_gbp,
                       first_seen_at, duplicate_of, is_active
                FROM listings WHERE brand_norm IS NOT NULL AND year IS NOT NULL
-                 AND first_seen_at > NOW() - make_interval(days => %s)""",
-            (days,),
+                 AND first_seen_at > NOW() - make_interval(days => %s)""" + extra,
+            args,
         ).fetchall()
 
     def set_duplicate(self, listing_id, canonical_id) -> None:

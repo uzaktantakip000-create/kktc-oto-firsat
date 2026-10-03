@@ -1,7 +1,7 @@
 """Değerlendir -> (LLM notu) -> bildir -> bot komutlarını işle."""
 import os
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from application.audit import send_monthly_audit
 from application.bot_poll import poll_bot
@@ -30,6 +30,8 @@ from infrastructure.llm.openrouter import check_deal
 
 LOCK = "evaluate"
 EVAL_LAST_KEY = "eval:last"  # son BAŞARILI değerlendirme zamanı: tick başında bayatlarsa sahibe haber (entrypoints/tick.py)
+FULL_PASS_MINUTES = 55  # tam değerlendirme/mükerrer taraması saatte bir; aradaki turlar yalnız yeni ilanlara bakar (veritabanı okuma hacmi)
+EVAL_FULL_KEY, DEDUPE_FULL_KEY = "eval:full", "dedupe:full"
 
 
 def main() -> None:
@@ -53,6 +55,23 @@ def apply_rules_version(repo: Repository) -> int:
     n = repo.reset_evaluations(7)
     repo.set_state("rules_version", RULES_VERSION)
     return n
+
+
+def full_pass_due(repo: Repository, key: str, now: datetime) -> bool:
+    """Saatlik TAM tur zamanı geldi mi? Kayıt yoksa/okunamazsa True (en güvenli: tam tur)."""
+    try:
+        raw = repo.get_state(key)
+        return not raw or now - datetime.fromisoformat(raw) >= timedelta(minutes=FULL_PASS_MINUTES)
+    except Exception:
+        return True
+
+
+def mark_full(repo: Repository, key: str, now: datetime) -> None:
+    """Tam tur BAŞARIYLA bitti. Yazılamazsa tur bozulmaz (bir sonraki tick yine tam tur dener)."""
+    try:
+        repo.set_state(key, now.isoformat())
+    except Exception as e:
+        print(f"{key} yazılamadı:", type(e).__name__)
 
 
 def mark_evaluated(repo: Repository) -> None:
@@ -87,9 +106,13 @@ def run(repo: Repository) -> None:
     except Exception as e:  # bot komutları değerlendirmeyi engellemesin
         print("bot güncellemeleri alınamadı:", type(e).__name__, redact(str(e))[:150])
 
+    now = datetime.now(timezone.utc)
     try:
         repo.expire_unverifiable()
-        mark_duplicates(repo)
+        dedupe_full = full_pass_due(repo, DEDUPE_FULL_KEY, now)
+        mark_duplicates(repo, quick=not dedupe_full)  # saatte bir tam tarama, arada yalnız yeni ilanın değdiği gruplar
+        if dedupe_full:
+            mark_full(repo, DEDUPE_FULL_KEY, now)
     except Exception as e:  # mükerrer işaretleme hatası değerlendirmeyi engellemesin
         print("mükerrer işaretleme başarısız:", type(e).__name__, redact(str(e))[:150])
     try:
@@ -113,9 +136,12 @@ def run(repo: Repository) -> None:
     book = load_book(repo) if settings.estimated_alerts else None  # tek kez yüklenir
     failures: list[tuple[str, str]] = []
     eval_error: Exception | None = None
+    eval_full = full_pass_due(repo, EVAL_FULL_KEY, now)
     try:
-        evaluated = evaluate_new(repo, settings, book=book, failures=failures)
+        evaluated = evaluate_new(repo, settings, book=book, failures=failures, quick=not eval_full)
         mark_evaluated(repo)
+        if eval_full:
+            mark_full(repo, EVAL_FULL_KEY, now)
     except DatabaseDown:
         raise  # veritabanı yoksa yan işler de çalışamaz: tur zaten hata verir
     except Exception as e:  # turun çoğu patladı: yan işler (alarm, rapor) yine çalışsın, tur sonunda hata verilir

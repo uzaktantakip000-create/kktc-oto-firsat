@@ -10,11 +10,14 @@ from domain.profit import Tier
 class FakeRepo:
     def __init__(self, listings, pool):
         self._listings, self._pool, self.saved = listings, pool, []
+        self.pool_calls, self.recent_args = [], []
 
-    def market_pool(self, days):
-        return self._pool
+    def market_pool(self, days, keys=None):
+        self.pool_calls.append(keys)  # keys: [(brand_norm, model_norm), ...] ya da None (tüm havuz)
+        return [r for r in self._pool if keys is None or (r["brand_norm"], r["model_norm"]) in keys]
 
-    def unevaluated_active(self):
+    def unevaluated_active(self, recheck_days=3, recent_hours=None):
+        self.recent_args.append(recent_hours)
         return self._listings
 
     def save_evaluation(self, listing_id, ev):
@@ -149,3 +152,30 @@ def test_mass_failure_raises_but_a_few_failures_do_not():
     assert len(evaluate_new(some)) == 6
     few = [car(f"y{i}", 5000) for i in range(9)]  # 10'dan az deneme: oran güvenilmez, tur hata vermez
     assert evaluate_new(FailingRepo(few, POOL, fail_ids={l["id"] for l in few})) == []
+
+
+# --- Adım 2h: veritabanı okuma hacmi (hızlı tur + yalnız ilgili modellerin emsal havuzu) ---
+
+def test_quick_round_asks_only_for_recent_listings_and_full_round_for_everything():
+    repo = FakeRepo([car("t", 5000)], POOL)
+    evaluate_new(repo, quick=True)
+    evaluate_new(repo)
+    assert repo.recent_args == [3, None]
+
+
+def test_pool_is_limited_to_the_models_being_evaluated_without_changing_results():
+    other = [car(f"o{i}", 2000 + i, brand_norm="Honda", model_norm="fit", model="Fit") for i in range(8)]
+    narrow = FakeRepo([car("t", 5000)], POOL + other)
+    full = FakeRepo([car("t", 5000)], POOL + other)
+    full.market_pool = lambda days, keys=None: full._pool  # eski davranış: tüm havuz
+    evaluate_new(narrow)
+    evaluate_new(full)
+    assert narrow.pool_calls == [[("Toyota", "vitz")]]  # yalnız değerlendirilen ilanın (marka, model) çifti istendi
+    assert narrow.saved == full.saved  # kayıtlı sonuç birebir aynı
+
+
+def test_nothing_to_evaluate_does_not_read_the_market_pool_at_all():
+    repo = FakeRepo([], POOL)
+    assert evaluate_new(repo, quick=True) == [] and repo.pool_calls == []
+    repo = FakeRepo([car("m", 3000, brand_norm="Yamaha")], POOL)  # motosiklet: otomobil sistemi dışı
+    assert evaluate_new(repo) == [] and repo.pool_calls == []

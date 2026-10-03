@@ -66,3 +66,22 @@ def test_relisted_car_is_not_duplicate_of_old_inactive_listing():
 def test_inactive_old_duplicates_still_collapse():
     repo = FakeRepo([car("a", 100, is_active=False), car("b", 50, is_active=False)])
     assert mark_duplicates(repo) == 1 and repo.dups == {"b": "a"}
+
+
+def test_quick_round_asks_only_for_groups_with_new_listings_and_marks_the_same():
+    class QuickRepo:
+        def __init__(self, rows):
+            self.rows, self.dups, self.new_hours = rows, {}, []
+
+        def dedupe_candidates(self, days=120, new_hours=None):
+            self.new_hours.append(new_hours)
+            return list(self.rows)
+
+        def set_duplicate(self, listing_id, canonical_id):
+            self.dups[listing_id] = canonical_id
+
+    repo = QuickRepo([car("a", 5), car("b", 1, price_gbp=5900.0)])
+    assert mark_duplicates(repo, quick=True) == 1 and repo.dups == {"b": "a"}  # sonuç tam tarama ile aynı
+    assert repo.new_hours == [3]
+    mark_duplicates(repo)  # varsayılan: tam tarama
+    assert repo.new_hours == [3, None]  # tam taramada daraltma yok

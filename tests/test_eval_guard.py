@@ -55,7 +55,7 @@ def wire(monkeypatch, evaluate_new):
 
 
 def test_successful_round_records_eval_last_and_reports_single_listing_failures(monkeypatch):
-    def evaluate_new(repo, settings, book=None, failures=None):
+    def evaluate_new(repo, settings, book=None, failures=None, quick=False):
         failures.extend([("a1b2c3d4", "ValueError"), ("e5f6a7b8", "ValueError")])
         return []
 
@@ -68,7 +68,7 @@ def test_successful_round_records_eval_last_and_reports_single_listing_failures(
 
 
 def test_crashed_evaluation_still_runs_side_jobs_then_fails(monkeypatch):
-    def evaluate_new(repo, settings, book=None, failures=None):
+    def evaluate_new(repo, settings, book=None, failures=None, quick=False):
         raise EvaluationFailure("10 ilandan 9'u değerlendirilemedi")
 
     side, _ = wire(monkeypatch, evaluate_new)
@@ -80,10 +80,52 @@ def test_crashed_evaluation_still_runs_side_jobs_then_fails(monkeypatch):
 
 
 def test_database_outage_propagates_immediately(monkeypatch):
-    def evaluate_new(repo, settings, book=None, failures=None):
+    def evaluate_new(repo, settings, book=None, failures=None, quick=False):
         raise psycopg.OperationalError("sunucu yok")
 
     side, _ = wire(monkeypatch, evaluate_new)
     with pytest.raises(psycopg.OperationalError):
         cron_evaluate.run(Repo())
     assert side == []
+
+
+# --- Adım 2h: saatlik tam tur / aradaki hızlı turlar ---
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+NOW = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
+
+
+def test_full_pass_due_hourly_and_safe_by_default():
+    repo = Repo()
+    assert cron_evaluate.full_pass_due(repo, "eval:full", NOW)  # kayıt yok: tam tur
+    repo.state["eval:full"] = (NOW - timedelta(minutes=10)).isoformat()
+    assert not cron_evaluate.full_pass_due(repo, "eval:full", NOW)
+    repo.state["eval:full"] = (NOW - timedelta(minutes=56)).isoformat()
+    assert cron_evaluate.full_pass_due(repo, "eval:full", NOW)
+    repo.state["eval:full"] = "bozuk değer"
+    assert cron_evaluate.full_pass_due(repo, "eval:full", NOW)  # okunamıyorsa en güvenlisi: tam tur
+    assert cron_evaluate.full_pass_due(object(), "eval:full", NOW)  # durum okunamıyorsa da
+
+
+def test_runs_alternate_between_full_and_quick_and_failed_full_round_is_retried(monkeypatch):
+    seen, dedupe_seen = [], []
+
+    def evaluate_new(repo, settings, book=None, failures=None, quick=False):
+        seen.append(quick)
+        if seen[-1] is False and len(seen) == 3:
+            raise EvaluationFailure("tam tur başarısız")
+        return []
+
+    wire(monkeypatch, evaluate_new)
+    monkeypatch.setattr(cron_evaluate, "mark_duplicates", lambda repo, quick=False: dedupe_seen.append(quick))
+    repo = Repo()
+    cron_evaluate.run(repo)  # 1: kayıt yok → tam tur (ve tam mükerrer taraması)
+    assert seen == [False] and dedupe_seen == [False] and "eval:full" in repo.state and "dedupe:full" in repo.state
+    cron_evaluate.run(repo)  # 2: hemen sonra → hızlı
+    assert seen == [False, True] and dedupe_seen == [False, True]
+    repo.state["eval:full"] = (datetime.now(timezone.utc) - timedelta(minutes=70)).isoformat()
+    marked = repo.state["eval:full"]
+    with pytest.raises(EvaluationFailure):
+        cron_evaluate.run(repo)  # 3: tam tur zamanı ama başarısız oldu
+    assert repo.state["eval:full"] == marked  # başarısız tam tur "yapıldı" sayılmaz: sonraki tick yeniden dener
