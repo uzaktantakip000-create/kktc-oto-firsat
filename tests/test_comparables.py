@@ -93,3 +93,16 @@ def test_engine_tolerance_is_inclusive_despite_float_rounding():
     pool = [row(i, 6000 + i, engine_l=1.3) for i in range(3)]
     assert find_market(row("t", 5000, engine_l=1.6), pool, now=NOW) is not None  # fark tam 0,3 L: emsal
     assert find_market(row("t", 5000, engine_l=1.7), pool, now=NOW) is None  # 0,4 L: emsal değil
+
+
+def test_effective_km_depends_on_the_given_date_not_the_clock():
+    """Karar saatten bağımsız olmalı: 2025 model araçta 500 km, 2027'de 'eksik rakam' sayılır (≥2 yaş), 2026'da gerçek km."""
+    from datetime import date
+
+    from domain.comparables import effective_km
+
+    car = {"km": 500, "year": 2025}
+    assert effective_km(car, date(2026, 6, 1)) == 500
+    assert effective_km(car, date(2027, 1, 1)) is None
+    assert effective_km({"km": 500, "year": 2015}, date(2026, 6, 1)) is None  # eski araçta <1000 km: eksik rakam
+    assert effective_km({"km": None, "year": 2015}, date(2026, 6, 1)) is None

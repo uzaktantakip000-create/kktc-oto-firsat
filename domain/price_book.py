@@ -412,14 +412,14 @@ def build_book(pool: list[dict], sales: list[dict], now: datetime, prev: PriceBo
 
 
 # --- yeni ilan için tahmin ve öz-kontrol ---
-def estimate_from_book(listing: dict, book: PriceBook, s: Settings) -> Estimate | None:
+def estimate_from_book(listing: dict, book: PriceBook, s: Settings, now: datetime | None = None) -> Estimate | None:
     """İlan için B tahmini (yalnızca 🟠 için). Korkuluklar: LHD değil, km ve yıl biliniyor ve eğri aralığında,
     eğride ≥ est_min_curve_sellers satıcı, model kapalı değil. Uymazsa None."""
     b, m, year = listing.get("brand_norm"), listing.get("model_norm"), listing.get("year")
     c = book.curve(b, m) if b and m else None
     if c is None or (b, m) in book.disabled_models or listing.get("steering") == "LHD" or year is None:
         return None
-    km = effective_km(listing)
+    km = effective_km(listing, now.date() if now else None)
     if km is None or not c.min_year - 1 <= year <= c.max_year + 1 or km > c.max_km * 1.1 or c.sellers < s.est_min_curve_sellers:
         return None
     if not c.dense_at(year):

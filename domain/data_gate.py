@@ -1,4 +1,6 @@
 """Eksik/şüpheli veriyle 🟢 verilmesini engelleyen kural (en fazla 🟡)."""
+from datetime import datetime
+
 from domain.comparables import Market, effective_km
 from domain.llm_read import MISMATCH_LABELS
 from domain.model_ambiguity import model_ambiguous
@@ -22,10 +24,11 @@ GAP_LABELS = {
 GAP_LABELS.update(MISMATCH_LABELS)
 
 
-def data_gaps(listing: dict, market: Market, settings: Settings | None = None) -> list[str]:
+def data_gaps(listing: dict, market: Market, settings: Settings | None = None, now: datetime | None = None) -> list[str]:
     s = settings or Settings()
+    today = now.date() if now else None
     gaps = []
-    if not effective_km(listing):  # yok ya da şüpheli (eski araçta <1000 km)
+    if not effective_km(listing, today):  # yok ya da şüpheli (eski araçta <1000 km)
         gaps.append("km_yok")
     if listing.get("currency_guess"):
         gaps.append("para_birimi_tahmin")
@@ -37,7 +40,7 @@ def data_gaps(listing: dict, market: Market, settings: Settings | None = None) -
         gaps.append("model_belirsiz")  # farklı modeller aynı anahtarda (geçici yama; kalıcısı model adı tablosu)
     if listing.get("extraction_by") == "llm":
         gaps.append("llm_okudu")  # yapay zekâ okuması tek başına 🟢 vermez
-    km, med = effective_km(listing), market.median_km
+    km, med = effective_km(listing, today), market.median_km
     if km and med and km > med * s.km_high_ratio and km - med >= s.km_high_margin:
         gaps.append("km_yuksek")
     return gaps
