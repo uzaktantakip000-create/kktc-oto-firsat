@@ -1,5 +1,5 @@
 from application import ad_check
-from tests.test_evaluate import POOL
+from tests.test_evaluate import POOL, car
 
 
 class Repo:
@@ -137,3 +137,30 @@ def test_owner_price_book_commands_are_routed(monkeypatch):
     bot_poll._handle_message(repo, "tok", "1", _msg(2, "/fiyat corolla 2014"))  # arkadaş: komut çalışmaz
     assert sent == ["fiyat: corolla 2014", "satti: corolla 2014 120000km 7200", "tahmini: kapat"]
     assert "/fiyat" in bot_poll.WELCOME_OWNER and "/satti" in bot_poll.WELCOME_OWNER and "/tahmini" in bot_poll.WELCOME_OWNER
+
+
+def pool_far_km():
+    """8 emsal; km'leri iletilen ilanın km'sinden (80.000) %2'den fazla uzak: ikiz sanılmazlar."""
+    return [car(f"q{i}", p, km=55_000 + 2_345 * i) for i, p in enumerate([8000, 8200, 8400, 8600, 8800, 9000, 9200, 9400])]
+
+
+def market_line(out: str) -> str:
+    return next(line for line in out.splitlines() if line.startswith("📊 Piyasa"))
+
+
+def test_forwarded_ad_does_not_count_its_own_database_twin_as_a_comparable(monkeypatch):
+    """Sistemin taradığı ilan bota iletilince kendi veritabanı kaydı emsal sayılmaz (aksi halde 8 yerine 9 emsal ve kayık medyan)."""
+    monkeypatch.setattr(ad_check, "gbp_rate", lambda c: 1.0)
+    ad = AD.replace("5.000£", "8.500£")
+    twin = car("twin", 8500)  # aynı marka/model/yıl, aynı km (80.000), aynı fiyat: aynı araç
+    base = market_line(ad_check.handle(Repo(pool=pool_far_km()), ad, None, None))
+    with_twin = market_line(ad_check.handle(Repo(pool=pool_far_km() + [twin]), ad, None, None))
+    assert "8 emsal" in base and with_twin == base  # ikiz görmezden gelinir: cevap, ikizi hiç olmayan duruma eşit
+
+
+def test_a_different_car_with_the_same_model_is_still_a_comparable(monkeypatch):
+    monkeypatch.setattr(ad_check, "gbp_rate", lambda c: 1.0)
+    ad = AD.replace("5.000£", "8.500£")
+    other = car("other", 8500, km=82_000)  # km farkı 2.000 (>%2): başka araç, emsal sayılır
+    out = ad_check.handle(Repo(pool=pool_far_km() + [other]), ad, None, None)
+    assert "9 emsal" in market_line(out)

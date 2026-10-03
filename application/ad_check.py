@@ -1,13 +1,15 @@
 """İlet → cevap al: kullanıcının (kapalı gruptan ya da başka yerden) bota ilettiği ilan metni/ekran görüntüsü, otomatik
-taranan ilanlarla AYNI kurallarla değerlendirilir (application.evaluate.assess_listing). Hiçbir şey saklanmaz, emsale girmez,
+taranan ilanlarla AYNI kurallarla değerlendirilir (domain.decision.decide). Hiçbir şey saklanmaz, emsale girmez,
 Telegram dışına gönderilmez (yapay zekâ okuması hariç; telefon/e-posta maskelenir)."""
 from datetime import datetime, timezone
 
-from application.evaluate import assess_listing, confidence_label, load_book
+from application.evaluate import confidence_label, load_book
 from application.llm_reader import LlmReader, listing_fields
 from domain.caption_parser import ParsedCaption
 from domain.comparables import nearest_comparables
 from domain.data_gate import GAP_LABELS
+from domain.decision import decide
+from domain.duplicates import same_car
 from domain.freetext_parser import diagnose, parse_freetext
 from domain.normalize import is_car_brand
 from domain.profit import Tier
@@ -122,8 +124,11 @@ def analyze_text(repo: Repository, text: str, reader: LlmReader | None, s: Setti
     if not s.min_plausible_price_gbp <= listing["price_gbp"] <= s.max_plausible_price_gbp:
         return f"🤔 Fiyat mantıksız görünüyor ({_fmt_money(listing['price_gbp'])}); eksik/fazla rakam olabilir. Fiyatı kontrol edip tekrar gönder."
     pool = [r for r in repo.market_pool(days=s.comparable_window_days + 30) if is_car_brand(r.get("brand_norm"))]
-    a = assess_listing(listing, pool, s, load_book(repo) if s.estimated_alerts else None)
-    comps = nearest_comparables(listing, pool, a.market, 3, s) if a and a.method == "A" else []
+    # İletilen ilan sistemin taradığı bir ilan olabilir: veritabanındaki ikizi kendi emsali sayılmaz (taranan ilanın kendisi de
+    # kendi emsali olmaz; iki yol aynı cevabı versin).
+    twins = frozenset(r["id"] for r in pool if same_car(listing, r))
+    a = decide(listing, pool, s, load_book(repo) if s.estimated_alerts else None, exclude_ids=twins)
+    comps = nearest_comparables(listing, [r for r in pool if r["id"] not in twins], a.market, 3, s) if a and a.method == "A" else []
     return build_reply(listing, by, a, comps, s)
 
 
