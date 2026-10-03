@@ -1,6 +1,6 @@
 """Gerçek PostgreSQL ile repository testleri (CI'de `db-test` işi; yerelde TEST_DATABASE_URL yoksa atlanır).
 Bugüne dek veritabanına bağlanan test yoktu: SQL'ler yalnızca canlıda denenebiliyordu. Kapsam: taşma, hızlı/tam değerlendirme turu,
-dar emsal havuzu, mükerrer taraması, saklama politikası ve (Adım 5'te bilerek değişecek) alerts benzersizliği."""
+dar emsal havuzu, mükerrer taraması, saklama politikası ve 'bir kez gider' kuralı (alerts)."""
 from datetime import datetime, timedelta, timezone
 
 import psycopg
@@ -153,15 +153,32 @@ def test_expire_unverifiable_closes_old_social_but_not_web_listings(db):
     assert active == {"new_ig", "old_web"}
 
 
-def test_alerts_are_unique_per_tier_today(db):
-    """BUGÜNKÜ davranış (migration 003: ilan+sohbet+SEVİYE benzersiz): aynı ilan 🟠 sonra 🟢 iki kez gidebilir. Adım 5'te bilerek değişecek."""
+def test_a_listing_is_sent_once_across_green_and_orange_but_the_digest_record_spends_no_right(db):
+    """'Bir kez gider': 🟢 ve 🟠 aynı ilan için tek hak paylaşır (🟠'den sonra 🟢 ikinci mesaj üretmez); 🟡 özet kaydı hak harcamaz.
+    (alerts benzersiz indeksi hâlâ ilan+sohbet+seviye: kural kodda, 019b'de `kind` ile genişleyecek.)"""
     c, sid = db.conn, add_source(db.conn)
     lid = add_listing(c, sid, "a")
-    db.save_alert(lid, "c1", "guclu", 1)
+    db.save_alert(lid, "c1", "pazarlik", 1)  # günlük özet kaydı
+    assert not db.alert_exists(lid, "c1", "guclu") and not db.alert_exists(lid, "c1", "tahmini")
+    assert db.alert_exists(lid, "c1", "pazarlik")  # kendi seviyesi için aynen
     db.save_alert(lid, "c1", "tahmini", 2)
-    db.save_alert(lid, "c1", "guclu", 3)  # aynı seviye: ON CONFLICT DO NOTHING
+    assert db.alert_exists(lid, "c1", "guclu") and db.alert_exists(lid, "c1", "tahmini")  # 🟠 gitti: 🟢 de gitmez
+    assert not db.alert_exists(lid, "c2", "guclu")  # başka sohbet etkilenmez
+    db.save_alert(lid, "c1", "tahmini", 3)  # aynı seviye: ON CONFLICT DO NOTHING
     assert c.execute("SELECT count(*) AS n FROM alerts").fetchone()["n"] == 2
-    assert db.alert_exists(lid, "c1", "guclu") and db.alert_exists(lid, "c1", "tahmini") and not db.alert_exists(lid, "c1", "pazarlik")
+
+
+def test_pending_strong_skips_listings_already_sent_as_green_or_orange_but_not_digest_only(db):
+    c, sid = db.conn, add_source(db.conn)
+    c.execute("INSERT INTO subscribers (chat_id, status) VALUES ('c1', 'onayli')")
+    only_digest, sent_orange, fresh = (add_listing(c, sid, n) for n in ("only_digest", "sent_orange", "fresh"))
+    for lid in (only_digest, sent_orange, fresh):
+        c.execute("INSERT INTO evaluations (listing_id, comparables_n, market_median_gbp, exit_price_gbp, profit_gbp, profit_pct, confidence, tier, evaluated_at) "
+                  "VALUES (%s, 9, 8000, 7600, 1600, 26.7, 'orta', 'guclu', NOW())", (lid,))
+    db.save_alert(only_digest, "c1", "pazarlik", 1)
+    db.save_alert(sent_orange, "c1", "tahmini", 2)
+    ids = {r["id"] for r in db.pending_strong(36, "guclu")}
+    assert ids == {only_digest, fresh}  # 🟠 gönderilmiş ilan 🟢 olarak yeniden gelmez; yalnız özet kaydı olan gelir
 
 
 def test_reset_evaluations_skips_alerted_inactive_and_old_ones(db):

@@ -7,6 +7,15 @@ from domain.normalize import normalize_brand, normalize_model, reclassify_non_ca
 DatabaseDown = (psycopg.OperationalError, psycopg.InterfaceError)
 
 
+# "Bir kez gider": aynı ilan için 🟢 (guclu) ve 🟠 (tahmini) TEK hak paylaşır; 🟡 (pazarlik) kaydı yalnızca günlük özetin kaydıdır, hak harcamaz.
+SENT_ONCE_TIERS = ["guclu", "tahmini"]
+
+
+def _tiers_blocking(tier: str) -> list[str]:
+    """Bu seviyede göndermeyi engelleyen daha önce gönderilmiş seviyeler."""
+    return SENT_ONCE_TIERS if tier in SENT_ONCE_TIERS else [tier]
+
+
 class Repository:
     def __init__(self, dsn: str):
         self.conn = psycopg.connect(dsn, autocommit=True, row_factory=dict_row, prepare_threshold=None)
@@ -302,9 +311,9 @@ class Repository:
                JOIN listings l ON l.id = e.listing_id JOIN sources s ON s.id = l.source_id
                WHERE e.tier = %s AND s.alert_level = 'yesil' AND l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL AND e.evaluated_at > NOW() - make_interval(hours => %s)
                  AND EXISTS (SELECT 1 FROM subscribers sub WHERE sub.status = 'onayli' AND NOT EXISTS (
-                       SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.chat_id = sub.chat_id AND a.tier = %s))
+                       SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.chat_id = sub.chat_id AND a.tier = ANY(%s)))
                ORDER BY e.profit_pct DESC""",
-            (tier, hours, tier),
+            (tier, hours, _tiers_blocking(tier)),
         ).fetchall()
 
     def first_seen_since(self, days: int) -> list[dict]:
@@ -483,8 +492,9 @@ class Repository:
         return self.conn.execute("SELECT * FROM subscribers WHERE status='onayli'").fetchall()
 
     def alert_exists(self, listing_id, chat_id: str, tier: str) -> bool:
+        """Bu ilan bu sohbete bu seviyede (🟢/🟠 için: ikisinden biriyle) daha önce gitti mi?"""
         return self.conn.execute(
-            "SELECT 1 FROM alerts WHERE listing_id=%s AND chat_id=%s AND tier=%s", (listing_id, chat_id, tier)
+            "SELECT 1 FROM alerts WHERE listing_id=%s AND chat_id=%s AND tier = ANY(%s)", (listing_id, chat_id, _tiers_blocking(tier))
         ).fetchone() is not None
 
     def save_alert(self, listing_id, chat_id: str, tier: str, msg_id) -> None:
