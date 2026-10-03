@@ -1,9 +1,9 @@
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
-from application.safeguards import check_read_rate, sitemap_shrunk
+from application.safeguards import check_read_rate, removed_message, removed_rate_suspect, sitemap_shrunk
 from infrastructure.collectors import kibrisarabaal
 from infrastructure.db.repository import Repository
 from infrastructure.fx.frankfurter import gbp_rate
@@ -20,6 +20,7 @@ class KaaStats:
     refresh_failed: int = 0
     price_changes: int = 0
     went_inactive: int = 0
+    suspect: list[str] = field(default_factory=list)  # toplu "satıldı/kaldırıldı" şüphesi: hiçbiri pasifleştirilmedi, tur sonunda hata
 
 
 REFRESH_SECONDS = 120  # yenileme bu süreyi aşmasın (5 sn aralıklı tarama; tick toplamı < 13 dk kalsın)
@@ -33,6 +34,7 @@ def refresh_active(repo: Repository, source: dict, client, stats: KaaStats, limi
                    max_seconds: float = REFRESH_SECONDS) -> None:
     """Aktif ilanların en eski kontrol edilenlerini yeniden okur: fiyat düştü mü, satıldı/kaldırıldı mı (listing_history'ye yazılır)."""
     deadline = time.monotonic() + max_seconds
+    read_ok, closing = 0, []  # closing: kapanış adayları (satıldı/kaldırıldı). Toplu karar tur sonunda: yarısı kapanıyorsa hiçbiri yazılmaz
     for row in repo.stale_active(source["id"], hours, limit):
         if time.monotonic() > deadline:
             break
@@ -46,10 +48,18 @@ def refresh_active(repo: Repository, source: dict, client, stats: KaaStats, limi
             repo.touch(row["id"])
             stats.refresh_failed += 1
             continue
+        read_ok += 1
+        if data.get("is_active") is False:  # OutOfStock (satıldı) ya da kaldırıldı: yazmadan önce toplu kontrol
+            closing.append((row, data))
+            continue
         data["price_gbp"] = _gbp(data)
         change = repo.apply_refresh(row["id"], row, data)
         stats.price_changes += change == "fiyat"
-        stats.went_inactive += change == "pasif"
+    if removed_rate_suspect(read_ok, len(closing)):
+        stats.suspect.append(removed_message(f"{source['name']} (yenileme)", read_ok, len(closing)))
+    else:
+        for row, data in closing:
+            stats.went_inactive += repo.apply_refresh(row["id"], row, data) == "pasif"
 
 
 def collect_kibrisarabaal(repo: Repository, source: dict, max_new: int = 10) -> KaaStats:
@@ -60,6 +70,7 @@ def collect_kibrisarabaal(repo: Repository, source: dict, max_new: int = 10) -> 
         stats.in_sitemap = len(entries)
         known = repo.known_item_ids(source["id"])
         todo = sorted((e for e in entries if e.item_id not in known), key=lambda e: int(e.item_id), reverse=True)
+        closed_new = []  # yeni görülüp zaten kapalı çıkanlar: pasif kayıt yazılmadan önce toplu kontrol
         for entry in todo[:max_new]:
             stats.fetched += 1
             try:
@@ -70,9 +81,8 @@ def collect_kibrisarabaal(repo: Repository, source: dict, max_new: int = 10) -> 
             if not data:  # geçici hata: sonraki turda yeniden denenir
                 stats.failed += 1
                 continue
-            if data.get("is_active") is False:  # kaldırılmış/satılmış: pasif kayıt (her turda yeniden denenmesin)
-                repo.upsert_listing(source["id"], entry.item_id, {**data, "url": entry.url, "photo_urls": [], "extraction_by": None})
-                stats.deactivated += 1
+            if data.get("is_active") is False:  # kaldırılmış/satılmış: pasif kayıt (her turda yeniden denenmesin), toplu kontrolden sonra
+                closed_new.append((entry, data))
                 continue
             data["price_gbp"] = _gbp(data)
             data["url"] = entry.url
@@ -81,6 +91,13 @@ def collect_kibrisarabaal(repo: Repository, source: dict, max_new: int = 10) -> 
             data["photo_urls"] = []
             if repo.upsert_listing(source["id"], entry.item_id, data):
                 stats.new += 1
+        fetched_ok = stats.fetched - stats.failed
+        if removed_rate_suspect(fetched_ok, len(closed_new)):
+            stats.suspect.append(removed_message(source["name"], fetched_ok, len(closed_new)))  # yazılmaz: sonraki turda yeniden denenir
+        else:
+            for entry, data in closed_new:
+                repo.upsert_listing(source["id"], entry.item_id, {**data, "url": entry.url, "photo_urls": [], "extraction_by": None})
+                stats.deactivated += 1
         shrunk = sitemap_shrunk(repo, source["id"], len(entries))
         if len(entries) > 500 and not shrunk:  # sitemap makul büyüklükteyse kaybolan (kaldırılan) ilanları pasifleştir
             stats.deactivated += repo.deactivate_missing(source["id"], {e.item_id for e in entries})
@@ -88,6 +105,8 @@ def collect_kibrisarabaal(repo: Repository, source: dict, max_new: int = 10) -> 
     repo.mark_checked(source["id"], cursor=None, last_post_at=None, listings_7d=repo.count_recent(source["id"]))
     if shrunk:
         raise RuntimeError(f"{source['name']}: site haritası şüpheli biçimde küçüldü ({len(entries)} ilan), pasifleştirme yapılmadı")
+    if stats.suspect:
+        raise RuntimeError("; ".join(stats.suspect))
     check_read_rate(source["name"], stats.fetched, stats.failed)
     check_read_rate(f"{source['name']} (yenileme)", stats.refreshed, stats.refresh_failed)
     return stats
