@@ -5,7 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2",
     "httpx",
-    "selectolax",
+    "selectolax>=0.3,<1",  # 1.0 eski HTMLParser (Modest) arka ucunu kaldırdı: import patlar
     "psycopg[binary]>=3",
     "python-telegram-bot>=21",
     "apify-client",
