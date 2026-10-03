@@ -193,3 +193,21 @@ def test_reset_evaluations_skips_alerted_inactive_and_old_ones(db):
     db.save_alert(alerted, "c1", "guclu", 1)
     assert db.reset_evaluations(7) == 1  # yalnız bildirimsiz, aktif, son 7 günün değerlendirmesi
     assert c.execute("SELECT count(*) AS n FROM evaluations").fetchone()["n"] == 3
+
+
+def test_migration_019_only_adds_nullable_columns_and_changes_nothing_else(db):
+    """019 yalnız ekleme: sütunlar NULL'lanabilir, varsayılan değersiz; eski yazma yolları (değerlendirme/ilan) sütunlardan habersiz çalışır."""
+    expected = {"evaluations": {"rules_version", "saticilar_n", "alt_ceyrek_gbp", "tablo_degeri_gbp", "nedenler", "evidence"},
+                "alerts": {"evaluation_id", "kind", "fiyat_gonderimde"},
+                "listings": {"sold_at", "inactive_at", "inactive_reason", "last_alive_at"}}
+    for table, cols in expected.items():
+        rows = db.conn.execute("SELECT column_name, is_nullable, column_default FROM information_schema.columns "
+                               "WHERE table_name=%s AND column_name = ANY(%s)", (table, sorted(cols))).fetchall()
+        assert {r["column_name"] for r in rows} == cols, table
+        assert all(r["is_nullable"] == "YES" and r["column_default"] is None for r in rows), table
+    sid = add_source(db.conn)
+    lid = add_listing(db.conn, sid, "a")
+    db.save_evaluation(lid, {"comparables_n": 8, "confidence": "orta", "tier": "yok"})  # eski biçimli kayıt hâlâ yazılır
+    db.save_alert(lid, "c1", "guclu", 1)
+    row = db.conn.execute("SELECT rules_version, evidence FROM evaluations").fetchone()
+    assert row["rules_version"] is None and row["evidence"] is None
