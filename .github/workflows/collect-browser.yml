@@ -1,7 +1,7 @@
 name: Toplama (kktcarabam, tarayıcılı)
 on:
   schedule:
-    - cron: "37 */6 * * *"   # 6 saatte bir (ücretsiz dakika bütçesi)
+    - cron: "37 */2 * * *"   # 2 saatte bir (sahip kararı 03.10.2026: ilk sayfa 6 ilanla doluyor, 6 saatte araya ilan kaçıyordu; depo herkese açık, dakika sınırsız)
   workflow_dispatch:
 concurrency: collect-browser
 jobs:
