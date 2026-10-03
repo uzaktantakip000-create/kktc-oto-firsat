@@ -4,6 +4,12 @@ name: Test ve yayın kapısı
 on:
   push:
     branches: [main]
+  workflow_dispatch:   # yalnız kırmızı-CI alarmını denemek için (aşağıdaki 'alarm_denemesi'); canlıya hiçbir şey çıkarmaz
+    inputs:
+      alarm_denemesi:
+        description: "Test işini bilerek başarısız yapar (Telegram alarmını denemek için)"
+        type: boolean
+        default: false
 permissions:
   contents: write   # yalnızca `live` dalını ilerletmek için
 concurrency:
@@ -24,8 +30,34 @@ jobs:
           cache-dependency-path: pyproject.toml
       - run: pip install ".[dev]"
       - run: python -m pytest -q
+      - name: Alarm denemesi (bilerek kırmızı)
+        if: inputs.alarm_denemesi
+        run: |
+          echo "Bilerek başarısız: Telegram alarmı denemesi"
+          exit 1
       - name: Testi geçen sürümü canlı dala al
+        if: github.event_name == 'push'   # elle başlatılan koşu canlıyı ilerletmez
         run: git push origin "${GITHUB_SHA}:refs/heads/live"
+  # Test kırmızıysa sahibine TEK Telegram mesajı (canlı son iyi sürümde kalır; ama bozuk kod main'de duruyor demektir).
+  bildir:
+    needs: test
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Sahibine haber ver
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          first_line=$(printf '%s' "${COMMIT_MESSAGE:-elle başlatılan deneme}" | python3 -c "import sys; print(sys.stdin.readline().strip()[:120])")
+          text="⚠️ Testler başarısız oldu: ${first_line}
+          Canlı sistem son iyi sürümde çalışmaya devam ediyor (bu değişiklik canlıya çıkmadı).
+          Ayrıntı: ${RUN_URL}"
+          curl -fsS --max-time 20 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=${text}" > /dev/null
   # Gerçek PostgreSQL ile repository testleri (tests/test_repository_db.py). `test` işinden BAĞIMSIZ ve engelleyici DEĞİL:
   # `live` dalına ilerleme yalnız yukarıdaki `test` işine bağlıdır. Testler yalnız TEST_DATABASE_URL'i (yerel, adında "test" geçen) kullanır.
   db-test:
