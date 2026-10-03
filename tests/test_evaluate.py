@@ -1,6 +1,9 @@
 from datetime import datetime, timedelta, timezone
 
-from application.evaluate import evaluate_new
+import psycopg
+import pytest
+
+from application.evaluate import PCT_LIMIT, EvaluationFailure, clamp_pct, evaluate_new
 from domain.profit import Tier
 
 
@@ -95,3 +98,54 @@ def test_zero_km_counts_as_missing_and_flag_only_when_downgraded():
     repo = FakeRepo([car("t", 7000, km=None)], POOL)  # zaten kâr yetersiz (🟢 olmazdı): "bu yüzden 🟢 değil" yazılmaz
     evaluate_new(repo)
     assert "km_yok" not in repo.saved[0][1]["red_flags"]
+
+
+# --- Adım 1: taşma ve ilan başına hata sınırı ---
+
+class FailingRepo(FakeRepo):
+    """Belirli ilanların kaydı patlar (tek bozuk ilan tüm turu düşürmesin)."""
+    def __init__(self, listings, pool, fail_ids=(), exc=None):
+        super().__init__(listings, pool)
+        self.fail_ids, self.exc = set(fail_ids), exc or ValueError("boom")
+
+    def save_evaluation(self, listing_id, ev):
+        if listing_id in self.fail_ids:
+            raise self.exc
+        super().save_evaluation(listing_id, ev)
+
+
+def test_clamp_pct_keeps_values_inside_the_column_range():
+    assert PCT_LIMIT == 999.99  # evaluations.profit_pct DECIMAL(5,2)
+    assert clamp_pct(0.25) == 25.0 and clamp_pct(-0.4) == -40.0
+    assert clamp_pct(63.5) == 999.99 and clamp_pct(-50.0) == -999.99
+
+
+def test_absurdly_cheap_listing_is_saved_without_overflow_and_is_never_green():
+    pool = [car(f"p{i}", 40_000 + i * 100) for i in range(8)]  # KAA "38000 TRY" Hilux örneği: £600 ilan, £40 bin medyan
+    repo = FakeRepo([car("t", 600)], pool)
+    (ev,) = evaluate_new(repo)
+    assert repo.saved[0][1]["profit_pct"] == 999.99  # taşmadan (ham değer ~%6290) kaydedildi
+    assert ev.profit.tier is not Tier.STRONG
+
+
+def test_one_bad_listing_does_not_stop_the_others():
+    repo = FailingRepo([car("bad", 5000), car("good", 5000)], POOL, fail_ids={"bad"})
+    failures = []
+    evs = evaluate_new(repo, failures=failures)
+    assert [e.listing["id"] for e in evs] == ["good"] and failures == [("bad", "ValueError")]
+
+
+def test_database_outage_is_not_swallowed():
+    repo = FailingRepo([car("t", 5000)], POOL, fail_ids={"t"}, exc=psycopg.OperationalError("sunucu yok"))
+    with pytest.raises(psycopg.OperationalError):
+        evaluate_new(repo)
+
+
+def test_mass_failure_raises_but_a_few_failures_do_not():
+    many = [car(f"x{i}", 5000) for i in range(10)]
+    with pytest.raises(EvaluationFailure):
+        evaluate_new(FailingRepo(many, POOL, fail_ids={l["id"] for l in many}))  # 10/10 patladı
+    some = FailingRepo(many, POOL, fail_ids={f"x{i}" for i in range(4)})  # 4/10 = %40: tur sürer
+    assert len(evaluate_new(some)) == 6
+    few = [car(f"y{i}", 5000) for i in range(9)]  # 10'dan az deneme: oran güvenilmez, tur hata vermez
+    assert evaluate_new(FailingRepo(few, POOL, fail_ids={l["id"] for l in few})) == []

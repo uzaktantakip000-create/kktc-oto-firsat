@@ -15,6 +15,7 @@ from infrastructure.fx import frankfurter
 
 TOLERANCE = timedelta(minutes=3)  # dış tetikleyici birkaç dakika kayabilir
 GAP_ALERT_MIN = 45  # bu kadar dakika hiç çalışma olmazsa sahibine haber verilir
+EVAL_STALE_MIN = 45  # tick çalışıyor ama son BAŞARILI değerlendirme bu kadar dakikadan eskiyse sahibine haber verilir (cron_evaluate.EVAL_LAST_KEY)
 DAY_UTC = range(5, 21)  # KKTC 08:00–24:00
 # iş -> (gündüz aralığı dk, gece aralığı dk)
 SCHEDULE = {
@@ -59,6 +60,15 @@ def heartbeat_gap(now: datetime, last_tick: datetime | None) -> int | None:
     return minutes if GAP_ALERT_MIN <= minutes <= 3 * 24 * 60 else None
 
 
+def eval_stale_minutes(now: datetime, last_eval: datetime | None, gap: int | None) -> int | None:
+    """Son başarılı değerlendirmeden beri geçen dakika; uyarı gerekmiyorsa None. Kesinti uyarısı (gap) zaten verildiyse ya da hiç
+    kayıt yoksa (ilk kurulum) uyarı yok; çok uzun duraklama (3 gün+) bilinçli kapatma sayılır."""
+    if last_eval is None or gap:
+        return None
+    minutes = int((now - last_eval).total_seconds() // 60)
+    return minutes if EVAL_STALE_MIN <= minutes <= 3 * 24 * 60 else None
+
+
 def has_time(left_s: float, job: str) -> bool:
     return left_s >= MIN_LEFT_S.get(job, 0)
 
@@ -83,10 +93,18 @@ def run_batch(batch: list[str], repo, now: datetime, started: float, errors: lis
         print(f"iş {job}: {clock() - t0:.0f} sn", flush=True)
 
 
-def timed_evaluate(label: str) -> None:
+def timed_evaluate(label: str) -> bool:
+    """Değerlendirmeyi çalıştırır. Çökerse False döner: turun geri kalanı (yavaş işler, hata raporu) yine çalışır,
+    tur sonunda iş akışı hata ile biter (başarılı görünüp sessizce çökmesin)."""
     t0 = time.monotonic()
-    cron_evaluate.main()
+    try:
+        cron_evaluate.main()
+        ok = True
+    except Exception as e:
+        print(f"{label}: HATA {type(e).__name__}: {redact(str(e))[:150]}", flush=True)
+        ok = False
     print(f"iş {label}: {time.monotonic() - t0:.0f} sn", flush=True)
+    return ok
 
 
 def main() -> None:
@@ -105,6 +123,13 @@ def main() -> None:
         except TelegramError as e:
             print("kesinti uyarısı gönderilemedi:", e.status)
     repo.set_state("tick:last", now.isoformat())
+    stale = eval_stale_minutes(now, _parse(repo.get_state(cron_evaluate.EVAL_LAST_KEY)), gap)
+    if stale:
+        try:
+            notify_owner(repo, "eval_stale", f"⚠️ Son başarılı değerlendirme {stale} dakika önce yapıldı (normalde 15 dakikada bir). "
+                                              "Değerlendirme çalışmıyor olabilir; yeni fırsatlar bildirilmeyebilir.", repeat_hours=6)
+        except Exception as e:  # uyarı toplamayı engellemesin
+            print("değerlendirme uyarısı gönderilemedi:", type(e).__name__)
 
     jobs = due_jobs(now, {j: _parse(repo.get_state(f"tick:{j}")) for j in SCHEDULE})
     paused = feed_switch.paused_platforms(repo, now)
@@ -121,13 +146,15 @@ def main() -> None:
 
     # Hızlı siteler önce toplanıp değerlendirilir: yavaş bir Apify turu site bildirimlerini geciktirmesin
     run_batch([j for j in jobs if j not in SLOW_JOBS], repo, now, started, errors)
-    timed_evaluate("değerlendirme")
+    eval_ok = timed_evaluate("değerlendirme")
     slow = [j for j in SLOW_JOBS if j in jobs]
     if slow:
         run_batch(slow, repo, now, started, errors)
-        timed_evaluate("değerlendirme (2)")
+        eval_ok = timed_evaluate("değerlendirme (2)") and eval_ok
     report_collect_errors(repo, errors)
     print(f"tur toplam: {time.monotonic() - started:.0f} sn", flush=True)
+    if not eval_ok:
+        sys.exit(1)  # toplama ve raporlar bitti; değerlendirme çöktüyse iş akışı kırmızı olsun
 
 
 if __name__ == "__main__":

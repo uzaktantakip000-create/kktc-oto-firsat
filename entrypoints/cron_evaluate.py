@@ -1,5 +1,7 @@
 """Değerlendir -> (LLM notu) -> bildir -> bot komutlarını işle."""
 import os
+from collections import Counter
+from datetime import datetime, timezone
 
 from application.audit import send_monthly_audit
 from application.bot_poll import poll_bot
@@ -9,7 +11,7 @@ from application.digest import send_daily_digest
 from application.discovery import send_discovery
 from application.estimate_guard import guard_estimates
 from application.evaluate import apply_send_floor, evaluate_new, load_book, pending_alerts
-from application.health import check_sources
+from application.health import check_sources, notify_owner
 from application import llm_reader
 from application.liveness import recheck_before_send
 from application.notify import is_fresh, send_alerts
@@ -22,11 +24,12 @@ from domain.comparables import nearest_comparables
 from domain.profit import Tier
 from domain.settings import RULES_VERSION, Settings
 from infrastructure.config import load_env, redact, require
-from infrastructure.db.repository import Repository
+from infrastructure.db.repository import DatabaseDown, Repository
 from infrastructure.fx import frankfurter
 from infrastructure.llm.openrouter import check_deal
 
 LOCK = "evaluate"
+EVAL_LAST_KEY = "eval:last"  # son BAŞARILI değerlendirme zamanı: tick başında bayatlarsa sahibe haber (entrypoints/tick.py)
 
 
 def main() -> None:
@@ -50,6 +53,24 @@ def apply_rules_version(repo: Repository) -> int:
     n = repo.reset_evaluations(7)
     repo.set_state("rules_version", RULES_VERSION)
     return n
+
+
+def mark_evaluated(repo: Repository) -> None:
+    """Değerlendirme turu tamamlandı (tek tek ilan hataları olsa da): `eval:last` güncellenir. Yazılamazsa tur bozulmaz."""
+    try:
+        repo.set_state(EVAL_LAST_KEY, datetime.now(timezone.utc).isoformat())
+    except Exception as e:
+        print("eval:last yazılamadı:", type(e).__name__)
+
+
+def report_eval_failures(repo: Repository, failures: list[tuple[str, str]]) -> None:
+    """Değerlendirilemeyen ilanlar için sahibe 24 saatte en çok 1 mesaj (ilan içeriği değil, yalnız sayı ve hata türü)."""
+    kinds = ", ".join(f"{k} ×{n}" for k, n in Counter(k for _, k in failures).most_common(3))
+    try:
+        notify_owner(repo, "eval_errors", f"⚠️ {len(failures)} ilan değerlendirilemedi (hata türü: {kinds}). Diğer ilanlar normal değerlendirildi.",
+                     repeat_hours=24)
+    except Exception as e:
+        print("değerlendirme hatası bildirilemedi:", type(e).__name__)
 
 
 def run(repo: Repository) -> None:
@@ -90,7 +111,18 @@ def run(repo: Repository) -> None:
     except Exception as e:  # tablo kurulamasa da değerlendirme sürer (eski tablo/emsal yolu)
         print("değer tablosu kurulamadı:", type(e).__name__, redact(str(e))[:150])
     book = load_book(repo) if settings.estimated_alerts else None  # tek kez yüklenir
-    evaluated = evaluate_new(repo, settings, book=book)
+    failures: list[tuple[str, str]] = []
+    eval_error: Exception | None = None
+    try:
+        evaluated = evaluate_new(repo, settings, book=book, failures=failures)
+        mark_evaluated(repo)
+    except DatabaseDown:
+        raise  # veritabanı yoksa yan işler de çalışamaz: tur zaten hata verir
+    except Exception as e:  # turun çoğu patladı: yan işler (alarm, rapor) yine çalışsın, tur sonunda hata verilir
+        eval_error, evaluated = e, []
+        print("değerlendirme turu başarısız:", type(e).__name__, redact(str(e))[:150])
+    if failures:
+        report_eval_failures(repo, failures)
     # Yeni 🟢'ler + önceki turlarda gönderilemeyenler (hata, hız sınırı, sonradan onaylanan abone)
     strong = [ev for ev in pending_alerts(repo, book=book)
               if is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
@@ -142,6 +174,8 @@ def run(repo: Repository) -> None:
         except Exception as e:  # yan işler ana bildirimi bozmasın
             print(f"{name} başarısız:", type(e).__name__, redact(str(e))[:150])
     print(f"değerlendirilen={len(evaluated)} güçlü={len(strong)} bildirilen={sent} tahmini_bildirilen={est_sent}")
+    if eval_error is not None:
+        raise eval_error  # iş akışı "başarılı" görünmesin; yan işler ve bildirimler yukarıda zaten çalıştı
 
 
 if __name__ == "__main__":

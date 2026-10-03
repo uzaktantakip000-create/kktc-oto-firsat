@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
-from entrypoints.tick import due_jobs, heartbeat_gap
+from entrypoints import tick
+from entrypoints.tick import due_jobs, eval_stale_minutes, heartbeat_gap
 
 DAY = datetime(2026, 10, 2, 9, 0, tzinfo=timezone.utc)   # KKTC 12:00
 NIGHT = datetime(2026, 10, 2, 1, 0, tzinfo=timezone.utc)  # KKTC 04:00
@@ -35,3 +36,23 @@ def test_facebook_every_two_hours_by_day_and_eight_by_night():
     assert "facebook" not in due_jobs(DAY, {"facebook": DAY - timedelta(minutes=100)})
     assert "facebook" not in due_jobs(NIGHT, {"facebook": NIGHT - timedelta(hours=4)})
     assert "facebook" in due_jobs(NIGHT, {"facebook": NIGHT - timedelta(hours=8)})
+
+
+def test_eval_stale_alert_window():
+    now = DAY
+    assert eval_stale_minutes(now, None, None) is None  # ilk kurulum: kayıt yok
+    assert eval_stale_minutes(now, now - timedelta(minutes=30), None) is None
+    assert eval_stale_minutes(now, now - timedelta(minutes=50), None) == 50
+    assert eval_stale_minutes(now, now - timedelta(minutes=50), 90) is None  # kesinti uyarısı zaten verildi: çift mesaj yok
+    assert eval_stale_minutes(now, now - timedelta(days=5), None) is None  # uzun duraklama: bilinçli kapatma sayılır
+
+
+def test_timed_evaluate_survives_a_crash(monkeypatch, capsys):
+    def boom():
+        raise RuntimeError("değerlendirme çöktü")
+
+    monkeypatch.setattr(tick.cron_evaluate, "main", boom)
+    assert tick.timed_evaluate("değerlendirme") is False  # tur devam eder, sonunda hata ile biter
+    assert "HATA" in capsys.readouterr().out
+    monkeypatch.setattr(tick.cron_evaluate, "main", lambda: None)
+    assert tick.timed_evaluate("değerlendirme") is True

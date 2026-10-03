@@ -9,7 +9,22 @@ from domain.normalize import is_car_brand
 from domain.price_book import STATUS_SUSPECT, BookRow, Estimate, PriceBook, estimate_from_book
 from domain.red_flags import blocking_flags, plate_flags, urgency_signals, warning_flags
 from domain.settings import Settings
-from infrastructure.db.repository import Repository
+from infrastructure.config import redact
+from infrastructure.db.repository import DatabaseDown, Repository
+
+PCT_LIMIT = 999.99  # evaluations.profit_pct DECIMAL(5,2): daha büyük sayı "numeric field overflow" ile tüm turu çökertir
+MIN_ATTEMPTS_FOR_FAILURE = 10  # bu kadar ilan denenip yarısından fazlası patlarsa tur hata verir (sessizce "hiç değerlendirme yok" olmasın)
+MAX_FAILURE_RATIO = 0.5
+
+
+class EvaluationFailure(RuntimeError):
+    """Turdaki ilanların çoğu değerlendirilemedi: kural, veri ya da şema sorunu olabilir."""
+
+
+def clamp_pct(profit_fraction: float) -> float:
+    """Kâr oranını yüzdeye (×100) çevirir ve kolonun sığabileceği aralığa sıkıştırır. Sıkışan satır zaten bozuk veridir
+    (fiyat piyasanın ~%9'undan az): hiçbir zaman 🟢/🟠 olamaz, yalnızca kayıt hatasız yazılsın diye sıkıştırılır."""
+    return max(-PCT_LIMIT, min(PCT_LIMIT, round(profit_fraction * 100, 2)))
 
 
 @dataclass
@@ -135,46 +150,69 @@ def assess_listing(listing: dict, pool: list[dict], s: Settings, book: PriceBook
 _LOAD = object()
 
 
-def evaluate_new(repo: Repository, settings: Settings | None = None, book=_LOAD) -> list[Evaluated]:
+def _evaluate_one(repo: Repository, listing: dict, pool: list[dict], s: Settings, book) -> Evaluated | None:
+    """Tek ilanı değerlendirir ve kaydeder. Emsal yoksa None (kayıt atılmaz, sonraki turda yeniden denenir)."""
+    price = float(listing["price_gbp"])
+    if not s.min_plausible_price_gbp <= price <= s.max_plausible_price_gbp:
+        # Eksik rakam/yanlış yazım olasılığı: değerlendirme kaydı atılır ama bildirim üretilmez
+        repo.save_evaluation(listing["id"], {"comparables_n": 0, "confidence": Confidence.NONE.value,
+                                             "tier": Tier.NONE.value, "red_flags": ["fiyat_gecersiz"]})
+        return None
+    a = assess_listing(listing, pool, s, book)
+    if a is None:
+        return None
+    market, profit = a.market, a.profit
+    repo.save_evaluation(
+        listing["id"],
+        {
+            "comparables_n": market.n,
+            "market_median_gbp": round(market.median_gbp, 2),
+            "market_low_gbp": round(market.low_gbp, 2),
+            "market_high_gbp": round(market.high_gbp, 2),
+            "year_span": market.year_span,
+            "archived_share": round(market.archived_share, 3),
+            "exit_price_gbp": round(profit.exit_price_gbp, 2),
+            "profit_gbp": round(profit.profit_gbp, 2),
+            "profit_pct": clamp_pct(profit.profit_pct),
+            "confidence": profit.confidence.value,
+            "tier": profit.tier.value,
+            "red_flags": a.blocking + a.warnings + a.gaps,  # "bu yüzden 🟢 değil" sadece gerçekten düşürüldüyse
+            **({"method": a.method} if a.method != "A" else {}),  # A = kolon varsayılanı
+        },
+    )
+    return Evaluated(listing, market, profit, a.blocking, a.warnings, urgency_signals(a.text), method=a.method)
+
+
+def evaluate_new(repo: Repository, settings: Settings | None = None, book=_LOAD,
+                 failures: list[tuple[str, str]] | None = None) -> list[Evaluated]:
     """Henüz değerlendirilmemiş aktif ilanları değerlendirir. Emsali olmayanlar bir sonraki turda tekrar denenir.
-    Değer tablosu (book) bir kez yüklenir; verilmezse kendisi yükler, yüklenemezse eski davranış (🟠 yok)."""
+    Değer tablosu (book) bir kez yüklenir; verilmezse kendisi yükler, yüklenemezse eski davranış (🟠 yok).
+    Her ilan kendi hata sınırındadır: bir ilanın patlaması diğerlerini durdurmaz. Patlayanlar `failures`'a (kısa kimlik, hata türü)
+    eklenir. Bağlantı/sunucu hatası yutulmaz. ≥10 ilan denenip yarısından fazlası patlarsa EvaluationFailure fırlar."""
     s = settings or Settings()
     if book is _LOAD:
         book = load_book(repo) if s.estimated_alerts else None
     pool = [r for r in repo.market_pool(days=s.comparable_window_days + 30) if is_car_brand(r.get("brand_norm"))]
-    results = []
+    results, attempted, failed = [], 0, 0
     for listing in repo.unevaluated_active():
         if not is_car_brand(listing.get("brand_norm")):
             continue  # motosiklet/tekne/karavan/ticari: bu sistem otomobil içindir
-        price = float(listing["price_gbp"])
-        if not s.min_plausible_price_gbp <= price <= s.max_plausible_price_gbp:
-            # Eksik rakam/yanlış yazım olasılığı: değerlendirme kaydı atılır ama bildirim üretilmez
-            repo.save_evaluation(listing["id"], {"comparables_n": 0, "confidence": Confidence.NONE.value,
-                                                 "tier": Tier.NONE.value, "red_flags": ["fiyat_gecersiz"]})
+        attempted += 1
+        try:
+            ev = _evaluate_one(repo, listing, pool, s, book)
+        except DatabaseDown:
+            raise  # sunucu/bağlantı sorunu tek ilanın hatası değildir
+        except Exception as e:
+            failed += 1
+            short = str(listing.get("id"))[:8]
+            if failures is not None:
+                failures.append((short, type(e).__name__))
+            print(f"değerlendirme hatası (ilan {short}): {type(e).__name__} {redact(str(e))[:120]}")
             continue
-        a = assess_listing(listing, pool, s, book)
-        if a is None:
-            continue
-        market, profit = a.market, a.profit
-        repo.save_evaluation(
-            listing["id"],
-            {
-                "comparables_n": market.n,
-                "market_median_gbp": round(market.median_gbp, 2),
-                "market_low_gbp": round(market.low_gbp, 2),
-                "market_high_gbp": round(market.high_gbp, 2),
-                "year_span": market.year_span,
-                "archived_share": round(market.archived_share, 3),
-                "exit_price_gbp": round(profit.exit_price_gbp, 2),
-                "profit_gbp": round(profit.profit_gbp, 2),
-                "profit_pct": round(profit.profit_pct * 100, 2),
-                "confidence": profit.confidence.value,
-                "tier": profit.tier.value,
-                "red_flags": a.blocking + a.warnings + a.gaps,  # "bu yüzden 🟢 değil" sadece gerçekten düşürüldüyse
-                **({"method": a.method} if a.method != "A" else {}),  # A = kolon varsayılanı
-            },
-        )
-        results.append(Evaluated(listing, market, profit, a.blocking, a.warnings, urgency_signals(a.text), method=a.method))
+        if ev is not None:
+            results.append(ev)
+    if attempted >= MIN_ATTEMPTS_FOR_FAILURE and failed / attempted > MAX_FAILURE_RATIO:
+        raise EvaluationFailure(f"{attempted} ilandan {failed}'i değerlendirilemedi")
     return results
 
 

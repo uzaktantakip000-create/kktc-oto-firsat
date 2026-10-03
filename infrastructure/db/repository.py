@@ -3,6 +3,9 @@ from psycopg.rows import dict_row
 
 from domain.normalize import normalize_brand, normalize_model, reclassify_non_car
 
+# Bağlantı/sunucu hatası: tek bir ilanın sorunu değildir, yutulmamalı (döngüler "ilan başına hata" yakalarken bunu yeniden fırlatır)
+DatabaseDown = (psycopg.OperationalError, psycopg.InterfaceError)
+
 
 class Repository:
     def __init__(self, dsn: str):
