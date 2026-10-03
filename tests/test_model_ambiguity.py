@@ -66,3 +66,11 @@ def test_unknown_model_with_same_phone_still_merges():
 
 def test_known_model_rules_unchanged():
     assert same_car(dcar(1, seller_phone=None, km=80_250), dcar(2, seller_phone=None, km=80_250, price_gbp=6100.0))
+
+
+def test_kktcarabam_split_brand_keys_never_alert():
+    # KKTCarabam etiketi ilk boşluktan bölünüyor: "Mercedes - Benz GLE" → model "benz", "Land Rover Range Rover" → "rover"
+    from domain.model_ambiguity import model_ambiguous
+    assert model_ambiguous({"brand_norm": "Mercedes-Benz", "model_norm": "benz", "year": 2019, "model": "- Benz GLE"})
+    assert model_ambiguous({"brand_norm": "Land Rover", "model_norm": "rover", "year": 2018, "model": "Rover Evoque"})
+    assert not model_ambiguous({"brand_norm": "Mercedes-Benz", "model_norm": "gle", "year": 2019, "model": "GLE"})  # doğru anahtar etkilenmez

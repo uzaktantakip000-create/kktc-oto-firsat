@@ -100,3 +100,11 @@ def test_whatsapp_button_on_top_when_phone_valid():
 def test_no_whatsapp_button_without_valid_phone():
     assert notify.whatsapp_url(None, "x") is None and notify.whatsapp_url("123", "x") is None
     assert not any("url" in b for row in notify.keyboard("L1", None)["inline_keyboard"] for b in row)
+
+
+def test_sold_comparables_are_described_as_sold_not_archived():
+    e = ev(1)
+    e.market = Market(5, 8000, 7000, 9000, 1, 0.8)  # emsallerin %80'i satılmış (pasif) ilan
+    msg = notify.format_alert(e, comps=[{"year": 2015, "km": 50_000, "price_gbp": 8000, "is_active": False, "url": None}])
+    assert "satılmış ilan" in msg and "arşiv" not in msg  # "arşiv" yanıltıcıydı: bunlar sitenin satıldı işaretli ilanları
+    assert "(satılmış)" in msg

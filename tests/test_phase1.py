@@ -23,7 +23,7 @@ def test_comparable_lines_in_message():
              dict(year=2014, km=None, price_gbp=6200, url="https://a/2", is_active=False)]
     text = notify.format_alert(ev(), comps=comps)
     assert "En yakın emsaller" in text and "79.000 km" in text and "£6.000" in text and "https://a/1" in text
-    assert "(arşiv)" in text and "km yok" in text
+    assert "(satılmış)" in text and "km yok" in text
 
 
 def test_ai_doubt_line_shown_first_among_notes():

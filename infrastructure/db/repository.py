@@ -159,6 +159,14 @@ class Repository:
             args,
         ).fetchall()
 
+    def release_orphan_duplicates(self) -> int:
+        """Kanonik (ilk görülen) ilan pasifleşmiş ama kopyası hâlâ AKTİFSE kopya serbest kalır (duplicate_of = NULL): aksi halde bu
+        aktif ilan emsale girmez ve hiç değerlendirilmez. (Aktif ilan yalnızca aktif bir ilanın kopyası sayılır: application/dedupe.py.)"""
+        return self.conn.execute(
+            """UPDATE listings d SET duplicate_of = NULL FROM listings c
+               WHERE d.duplicate_of = c.id AND d.is_active AND NOT c.is_active"""
+        ).rowcount
+
     def set_duplicate(self, listing_id, canonical_id) -> None:
         self.conn.execute("UPDATE listings SET duplicate_of=%s WHERE id=%s", (canonical_id, listing_id))
 

@@ -1,5 +1,6 @@
 """Sessiz arızayı önleyen izleme: toplayıcı hataları ve bayatlayan/susan kaynaklar için sahibe Telegram uyarısı."""
 import os
+from datetime import datetime, timedelta, timezone
 
 from application import feed_switch
 from application.notify import TelegramError, api
@@ -7,6 +8,7 @@ from infrastructure.config import redact
 from infrastructure.db.repository import Repository
 
 REPEAT_HOURS = 12  # aynı uyarı en fazla bu aralıkla tekrarlanır
+FX_FALLBACK_ALERT_HOURS = 24  # döviz servisi bu kadar saattir yanıt vermeyip yedek kur kullanılıyorsa sahibe haber
 
 
 def notify_owner(repo: Repository, key: str, text: str, repeat_hours: int = REPEAT_HOURS) -> bool:
@@ -64,4 +66,23 @@ def check_sources(repo: Repository) -> int:
     sent = 0
     for key, text in source_problems(repo):
         sent += notify_owner(repo, key, "⚠️ Sistem uyarısı\n" + text, repeat_hours=24)
+    return sent
+
+
+def check_fx(repo: Repository, now: datetime | None = None) -> int:
+    """Döviz kuru servisi (Frankfurter) 24 saatten uzun süredir yanıt vermiyor ve son bilinen kur kullanılıyorsa sahibe tek mesaj
+    (TL/EUR fiyatlı ilanların £ karşılığı güncel olmayabilir). Gönderilen mesaj sayısını döner."""
+    now = now or datetime.now(timezone.utc)
+    sent = 0
+    for currency, since in repo.state_with_prefix("fx:fallback:").items():
+        try:
+            started = datetime.fromisoformat(since) if since else None
+        except ValueError:
+            continue
+        if started is None or now - started < timedelta(hours=FX_FALLBACK_ALERT_HOURS):
+            continue
+        hours = int((now - started).total_seconds() // 3600)
+        sent += notify_owner(repo, f"fx_stale:{currency}",
+                             f"⚠️ Döviz kuru servisi {hours} saattir yanıt vermiyor; {currency} için son bilinen kur kullanılıyor. "
+                             f"{currency} fiyatlı ilanların £ karşılığı güncel olmayabilir.", repeat_hours=24)
     return sent

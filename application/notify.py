@@ -83,7 +83,7 @@ def format_alert(ev: Evaluated, note: dict | None = None, comps: list[dict] | No
     if ev.warnings:
         lines.append("⚠️ Dikkat: " + ", ".join(ev.warnings))
     if m.archived_share > 0.6:
-        lines.append(f"ℹ️ Emsallerin %{m.archived_share * 100:.0f}'i arşiv ilanı (eski fiyat olabilir)")
+        lines.append(f"ℹ️ Emsallerin %{m.archived_share * 100:.0f}'i satılmış ilan (sitenin son ilan fiyatı; gerçek satış fiyatı olmayabilir)")
     if note:
         risks = note.get("risk_notlari") or []
         if note.get("gercek_firsat_mi") is False:  # yapay zekâ şüpheli buldu: mesaj yine gider ama uyarı en başta görünür
@@ -96,7 +96,7 @@ def format_alert(ev: Evaluated, note: dict | None = None, comps: list[dict] | No
         lines.append("📊 En yakın emsaller:")
         for c in comps:
             ckm = f"{c['km']:,} km".replace(",", ".") if c.get("km") else "km yok"
-            tag = "" if c.get("is_active", True) else " (arşiv)"
+            tag = "" if c.get("is_active", True) else " (satılmış)"
             lines.append(f"• {c['year']} · {ckm} · £{float(c['price_gbp']):,.0f}{tag}".replace(",", ".")
                          + (f"\n  {c['url']}" if c.get("url") else ""))
     age = posted_age_text(l.get("posted_at"), l.get("platform"))

@@ -58,6 +58,9 @@ class Repo:
     def expire_unverifiable(self):
         pass
 
+    def release_orphan_duplicates(self):
+        return 0
+
     def purge_personal_data(self):
         return 0, 0
 

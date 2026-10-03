@@ -6,7 +6,8 @@ import re
 
 from domain.normalize import fold
 
-MIXED_KEYS = {("Mazda", "cx"), ("Honda", "cr"), ("Volkswagen", "t")}  # farklı modeller tek anahtarda: ilanın kendisi hangisi olursa olsun havuz karışık
+MIXED_KEYS = {("Mazda", "cx"), ("Honda", "cr"), ("Volkswagen", "t"),  # farklı modeller tek anahtarda: ilanın kendisi hangisi olursa olsun havuz karışık
+              ("Mercedes-Benz", "benz"), ("Land Rover", "rover")}  # KKTCarabam etiketi ilk boşluktan bölünüyor: "Mercedes - Benz GLE" → "benz" (GLE/GLC/V hep aynı anahtar), "Land Rover Range Rover" → "rover" (9+1 canlı ilan; kalıcı çözüm model tablosu)
 CROSS_KEYS = {("Toyota", "yaris"), ("Toyota", "corolla")}  # düz model ile "Cross" aynı anahtarda
 CROSS_FROM_YEAR = 2020  # Cross sürümleri bu yıldan sonra var; daha eski ilanın emsal penceresinde Cross yok
 _CROSS = re.compile(r"\bcross\b")

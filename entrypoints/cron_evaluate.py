@@ -11,7 +11,7 @@ from application.digest import send_daily_digest
 from application.discovery import send_discovery
 from application.estimate_guard import guard_estimates
 from application.evaluate import apply_send_floor, evaluate_new, load_book, pending_alerts
-from application.health import check_sources, notify_owner
+from application.health import check_fx, check_sources, notify_owner
 from application import llm_reader
 from application.liveness import recheck_before_send
 from application.notify import is_fresh, send_alerts
@@ -54,6 +54,8 @@ def apply_rules_version(repo: Repository) -> int:
         return 0
     n = repo.reset_evaluations(7)
     repo.set_state("rules_version", RULES_VERSION)
+    if n:
+        repo.set_state(EVAL_FULL_KEY, "")  # silinen değerlendirmeler saatlik tam turu beklemesin: hemen yenilensin
     return n
 
 
@@ -109,6 +111,9 @@ def run(repo: Repository) -> None:
     now = datetime.now(timezone.utc)
     try:
         repo.expire_unverifiable()
+        released = repo.release_orphan_duplicates()  # kanoniği pasifleşen aktif kopya serbest kalır (önce: tarama onları yeniden hesaplar)
+        if released:
+            print(f"mükerrer: kanoniği pasifleşen {released} aktif ilan serbest bırakıldı")
         dedupe_full = full_pass_due(repo, DEDUPE_FULL_KEY, now)
         mark_duplicates(repo, quick=not dedupe_full)  # saatte bir tam tarama, arada yalnız yeni ilanın değdiği gruplar
         if dedupe_full:
@@ -194,6 +199,7 @@ def run(repo: Repository) -> None:
                       ("keşif", lambda: send_discovery(repo, token, owner)),
                       ("denetim", lambda: send_monthly_audit(repo, token, owner)),
                       ("kaynak alarmı", lambda: check_source_alarms(repo)),  # sağlık uyarısından önce: aynı arıza ikinci kez yazılmasın
+                      ("kur izleme", lambda: check_fx(repo)),
                       ("kaynak sağlığı", lambda: (check_sources(repo), send_weekly_report(repo)))):
         try:
             job()
