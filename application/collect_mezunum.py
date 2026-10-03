@@ -1,3 +1,4 @@
+import time
 from dataclasses import dataclass
 
 from application.llm_reader import LlmReader, listing_fields
@@ -8,6 +9,7 @@ from infrastructure.fx.frankfurter import gbp_rate
 
 MAX_PAGES = 2     # liste en yeniden eskiye sıralı; her turda ilk 2 sayfa (≈72 ilan)
 MAX_NEW = 12      # tur başına en çok yeni ilan detayı (nazik hız: 3 sn aralık)
+BUDGET_SECONDS = 150  # sayfa+detay okuma bu süreyi aşmasın (yavaş site turu/iş akışı sınırını tutmasın); kalanlar sonraki tura
 
 
 @dataclass
@@ -18,6 +20,7 @@ class MezunumStats:
     not_car: int = 0
     failed: int = 0
     llm_read: int = 0
+    time_limited: bool = False  # süre bütçesi doldu: kalan ilanlar sonraki turda (okunamadı SAYILMAZ)
 
 
 def listing_data(detail: dict, reader: LlmReader | None = None) -> tuple[dict | None, bool]:
@@ -39,18 +42,25 @@ def listing_data(detail: dict, reader: LlmReader | None = None) -> tuple[dict | 
     return None, False
 
 
-def collect_mezunum(repo: Repository, source: dict, reader: LlmReader | None = None) -> MezunumStats:
+def collect_mezunum(repo: Repository, source: dict, reader: LlmReader | None = None, clock=time.monotonic) -> MezunumStats:
     stats = MezunumStats()
     known = repo.known_item_ids(source["id"])
+    deadline = clock() + BUDGET_SECONDS
     with mezunum.new_client() as client:
         entries = []
         for page in range(1, MAX_PAGES + 1):
+            if page > 1 and clock() > deadline:
+                stats.time_limited = True
+                break
             r = client.get(mezunum.LIST_URL, params={"page": page} if page > 1 else None)
             r.raise_for_status()
             entries += mezunum.parse_list(r.text)
             mezunum.polite_sleep()
         stats.seen = len(entries)
         for entry in [e for e in entries if e.slug not in known][:MAX_NEW]:
+            if clock() > deadline:
+                stats.time_limited = True
+                break
             stats.fetched += 1
             r = client.get(entry.url)
             mezunum.polite_sleep()
