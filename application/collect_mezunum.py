@@ -20,11 +20,14 @@ class MezunumStats:
     not_car: int = 0
     failed: int = 0
     llm_read: int = 0
+    unread: int = 0  # geçici nedenle okunamayanlar (işaretlenmedi, sonraki turda yeniden denenir)
     time_limited: bool = False  # süre bütçesi doldu: kalan ilanlar sonraki turda (okunamadı SAYILMAZ)
 
 
-def listing_data(detail: dict, reader: LlmReader | None = None) -> tuple[dict | None, bool]:
-    """(ilan alanları | None, yapay zekâ mı okudu). Fiyat JSON-LD'den kesin; marka/model/yıl/km serbest metinden."""
+def read_listing(detail: dict, reader: LlmReader | None = None) -> tuple[dict | None, bool, str]:
+    """(ilan alanları | None, yapay zekâ mı okudu, durum). Fiyat JSON-LD'den kesin; marka/model/yıl/km serbest metinden.
+    durum: 'ok' | 'retry' (GEÇİCİ: yapay zekâ anahtarı yok/ağ-API hatası/günlük bütçe doldu: işaret konmaz, sonraki turda yeniden denenir)
+    | 'arac_degil' (yapay zekâ okudu: araç değil/satılmış/kredi-peşinat) | 'okunamadi' (yapay zekâ okudu ama çıktı geçersiz ya da fiyat uyuşmadı)."""
     text = (detail["title"] + "\n" + detail["description"]).strip()
     known = (detail["price_amount"], detail["currency"])
     p = parse_freetext(text, known_price=known)
@@ -34,12 +37,24 @@ def listing_data(detail: dict, reader: LlmReader | None = None) -> tuple[dict | 
         return base | {"brand": p.brand, "model": p.model, "year": p.year, "km": p.km, "fuel": p.fuel, "transmission": p.transmission,
                        "steering": p.steering, "price_raw": p.price_raw, "price_amount": p.price_amount, "currency": p.currency,
                        "price_gbp": round(p.price_amount * gbp_rate(p.currency), 2), "negotiable": p.negotiable,
-                       "extraction_by": "parser_serbest"}, False
-    if reader is not None:
-        fields = listing_fields(reader.read(f"{text}\nFiyat: {detail['price_amount']:g} {detail['currency']}"))
-        if fields and fields["price_amount"] == detail["price_amount"] and fields["currency"] == detail["currency"]:
-            return base | fields, True  # fiyat sitenin kesin alanıyla aynı olmalı
-    return None, False
+                       "extraction_by": "parser_serbest"}, False, "ok"
+    if reader is None:
+        return None, False, "retry"  # kuralla okunamadı, yapay zekâ yok: araç olmadığı kanıtlanmadı
+    read = reader.read(f"{text}\nFiyat: {detail['price_amount']:g} {detail['currency']}")
+    if read is None:  # yapay zekâ cevap veremedi: geçici hata ya da bütçe (kalıcı "araç değil" damgası YOK)
+        return None, False, ("okunamadi" if reader.last_error == "çıktı geçersiz" else "retry")
+    fields = listing_fields(read)
+    if fields is None:
+        return None, False, "arac_degil"
+    if fields["price_amount"] == detail["price_amount"] and fields["currency"] == detail["currency"]:
+        return base | fields, True, "ok"  # fiyat sitenin kesin alanıyla aynı olmalı
+    return None, False, "okunamadi"
+
+
+def listing_data(detail: dict, reader: LlmReader | None = None) -> tuple[dict | None, bool]:
+    """(ilan alanları | None, yapay zekâ mı okudu). Ayrıntılı durum için read_listing."""
+    data, by_llm, _ = read_listing(detail, reader)
+    return data, by_llm
 
 
 def collect_mezunum(repo: Repository, source: dict, reader: LlmReader | None = None, clock=time.monotonic) -> MezunumStats:
@@ -68,12 +83,16 @@ def collect_mezunum(repo: Repository, source: dict, reader: LlmReader | None = N
             if detail is None:
                 stats.failed += 1
                 continue
-            data, by_llm = listing_data(detail, reader)
+            data, by_llm, status = read_listing(detail, reader)
             if data is None:
+                if status == "retry":
+                    stats.unread += 1  # geçici (yapay zekâ yok/hata/bütçe): işaret konmaz, sonraki turda yeniden denenir
+                    continue
                 stats.not_car += 1
-                # araç olmayan/okunamayan ilan saklanmaz ama tekrar çekilmesin diye işaretlenir
+                # yapay zekâ okuyup 'araç değil' dediyse ('arac_degil') ya da okuyup çözemediyse ('okunamadi'): saklanmaz,
+                # tekrar çekilmesin diye işaretlenir (iki durum AYRI işaretle: okunamayanlar sonradan gözden geçirilebilir)
                 repo.upsert_listing(source["id"], entry.slug, {"url": entry.url, "photo_urls": [], "is_active": False,
-                                                                "urgency_signals": ["arac_degil"], "posted_at": detail["posted_at"]})
+                                                                "urgency_signals": [status], "posted_at": detail["posted_at"]})
                 continue
             data["url"] = entry.url
             if repo.upsert_listing(source["id"], entry.slug, data):
