@@ -3,6 +3,7 @@ import statistics
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
+from domain.normalize import canon_fuel, canon_transmission
 from domain.settings import Settings
 
 KM_BANDS = [(0, 50_000), (50_000, 100_000), (100_000, 150_000), (150_000, 10**9)]
@@ -53,10 +54,11 @@ def _is_comparable(target: dict, row: dict, year_span: int, widen_km: bool, now:
     t_st, r_st = target.get("steering") or "RHD", row.get("steering") or "RHD"
     if t_st != r_st:
         return False
-    if target.get("transmission") and row.get("transmission") and target["transmission"] != row["transmission"]:
-        return False
-    if target.get("fuel") and row.get("fuel") and target["fuel"] != row["fuel"]:
-        return False
+    if (target.get("transmission") and row.get("transmission")
+            and canon_transmission(target["transmission"]) != canon_transmission(row["transmission"])):
+        return False  # "düz" ile "manuel" aynı vites (kaynaklar farklı yazıyor)
+    if target.get("fuel") and row.get("fuel") and canon_fuel(target["fuel"]) != canon_fuel(row["fuel"]):
+        return False  # "elektrik" ile "elektrikli" aynı yakıt
     te, re_ = target.get("engine_l"), row.get("engine_l")
     if te is not None and re_ is not None and round(abs(float(te) - float(re_)), 1) > s.engine_tolerance_l:
         return False  # 316i ile 340i gibi farklı motorlar aynı havuzda karışmaz (bilinmeyen motor elenmez)

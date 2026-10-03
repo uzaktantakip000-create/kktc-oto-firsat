@@ -143,7 +143,7 @@ def parse_freetext(text: str, default_steering: str | None = None, max_year: int
     elif re.search(r"hybrid|hibrit", low):
         out.fuel = "hibrit"
     elif re.search(r"elektrik(li)?\s*(araç|arac|motor)|\bev\b", low) and not re.search(r"elektrikli (cam|ayna|bagaj|koltuk|park)", low):
-        out.fuel = "elektrik"
+        out.fuel = "elektrikli"
     elif re.search(r"benzin|petrol", low):
         out.fuel = "benzin"
     if re.search(r"sol\s+direksiyon|\blhd\b", low):

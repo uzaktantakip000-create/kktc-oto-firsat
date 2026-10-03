@@ -8,12 +8,13 @@ import httpx
 from selectolax.parser import HTMLParser
 
 from domain.engine import engine_liters
+from domain.normalize import canon_transmission
 from domain.price import parse_price
 from domain.steering import steering_from_text
 
 BASE = "https://kktcar.com"
 UA = "KKTCOtoBot/0.1 (kisisel arac fiyat arastirmasi)"
-_FUEL = {"dizel": "dizel", "benzin": "benzin", "hibrit": "hibrit", "elektrik": "elektrik", "lpg": "lpg"}
+_FUEL = {"dizel": "dizel", "benzin": "benzin", "hibrit": "hibrit", "elektrik": "elektrikli", "lpg": "lpg"}
 
 
 @dataclass(frozen=True)
@@ -76,7 +77,7 @@ def _parse_sold(title: str, lines: list[str], marker: str, signal: str) -> dict 
         "year": int(re.sub(r"\D", "", f["Yıl"])),
         "km": int(km) if km else None,
         "fuel": _FUEL.get(f.get("Yakıt Tipi", "").lower(), f.get("Yakıt Tipi", "").lower() or None),
-        "transmission": f.get("Vites", "").lower() or None,
+        "transmission": canon_transmission(f.get("Vites", "")) or None,
         "location": lines[i - 5] if i >= 5 and lines[i - 4].isdigit() else None,
         "price_raw": price_txt,
         "price_amount": price.amount if price else None,
@@ -131,7 +132,7 @@ def parse_detail(html: str) -> dict | None:
         "year": int(re.sub(r"\D", "", f["Yıl"])),
         "km": int(km) if km else None,
         "fuel": _FUEL.get(f.get("Yakıt Tipi", "").lower(), f.get("Yakıt Tipi", "").lower() or None),
-        "transmission": f.get("Vites", "").lower() or None,
+        "transmission": canon_transmission(f.get("Vites", "")) or None,
         "engine_l": engine_liters(f.get("Motor Hacmi")),
         "location": f.get("Konum"),
         "steering": steering_from_text(f"{title}\n{desc}"),  # sayfada alan yok; ilan metninde yazıyorsa

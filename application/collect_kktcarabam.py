@@ -18,11 +18,13 @@ def collect_kktcarabam(repo: Repository, source: dict) -> KkaStats:
     known = repo.known_item_ids(source["id"])
     with kktcarabam.open_session() as session:
         html = kktcarabam.fetch_html(session, f"{kktcarabam.LIST_URL}?p=1")
-    if html is None:
+    if html is None:  # engel/zaman aşımı: sessiz "başarılı tur" değil hata (sayaç + alarm, kaynak "kontrol edildi" işaretlenmez)
         stats.blocked = True
-        return stats
+        raise RuntimeError(f"{source['name']}: liste sayfası alınamadı (engel ya da zaman aşımı olabilir)")
     cards = kktcarabam.parse_list(html)
     stats.seen = len(cards)
+    if not cards:  # sayfa geldi ama hiç ilan kartı yok: şablon değişmiş ya da engel/boş sayfa
+        raise RuntimeError(f"{source['name']}: liste sayfasında hiç ilan kartı bulunamadı — site şablonu değişmiş ya da engel sayfası olabilir")
     for card in cards:
         if card.item_id in known:
             continue

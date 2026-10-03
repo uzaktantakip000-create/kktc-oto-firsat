@@ -15,6 +15,29 @@ _MERCEDES = re.compile(r"^(gla|glb|glc|gle|gls|cla|cls|clk|slk|sl|eqa|eqb|eqc|a|
 _BMW = re.compile(r"^([1-8])\d{2}[a-z]{0,2}\b|^([1-8])\.\d{2}[a-z]?\b|^([1-8])\s*serisi")
 
 
+# Vites/yakıt yazımı kaynaklar arasında farklı (KKTCarabam "düz"/"elektrik", KAA "manuel"/"elektrikli"): aynı araç tipi emsal olabilsin diye
+# tek standart yazıma çevrilir. Yalnızca belirsizliği olmayan eşlemeler (bilinmeyen değer olduğu gibi kalır: "benzin / hibrit" gibi).
+_FUEL_CANON = {"elektrik": "elektrikli", "electric": "elektrikli", "hybrit": "hibrit", "hybrid": "hibrit", "mazot": "dizel"}
+_TRANSMISSION_CANON = {"düz": "manuel", "duz": "manuel", "düz vites": "manuel", "duz vites": "manuel", "manual": "manuel",
+                       "automatic": "otomatik", "atomatik": "otomatik", "otamatık": "otomatik", "otomotik": "otomatik"}
+
+
+def canon_fuel(value: str | None) -> str | None:
+    """Yakıt yazımını standarda çevirir ('elektrik' -> 'elektrikli'); boş/None olduğu gibi döner."""
+    if not value:
+        return value
+    key = value.strip().lower()
+    return _FUEL_CANON.get(key, key)
+
+
+def canon_transmission(value: str | None) -> str | None:
+    """Vites yazımını standarda çevirir ('düz' -> 'manuel'); boş/None olduğu gibi döner."""
+    if not value:
+        return value
+    key = value.strip().lower()
+    return _TRANSMISSION_CANON.get(key, key)
+
+
 def fold(text: str) -> str:
     """Küçük harf, Türkçe/aksan temizliği: 'Ni̇ssan' -> 'nissan', 'vıtz' -> 'vitz'."""
     text = text.replace("ı", "i").replace("İ", "i")

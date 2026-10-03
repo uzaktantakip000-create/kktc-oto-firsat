@@ -6,13 +6,14 @@ from datetime import datetime, timezone
 
 from selectolax.parser import HTMLParser
 
+from domain.normalize import canon_transmission
 from domain.price import parse_price
 
 BASE = "https://www.kktcarabam.com"
 LIST_URL = BASE + "/kategori/satilik-otomobil"  # sirala= parametresi robots.txt ile yasak: kullanılmaz
 _MONTHS = {m: i + 1 for i, m in enumerate(
     ["ocak", "şubat", "mart", "nisan", "mayıs", "haziran", "temmuz", "ağustos", "eylül", "ekim", "kasım", "aralık"])}
-_FUEL = {"benzin": "benzin", "dizel": "dizel", "hibrit": "hibrit", "elektrik": "elektrik", "lpg": "lpg"}
+_FUEL = {"benzin": "benzin", "dizel": "dizel", "hibrit": "hibrit", "elektrik": "elektrikli", "lpg": "lpg"}
 
 
 @dataclass(frozen=True)
@@ -90,7 +91,7 @@ def parse_detail(html: str, card: Card) -> dict | None:
         "year": int(re.sub(r"\D", "", f["Yıl:"])) if re.sub(r"\D", "", f["Yıl:"]) else None,
         "km": int(km) if km and int(km) > 0 else None,
         "fuel": _FUEL.get(f.get("Yakıt Türü:", "").lower()),
-        "transmission": f.get("Vites Tipi:", "").lower() or None,
+        "transmission": canon_transmission(f.get("Vites Tipi:", "")) or None,
         "steering": "RHD" if "sağ" in steer else "LHD" if "sol" in steer else None,
         "location": location,
         "price_raw": card.price_text,
@@ -138,7 +139,7 @@ def card_to_listing(card: Card) -> dict | None:
         "brand": brand,
         "model": model or None,
         "year": int(m.group(1)),
-        "transmission": m.group(2).lower(),
+        "transmission": canon_transmission(m.group(2)),
         "fuel": fuel,
         "location": city,
         "price_raw": card.price_text,
