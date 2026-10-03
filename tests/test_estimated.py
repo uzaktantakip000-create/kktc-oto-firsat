@@ -7,6 +7,7 @@ import pytest
 from application import estimate_guard, evaluate, health, notify, price_book_shadow
 from application import llm_reader as lr
 from application.evaluate import Evaluated, assess_listing
+from domain import decision
 from domain.comparables import Market
 from domain.llm_read import compare, parse_llm_read
 from domain.price_book import BookRow, Estimate, PriceBook
@@ -21,7 +22,7 @@ EST = Estimate(value_gbp=10_000, lower_gbp=8_000, method="B", n=30, sellers=12, 
 
 
 def book_with(est=EST, monkeypatch=None, **rows):
-    monkeypatch.setattr(evaluate, "estimate_from_book", lambda l, b, s: est)
+    monkeypatch.setattr(decision, "estimate_from_book", lambda l, b, s, now=None: est)
     return PriceBook(**rows)
 
 
@@ -96,7 +97,7 @@ def test_feature_off_or_no_book_unchanged(monkeypatch):
 
 
 def test_suspect_row_downgrades_green(monkeypatch):
-    monkeypatch.setattr(evaluate, "estimate_from_book", lambda *a: None)
+    monkeypatch.setattr(decision, "estimate_from_book", lambda *a: None)
     ok = PriceBook(rows={("Toyota", "vitz", "", 2015): row("oturmus")})
     bad = PriceBook(rows={("Toyota", "vitz", "", 2015): row("supheli", cand_value=9000)})
     assert assess_listing(car("t", 5000), POOL, S, ok).profit.tier is Tier.STRONG
@@ -343,7 +344,7 @@ def test_no_tightening_when_few_wrong_or_few_votes_or_floor(owner_msgs):
 # --- kuru deneme ---
 def test_shadow_lists_estimated_candidates_and_counts_a_confirmed(monkeypatch):
     now = datetime.now(timezone.utc)
-    monkeypatch.setattr(evaluate, "estimate_from_book", lambda l, b, s: EST)
+    monkeypatch.setattr(decision, "estimate_from_book", lambda l, b, s, now=None: EST)
     fits = []
     book = PriceBook()
     cand = car("t", 6000, first_seen_at=now, brand="Toyota", url="https://x/y", posted_at=None)
@@ -369,7 +370,7 @@ def test_shadow_refits_model_curve_without_the_listing(monkeypatch):
         return None  # eğri ilansız kurulamıyor
 
     estimates = []
-    monkeypatch.setattr(evaluate, "estimate_from_book", lambda l, b, s: estimates.append(b.curve("Toyota", "vitz")) or EST)
+    monkeypatch.setattr(decision, "estimate_from_book", lambda l, b, s, now=None: estimates.append(b.curve("Toyota", "vitz")) or EST)
     price_book_shadow.shadow_candidates([cand], [cand, *POOL], book, S, fit, now)
     assert seen and "t" not in seen[0][2] and seen[0][0] == len(POOL) and seen[0][1] == 2026
     assert book.curve("Toyota", "vitz") is curve  # asıl tablo değişmedi
@@ -380,7 +381,7 @@ def test_ad_check_answers_estimated(monkeypatch):
     from tests.test_ad_check import AD, Repo
     monkeypatch.setattr(ad_check, "gbp_rate", lambda c: 1.0)
     monkeypatch.setattr(ad_check, "load_book", lambda repo: PriceBook())
-    monkeypatch.setattr(evaluate, "estimate_from_book", lambda l, b, s: EST)
+    monkeypatch.setattr(decision, "estimate_from_book", lambda l, b, s, now=None: EST)
     out = ad_check.handle(Repo(pool=[]), AD, None, None)
     assert "🟠 TAHMİNİ FIRSAT — az emsal, kendin de kontrol et" in out
     assert "Tablo değeri ~£10.000 (en kötü ihtimalle £8.000)" in out and "~%50 ucuz" in out

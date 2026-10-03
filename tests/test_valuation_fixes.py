@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import pytest
 
 from application import evaluate
+from domain import decision
 from application.evaluate import assess_listing, evaluate_new
 from domain.data_gate import GAP_LABELS, data_gaps
 from domain.price_book import B_KM_PRIOR, B_KM_WEAK, Curve, Estimate, PriceBook, build_book, estimate_from_book
@@ -101,7 +102,7 @@ def test_tl_listing_is_at_most_yellow():
 
 def test_tl_listing_never_estimated(monkeypatch):
     est = Estimate(10_000, 8_000, "B", 30, 12, 0.15)
-    monkeypatch.setattr(evaluate, "estimate_from_book", lambda l, b, s: est)
+    monkeypatch.setattr(decision, "estimate_from_book", lambda l, b, s, now=None: est)
     b = PriceBook()
     assert assess_listing(ecar("t", 6000, currency="GBP"), [], S, b).profit.tier is Tier.ESTIMATED
     assert assess_listing(ecar("t", 6000, currency="TRY"), [], S, b) is None
@@ -124,7 +125,7 @@ def test_absurd_price_stored_as_yok_with_red_flag():
 
 def test_absurd_price_not_estimated(monkeypatch):
     est = Estimate(10_000, 8_000, "B", 30, 12, 0.15)
-    monkeypatch.setattr(evaluate, "estimate_from_book", lambda l, b, s: est)
+    monkeypatch.setattr(decision, "estimate_from_book", lambda l, b, s, now=None: est)
     a = assess_listing(ecar("t", 3900), POOL[:3], S, PriceBook())  # medyan ~8.000: yarısından düşük
     assert a is not None and a.profit.tier is Tier.NONE
 
