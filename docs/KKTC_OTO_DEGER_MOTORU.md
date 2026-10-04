@@ -21,7 +21,8 @@ Tüm eşikler `settings` üzerinden değiştirilebilir (Telegram: `/esik 20`).
 Regresyon yerine emsal yöntemi (az veride daha sağlam, açıklaması kolay).
 
 Emsal = aynı **marka + model** (normalize) ve:
-- yıl: ±1 (emsal azsa ±2'ye genişlet)
+- yıl: ±1. İlk geçerli piyasa 8'den az emsalliyse ±2 denenir; 8'e ulaşan ilk adım seçilir (medyan, alt çeyrek ve km medyanı dar ve geniş piyasanın KÜÇÜĞÜ). ±2 piyasasında emsallerin medyan yılı ilanın yılından büyükse (yeni modeller pahalı) 🟢 verilmez, en fazla 🟡
+- satıcı: bir satıcının (telefon ya da KKTCar satıcı kimliği) piyasaya en fazla 2 emsali girer (hedefe yıl+km'ce en yakın ikisi); emsaller en az 2 farklı satıcıdan gelmeli. Kimliği bilinmeyen emsal (KKTCar satılmış sayfaları) ayrı satıcı sayılır: bu gerçek güvence değil üst sınırdır
 - km: aynı bant (0–50K, 50–100K, 100–150K, 150K+); emsal azsa komşu bant
 - vites: aynı (otomatik/manuel)
 - direksiyon: aynı (RHD ve LHD ASLA karışmaz)

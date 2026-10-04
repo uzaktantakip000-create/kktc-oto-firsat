@@ -7,6 +7,8 @@ eksiklerin (olması gereken 🟠'ların henüz gelmemesi) yalnızca AZALABİLECE
 adı tablosu (İş 8) bu dosyaya karşı ölçülür.
 NOT (04.10.2026, Adım 7b): satıcı başına en fazla 2 emsal kuralı gelince Honda Fit havuzunda (bir satıcının 5 ilanı var) g40/g49'un `stats` kaydı
 yeniden alındı (n 10→9, medyan £14.750→£14.500); etiketler/`expected` DEĞİŞMEDİ (g49 hâlâ 🟢: n=9 ≥ 8, fiyat medyandan %29 ucuz).
+NOT (04.10.2026, Adım 7c/7d): havuz genişletme 8'e kadar sürünce 9 vakanın `stats` kaydı yeniden alındı (g03, g06, g08, g14, g16, g29, g32, g36, g37: n arttı, yıl aralığı ±2);
+etiketler/`expected` ve bugünkü sistem sonucu DEĞİŞMEDİ (yanlış 🟢 testi geçiyor: g29/g32'yi yıl koruması `emsal_yili_yeni` tutar).
 NOT: havuz satırları `currency` taşımaz → TL emsal kuralı (Adım 6c) bu dosyada görünmez; birim testleri tests/test_comparables.py'dadır."""
 import json
 import re

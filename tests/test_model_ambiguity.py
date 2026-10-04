@@ -24,6 +24,8 @@ def L(brand, model_norm, model="", year=2016):
     ("Toyota", "corolla", "Corolla", 2023, True),
     ("Toyota", "yaris", "Yaris", 2012, False),          # eski Yaris: pencerede Cross yok
     ("Toyota", "corolla", "Corolla 1.6", 2014, False),
+    ("Ford", "transit", "Transit Courier", 2016, True), ("Ford", "transit", "Transit 350 kapalı kasa", 2015, True),  # farklı büyüklükte vanlar
+    ("Ford", "fiesta", "Fiesta", 2015, False),
     ("Toyota", "vitz", "Vitz", 2015, False), ("Mazda", "demio", "Demio", 2014, False), ("Honda", "civic", "Civic", 2016, False),
 ])
 def test_ambiguous_keys(brand, key, model, year, expected):

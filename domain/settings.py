@@ -1,6 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
-RULES_VERSION = "2026-10-04c"  # değerleme kuralları değişince artır: son 7 günün (bildirimsiz) değerlendirmeleri yeniden yapılır
+RULES_VERSION = "2026-10-04d"  # değerleme kuralları değişince artır: son 7 günün (bildirimsiz) değerlendirmeleri yeniden yapılır
 
 
 class Settings(BaseModel):
@@ -21,7 +21,8 @@ class Settings(BaseModel):
     km_high_margin: int = 10_000  # ...ve fark en az bu kadar km ise
     engine_tolerance_l: float = 0.3  # iki ilanın motor hacmi (litre) bundan fazla farklıysa emsal sayılmaz
     active_max_age_days: int = 60  # aktif ama 60 günden uzun süredir yayında duran ilan satılamamıştır: emsal sayılmaz
-    min_distinct_sellers: int = 3  # emsaller en az bu kadar farklı satıcıdan (telefon) gelmeli; tek galerinin fiyatı piyasa olmaz
+    min_distinct_sellers: int = 2  # emsaller en az bu kadar farklı satıcıdan gelmeli (sahip kararı 3→2). DÜRÜST NOT (Opus): satıcı başına ≤2 emsal + en az 3 emsal şartıyla bu kural pratikte HİÇ tetiklenmez (n≥3 zaten ≥2 satıcı anahtarı); asıl koruma satıcı sınırıdır. Kimliksiz emsaller (KKTCar satılmış) ayrı satıcı sayılır: gerçek güvence değil, üst sınır.
+    widen_until_comparables: int = 8  # ilk geçerli piyasa bundan az emsalliyse yıl aralığı ±2'ye genişletilir (ilk bu sayıya ulaşan adım seçilir)
     max_comparables_per_seller: int = 2  # bir satıcının (telefon ya da KKTCar satıcı kimliği) piyasaya katacağı en fazla emsal; 0 = sınırsız
     social_max_age_hours: int = 48  # Instagram/Facebook gönderisi bundan eskiyse anlık 🟢 gitmez (satılmış olabilir)
     low_confidence_can_alert: bool = False  # 3-7 emsalli ilan 🟢 olmaz (en fazla 🟡): küçük havuzlarda sahte fırsat çok çıkıyor
@@ -51,3 +52,11 @@ class Settings(BaseModel):
     book_confirm_nights: int = 2
     book_self_check_max_error: float = 0.25  # öz-kontrolde model ortanca hatası bundan büyükse 🟠 kapanır
     est_burst_limit: int = 15  # tek turda bundan fazla 🟠 çıkarsa arıza say: tek özet mesaj
+
+    @model_validator(mode="after")
+    def _consistent_thresholds(self):
+        """£-yalnız piyasa ancak ≥ gbp_only_min_comparables emsalle geçerli; genişleme eşiğinden küçük olursa ±1'de TL'li piyasa geçerli £-yalnız
+        piyasayı ezerdi (Adım 6c tersine dönerdi)."""
+        if self.gbp_only_min_comparables < self.widen_until_comparables:
+            raise ValueError("gbp_only_min_comparables, widen_until_comparables'tan küçük olamaz")
+        return self

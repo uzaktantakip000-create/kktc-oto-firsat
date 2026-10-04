@@ -200,3 +200,17 @@ def test_nothing_to_evaluate_does_not_read_the_market_pool_at_all():
     assert evaluate_new(repo, quick=True) == [] and repo.pool_calls == []
     repo = FakeRepo([car("m", 3000, brand_norm="Yamaha")], POOL)  # motosiklet: otomobil sistemi dışı
     assert evaluate_new(repo) == [] and repo.pool_calls == []
+
+
+def test_strong_is_held_back_when_the_widened_comparables_are_newer_than_the_car():
+    """Adım 7c koruması: ±2 yıl genişlemede emsal medyan yılı hedeften büyükse (yeni modeller pahalı) 🟢 yok (en fazla 🟡)."""
+    narrow = [car(f"n{i}", 8000 + i * 100, year=2015) for i in range(3)]
+    newer = [car(f"w{i}", 8200 + i * 100, year=2017) for i in range(8)]  # ±2'de çoğunluk 2017 (hedef 2015)
+    repo = FakeRepo([car("t", 5000, year=2015)], narrow + newer)
+    (ev,) = evaluate_new(repo)
+    assert ev.market.year_span == 2 and ev.profit.tier is Tier.NEGOTIABLE
+    assert "emsal_yili_yeni" in repo.saved[0][1]["red_flags"]
+    older = [car(f"o{i}", 8200 + i * 100, year=2013) for i in range(8)]  # ±2'de çoğunluk 2013 (hedeften ESKİ): kıyas muhafazakâr, 🟢 olabilir
+    repo = FakeRepo([car("t", 5000, year=2015)], narrow + older)
+    (ev,) = evaluate_new(repo)
+    assert ev.market.year_span == 2 and ev.profit.tier is Tier.STRONG

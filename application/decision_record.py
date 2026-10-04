@@ -38,7 +38,9 @@ def decision_record(a: Decision, listing: dict, book: PriceBook | None, s: Setti
         "ayar": settings_digest(s),
     }
     if direct:
-        evidence.update({"gbp_only": m.gbp_only, "medyan_yil": _r(m.median_year, 1), "medyan_km": m.median_km})
+        evidence.update({"gbp_only": m.gbp_only, "medyan_yil": _r(m.median_year, 1), "medyan_km": m.median_km, "yil_araligi": m.year_span})
+        if m.narrow_median_gbp is not None:  # yıl aralığı genişletildi (7c): karar iki medyanın küçüğüyle verildi
+            evidence.update({"medyan_dar": _r(m.narrow_median_gbp), "medyan_genis": _r(m.wide_median_gbp)})
         if a.profit.tier in (Tier.STRONG, Tier.ESTIMATED):
             evidence["emsal_ids"] = [str(i) for i in m.comparable_ids[:MAX_COMPARABLE_IDS]]
     if a.estimate is not None:

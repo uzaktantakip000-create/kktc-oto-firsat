@@ -95,3 +95,12 @@ def test_book_value_is_recorded_for_direct_decisions_too():
     repo = FakeRepo([car("t", 5000)], POOL)
     evaluate_new(repo, book=book)
     assert saved(repo)["tablo_degeri_gbp"] == 8700
+
+
+def test_widened_market_records_both_medians_and_the_year_span():
+    narrow = [car(f"n{i}", 7000 + i * 100, year=2015) for i in range(5)]
+    wide = [car(f"w{i}", 9000 + i * 100, year=2013) for i in range(5)]
+    repo = FakeRepo([car("t", 5000)], narrow + wide)
+    evaluate_new(repo)
+    e = saved(repo)["evidence"]
+    assert e["yil_araligi"] == 2 and e["medyan_dar"] == 7200 and e["medyan_genis"] > 8000

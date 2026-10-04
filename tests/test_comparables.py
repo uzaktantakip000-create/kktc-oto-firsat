@@ -137,12 +137,44 @@ def test_tl_target_and_rows_without_currency_behave_as_before():
     assert not find_market(TARGET, no_cur, now=NOW).gbp_only  # currency anahtarı yok: hepsi sayılır
 
 
-def test_year_span_not_widened_by_tl_exclusion():
-    """Golf düzeneği: ±1'de 2 £ + 1 TL emsal; £ yetmeyince aynı aralıkta TL de sayılır, ±2'ye ATLANMAZ."""
+def test_tl_exclusion_alone_never_widens_but_a_thin_first_market_does_under_the_8_rule():
+    """Golf düzeneği: ±1'de 2 £ + 1 TL emsal (3 emsal). 7c'den önce ±1'de DURULURDU; şimdi ilk geçerli piyasa 8'den azsa ±2 denenir
+    ve 8'e ulaşıyorsa seçilir (medyan, dar ve geniş piyasanın KÜÇÜĞÜ: geniş piyasa pahalı yıllara kaymışsa fırsat şişmesin)."""
     pool = [row(1, 6000, year=2014, currency="GBP"), row(2, 6200, year=2016, currency="GBP"), row(3, 5800, year=2015, currency="TRY")]
     pool += [row(f"w{i}", 9000 + i * 100, year=2013 if i % 2 else 2017, currency="GBP") for i in range(8)]
     m = find_market(TARGET, pool, now=NOW)
-    assert m.year_span == 1 and m.n == 3 and not m.gbp_only
+    assert m.year_span == 2 and m.n >= 8
+    assert m.median_gbp <= 6000  # dar piyasanın medyanı (6000) geniş piyasanınkinden (≈9000) küçük: o kullanılır
+
+
+def test_widening_stops_at_the_first_step_that_reaches_eight():
+    narrow = [row(f"n{i}", 7000 + i * 100, year=2015) for i in range(9)]
+    wide = [row(f"w{i}", 9000 + i * 100, year=2013) for i in range(9)]
+    m = find_market(TARGET, narrow + wide, now=NOW)
+    assert m.year_span == 1 and m.n == 9  # ±1 zaten 8'e ulaştı: ±2'ye hiç bakılmaz
+
+
+def test_widening_keeps_the_first_valid_market_when_no_step_reaches_eight():
+    pool = [row(f"n{i}", 7000 + i * 100, year=2015) for i in range(4)] + [row(f"w{i}", 7500 + i * 100, year=2013) for i in range(3)]
+    m = find_market(TARGET, pool, now=NOW)  # ±1: 4 emsal, ±2: 7 emsal: hiçbiri 8 değil → eski davranış (ilk geçerli = ±1)
+    assert m.year_span == 1 and m.n == 4
+
+
+def test_widening_reaches_eight_with_the_conservative_merge_of_the_two_markets():
+    narrow = [row(f"n{i}", 7000 + i * 100, year=2015) for i in range(5)]  # medyan 7200
+    wide = [row(f"w{i}", 9000 + i * 100, year=2013) for i in range(5)]
+    m = find_market(TARGET, narrow + wide, now=NOW)
+    assert m.year_span == 2 and m.n == 10 and m.median_gbp == 7200  # geniş piyasanın medyanı ~8.100, dar 7.200: küçüğü
+
+
+def test_a_market_of_eight_or_more_always_has_at_least_four_sellers_property():
+    rnd = random.Random(21)
+    for _ in range(300):
+        pool = [row(f"r{i}", rnd.randint(5000, 9000), year=rnd.randint(2013, 2017), seller_phone=f"90{rnd.randint(1, 6)}" if rnd.random() < 0.7 else None)
+                for i in range(rnd.randint(8, 30))]
+        m = find_market(TARGET, pool, now=NOW)
+        if m is not None and m.n >= 8:
+            assert m.sellers_n >= 4  # satıcı başına ≤2 emsal kuralının doğrudan sonucu
 
 
 def test_year_span_never_wider_than_before_property():
@@ -225,8 +257,13 @@ def test_cap_applies_before_outlier_removal_and_zero_disables_it():
 
 
 def test_market_needs_distinct_sellers_after_the_cap():
-    pool = [row(f"a{i}", 7000, seller_phone="901") for i in range(5)] + [row(f"b{i}", 7100, seller_phone="902") for i in range(5)]
-    assert find_market(TARGET, pool, now=NOW) is None  # 10 ilan ama iki satıcı: sınırdan sonra 4 emsal, 2 satıcı < 3
+    from domain.settings import Settings
+    one = [row(f"a{i}", 7000 + i, seller_phone="901") for i in range(6)]
+    assert find_market(TARGET, one, now=NOW) is None  # tek satıcı: sınırdan sonra 2 emsal, 1 satıcı < 2
+    two = [row(f"a{i}", 7000, seller_phone="901") for i in range(5)] + [row(f"b{i}", 7100, seller_phone="902") for i in range(5)]
+    m = find_market(TARGET, two, now=NOW)
+    assert m.n == 4 and m.sellers_n == 2  # iki satıcı yeter (sahip kararı: 3→2), ama emsal 8'den az
+    assert find_market(TARGET, two, Settings(min_distinct_sellers=3), NOW) is None
 
 
 def test_cap_choice_does_not_depend_on_pool_order_property():
@@ -241,3 +278,34 @@ def test_cap_choice_does_not_depend_on_pool_order_property():
         assert (a is None) == (b is None)
         if a is not None:
             assert set(a.comparable_ids) == set(b.comparable_ids) and a.median_gbp == b.median_gbp
+
+
+def test_conservative_merge_takes_the_smaller_median_p25_and_km_and_records_both_medians():
+    """Opus (04.10.2026): dar piyasanın medyanı ile geniş piyasanın p25/km'sinin karışması 'en ucuz çeyrek' kapısını gevşetirdi."""
+    narrow = [row(f"n{i}", 7000 + i * 100, year=2015, km=60_000 + i * 1000) for i in range(5)]  # medyan 7200, km ~62.000
+    wide = [row(f"w{i}", 9000 + i * 100, year=2013, km=90_000 + i * 1000) for i in range(5)]
+    m = find_market(TARGET, narrow + wide, now=NOW)
+    assert m.year_span == 2 and m.median_gbp == 7200 and m.narrow_median_gbp == 7200 and m.wide_median_gbp > 8000
+    assert m.p25_gbp is not None and m.p25_gbp <= m.median_gbp  # p25 ≤ medyan: tutarsız çift yok
+    assert m.median_km is not None and m.median_km <= 80_000
+
+
+def test_unmerged_markets_carry_no_narrow_wide_fields():
+    m = find_market(TARGET, [row(i, 6000 + i * 100) for i in range(9)], now=NOW)
+    assert m.narrow_median_gbp is None and m.wide_median_gbp is None
+
+
+def test_p25_never_exceeds_the_median_property():
+    rnd = random.Random(33)
+    for _ in range(300):
+        pool = [row(f"r{i}", rnd.randint(4000, 12000), year=rnd.randint(2012, 2018), km=rnd.randint(10_000, 200_000)) for i in range(rnd.randint(3, 30))]
+        m = find_market(TARGET, pool, now=NOW)
+        if m is not None and m.p25_gbp is not None:
+            assert m.p25_gbp <= m.median_gbp + 1e-9
+
+
+def test_inconsistent_thresholds_are_refused():
+    import pytest
+    from domain.settings import Settings
+    with pytest.raises(ValueError):
+        Settings(gbp_only_min_comparables=5, widen_until_comparables=8)  # £-yalnız piyasa genişleme eşiğinden önce geçerli olurdu: 6c tersine döner

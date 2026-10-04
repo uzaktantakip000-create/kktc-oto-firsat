@@ -63,6 +63,9 @@ def _market_assessment(listing: dict, market: Market, price: float, text: str, b
     tier = Tier.NONE if blocking else profit.tier
     if tier is Tier.STRONG and not below_cheap_quartile(price, market):
         gaps = gaps + ["ucuz_ceyrek_degil"]  # medyandan %20 ucuz ama benzerlerin en ucuz çeyreğinde değil: sıradan fiyat
+    if (tier is Tier.STRONG and market.year_span >= 2 and market.median_year is not None and listing.get("year")
+            and market.median_year > listing["year"]):
+        gaps = gaps + ["emsal_yili_yeni"]  # ±2 yıl genişlemede emsaller hedeften YENİ model ağırlıklı: hedef ucuz görünür, 🟢 bekler
     if tier is Tier.STRONG and plate_flags(text):
         gaps = gaps + ["plaka_uyari"]
     if tier is Tier.STRONG and book is not None and listing.get("year"):

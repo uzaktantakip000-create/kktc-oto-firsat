@@ -7,7 +7,8 @@ import re
 from domain.normalize import fold
 
 MIXED_KEYS = {("Mazda", "cx"), ("Honda", "cr"), ("Volkswagen", "t"),  # farklı modeller tek anahtarda: ilanın kendisi hangisi olursa olsun havuz karışık
-              ("Mercedes-Benz", "benz"), ("Land Rover", "rover")}  # KKTCarabam etiketi ilk boşluktan bölünüyor: "Mercedes - Benz GLE" → "benz" (GLE/GLC/V hep aynı anahtar), "Land Rover Range Rover" → "rover" (9+1 canlı ilan; kalıcı çözüm model tablosu)
+              ("Mercedes-Benz", "benz"), ("Land Rover", "rover"),
+              ("Ford", "transit")}  # Transit/Transit Custom/Courier/290-350 kapalı kasa/Jumbo/damperli tek anahtarda (£8.500 Courier, £13-24k Custom emsaline karşı sahte "%67" 🟢 üretti, Opus 04.10.2026); model tablosu Custom/Courier'ı ayırsa da düz "transit" yine karışık kalır: KALICI  # KKTCarabam etiketi ilk boşluktan bölünüyor: "Mercedes - Benz GLE" → "benz" (GLE/GLC/V hep aynı anahtar), "Land Rover Range Rover" → "rover" (9+1 canlı ilan; kalıcı çözüm model tablosu)
 CROSS_KEYS = {("Toyota", "yaris"), ("Toyota", "corolla")}  # düz model ile "Cross" aynı anahtarda
 CROSS_FROM_YEAR = 2020  # Cross sürümleri bu yıldan sonra var; daha eski ilanın emsal penceresinde Cross yok
 _CROSS = re.compile(r"\bcross\b")
