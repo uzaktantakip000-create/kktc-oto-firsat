@@ -6,9 +6,12 @@ from application import notify
 
 
 class Repo:
-    def __init__(self, failing):
-        self.failing, self.levels, self.marked = failing, {}, []
+    def __init__(self, failing, votes=10):
+        self.failing, self.levels, self.marked, self.votes = failing, {}, [], votes
         self.conn = self
+
+    def feedback_votes(self):
+        return self.votes
 
     def sources_failing_feedback(self):
         return self.failing
@@ -45,3 +48,11 @@ def test_new_source_gets_no_label_any_more():
     assert "🆕" not in notify.format_alert(e)  # 🆕 etiketi kaldırıldı (02.10.2026)
     e.listing["source_created_at"] = now - timedelta(days=40)
     assert "🆕" not in notify.format_alert(e)
+
+
+def test_no_automatic_demotion_before_ten_votes(monkeypatch):
+    """Sahip kararı (03.10.2026): 10 oydan önce otomatik öğrenme yok; 1-2 yanlış basış bir kaynağı sessizce kapatmasın."""
+    monkeypatch.setattr(health, "api", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("sahibe mesaj gitmemeli")))
+    repo = Repo([{"id": "S1", "name": "Kötü Hesap", "n": 10, "bad_n": 4}], votes=9)
+    assert source_guard.demote_failing_sources(repo) == 0 and repo.levels == {}
+    assert Repo([], votes=10).feedback_votes() == 10  # tam 10 oy: kapı açık (yukarıdaki test)

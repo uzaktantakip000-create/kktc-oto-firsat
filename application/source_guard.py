@@ -2,10 +2,13 @@
 Kural: bir kaynağın son 10 🟢'sinden en az 3'üne "yanlış fiyat" ya da "kusurlu/sahte" denmişse. Geri açma elle:
 /kaynak_seviye <ad> yesil."""
 from application.health import notify_owner
+from application.learning import learning_open
 from infrastructure.db.repository import Repository
 
 
 def demote_failing_sources(repo: Repository) -> int:
+    if not learning_open(repo):  # 10 oydan önce otomatik eylem yok (sahip kararı)
+        return 0
     n = 0
     for s in repo.sources_failing_feedback():
         repo.set_alert_level(s["id"], "sari")

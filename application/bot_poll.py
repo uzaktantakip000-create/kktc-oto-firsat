@@ -2,6 +2,7 @@
 import httpx
 
 from application import ad_check, discovery, history_cmd, llm_reader, price_book_cmd, settings_store, sources_cmd, status
+from application.learning import learning_open
 from application.notify import TelegramError, api
 from infrastructure.db.repository import Repository
 
@@ -152,7 +153,7 @@ def _handle_callback(repo: Repository, token: str, owner: str, cb: dict) -> None
         if sender == owner:  # tek abonenin yanlış basışı herkes için karar vermesin: kararları yalnızca sahip sisteme geri döner
             if action == "satilmis":
                 repo.mark_sold(target)  # kapanır ve gerçek bir satış olarak emsale girer
-            elif action == "kusurlu" and repo.block_seller_of(target, "kusurlu"):
+            elif action == "kusurlu" and learning_open(repo) and repo.block_seller_of(target, "kusurlu"):  # 10 oydan önce yalnız KAYIT
                 answer = "Not aldım. Bu satıcıdan bir daha 🟢 göndermeyeceğim."
             elif action == "pas":
                 _maybe_ask_mute(repo, token, owner, target)

@@ -386,3 +386,14 @@ def test_ad_check_answers_estimated(monkeypatch):
     assert "🟠 TAHMİNİ FIRSAT — az emsal, kendin de kontrol et" in out
     assert "Tablo değeri ~£10.000 (en kötü ihtimalle £8.000)" in out and "~%50 ucuz" in out
     assert "En yakın emsaller" not in out
+
+
+def test_estimate_guard_does_nothing_before_ten_votes(owner_msgs):
+    """Sahip kararı (03.10.2026): 10 oydan önce otomatik öğrenme yok (model kapatma ve eşik sıkılaştırma dahil)."""
+    class FewVotes(GuardRepo):
+        def feedback_votes(self):
+            return 9
+
+    repo = FewVotes(by_model=[{"brand_norm": "Toyota", "model_norm": "corolla", "bad_n": 2}], recent=[True] * 10)
+    assert estimate_guard.guard_estimates(repo) == (0, None)
+    assert "est_disabled" not in repo.state and owner_msgs == []

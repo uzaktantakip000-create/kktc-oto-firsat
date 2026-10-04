@@ -448,3 +448,12 @@ def test_sold_at_is_stored_once_from_the_page_report_and_born_sold_listings_keep
     db.upsert_listing(web, "born", {"brand_norm": "Toyota", "model_norm": "vitz", "is_active": False, "urgency_signals": ["satildi"],
                                     "inactive_reason": "satildi", "sold_at": later})
     assert c.execute("SELECT sold_at FROM listings WHERE source_item_id='born'").fetchone()["sold_at"] == later
+
+
+def test_feedback_votes_counts_only_button_votes_on_opportunity_messages(db):
+    """Öğrenme kapısı (application/learning.py): fırsat mesajı oyları sayılır; denetim ve "satılmış" bildirimi sayılmaz."""
+    c, sid = db.conn, add_source(db.conn)
+    lid = add_listing(c, sid, "a")
+    for action in ("ilgilendim", "pas", "yanlis_fiyat", "kusurlu", "audit_dogru", "audit_yanlis", "satilmis"):
+        c.execute("INSERT INTO feedback (listing_id, action) VALUES (%s,%s)", (lid, action))
+    assert db.feedback_votes() == 4

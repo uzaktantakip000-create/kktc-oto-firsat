@@ -126,9 +126,13 @@ class CbConn:
 
 
 class CbRepo:
-    def __init__(self):
+    def __init__(self, votes=10):
         self.conn = CbConn()
         self.state = {}
+        self.votes = votes
+
+    def feedback_votes(self):
+        return self.votes
 
     def mark_sold(self, listing_id):
         self.conn.sql.append("UPDATE listings SET is_active (mark_sold)")
@@ -196,6 +200,9 @@ def test_owner_decisions_flow_back_into_the_system(monkeypatch):
     ask = [kw for m, kw in sent if m == "sendMessage"]
     assert ask and "3 kez 'pas'" in ask[-1]["text"] and "mute:evet:Toyota|vitz" in str(ask[-1]["reply_markup"])
     n = len(sent)
+    repo_few = CbRepo(votes=9)  # 10 oydan önce "kusurlu/sahte" yalnız KAYIT: satıcı kara listeye alınmaz
+    bot_poll._handle_callback(repo_few, "t", "owner", {"id": "1", "from": {"id": "owner"}, "data": "fb:kusurlu:L1"})
+    assert not any(q.startswith("BLOCK") for q in repo_few.conn.sql) and any("INSERT INTO feedback" in q for q in repo_few.conn.sql)
     bot_poll._handle_callback(repo, "t", "owner", {"id": "1", "from": {"id": "owner"}, "data": "fb:pas:L2"})
     assert len(sent) == n                                         # aynı model için ikinci kez sorulmaz
     bot_poll._handle_callback(repo, "t", "owner", {"id": "2", "from": {"id": "owner"}, "data": "mute:evet:Toyota|vitz"})

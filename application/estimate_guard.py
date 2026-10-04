@@ -5,6 +5,7 @@
    eğrinin alt sınırının daha küçük bir katı olmalı (cfg:est_min_discount_to_lower, en düşük 0.60).
 Öğrenme ancak düğmelere basılırsa çalışır."""
 from application.health import notify_owner
+from application.learning import learning_open
 from domain.settings import Settings
 from infrastructure.db.repository import Repository
 
@@ -64,4 +65,6 @@ def tighten_threshold(repo: Repository, s: Settings | None = None) -> float | No
 
 
 def guard_estimates(repo: Repository) -> tuple[int, float | None]:
+    if not learning_open(repo):  # 10 oydan önce otomatik eylem yok (sahip kararı)
+        return 0, None
     return disable_failing_models(repo), tighten_threshold(repo)

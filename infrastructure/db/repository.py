@@ -440,6 +440,10 @@ class Repository:
                  AND (l.posted_at IS NULL OR l.posted_at > l.first_seen_at - interval '4 days')
                ORDER BY l.first_seen_at""", (days,)).fetchall()
 
+    def feedback_votes(self) -> int:
+        """Fırsat mesajlarındaki düğme oyları (denetim ve "satılmış" bildirimi hariç): öğrenme kapısı bunu sayar (application/learning.py)."""
+        return self.conn.execute("SELECT count(*) AS n FROM feedback WHERE action IN ('ilgilendim','pas','yanlis_fiyat','kusurlu')").fetchone()["n"]
+
     def est_feedback_by_model(self, days: int = 30, min_bad: int = 2) -> list[dict]:
         """🟠 bildirilen ilanlarda 'yanlış fiyat/kusurlu' denen DISTINCT ilan sayısı, model bazında (en az 'min_bad')."""
         return self.conn.execute(
