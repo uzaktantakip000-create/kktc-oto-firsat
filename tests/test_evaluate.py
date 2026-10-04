@@ -214,3 +214,15 @@ def test_strong_is_held_back_when_the_widened_comparables_are_newer_than_the_car
     repo = FakeRepo([car("t", 5000, year=2015)], narrow + older)
     (ev,) = evaluate_new(repo)
     assert ev.market.year_span == 2 and ev.profit.tier is Tier.STRONG
+
+
+def test_strong_is_held_back_when_even_the_plus_minus_one_comparables_skew_a_year_newer():
+    """Adım 7e (Opus 04.10.2026): ±1'de de medyan yıl hedef+1 ise (emsallerin çoğu bir yıl yeni) hedef ucuz görünür: 🟢 yok."""
+    newer = [car(f"n{i}", 8000 + i * 100, year=2016) for i in range(8)]  # hedef 2015, emsallerin hepsi 2016 (±1 içinde)
+    repo = FakeRepo([car("t", 5000, year=2015)], newer)
+    (ev,) = evaluate_new(repo)
+    assert ev.market.year_span == 1 and ev.profit.tier is Tier.NEGOTIABLE and "emsal_yili_yeni" in repo.saved[0][1]["red_flags"]
+    mixed = [car(f"m{i}", 8000 + i * 100, year=2014 if i % 2 else 2016) for i in range(8)]  # medyan yıl 2015 = hedef: kayma yok
+    repo = FakeRepo([car("t", 5000, year=2015)], mixed)
+    (ev,) = evaluate_new(repo)
+    assert ev.profit.tier is Tier.STRONG

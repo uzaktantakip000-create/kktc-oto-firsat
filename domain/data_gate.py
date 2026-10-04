@@ -17,7 +17,7 @@ GAP_LABELS = {
     "model_belirsiz": "model karışık havuzda (ör. CX-3/CX-5, Yaris/Yaris Cross): fiyat kıyası güvenilmez",
     "km_yuksek": "km emsallerden çok yüksek",
     "ucuz_ceyrek_degil": "fiyat benzer araçların en ucuz çeyreğinde değil",
-    "emsal_yili_yeni": "az benzer araç bulundu, yıl aralığı genişletildi ve emsaller bu araçtan daha YENİ: fiyat kıyası güvenilmez",
+    "emsal_yili_yeni": "benzer araçların model yılı bu araçtan daha YENİ ağırlıklı (yeni model pahalı): fiyat kıyası güvenilmez",
     "plaka_uyari": "TR/yabancı plaka yazıyor",
     "sessiz_model": "bu modele 3 kez 'pas' dedin (özete alındı)",
     "deger_supheli": "değer tablosu bu modelde yeni değişti, bekleniyor",
