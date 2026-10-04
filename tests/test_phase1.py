@@ -200,3 +200,39 @@ def test_owner_decisions_flow_back_into_the_system(monkeypatch):
     assert len(sent) == n                                         # aynı model için ikinci kez sorulmaz
     bot_poll._handle_callback(repo, "t", "owner", {"id": "2", "from": {"id": "owner"}, "data": "mute:evet:Toyota|vitz"})
     assert repo.state["cfg:muted_models"] == "Toyota|vitz"
+
+
+# --- KibrisArabaAl: bildirimden önce canlılık kontrolü (Adım 8) ---
+
+KAA_URL = "https://kibrisarabaal.com/ilan/1234-toyota-vitz"
+
+
+def fake_kaa(monkeypatch, data):
+    monkeypatch.setattr(liveness.kibrisarabaal, "fetch_detail", lambda client, entry: data)
+    monkeypatch.setattr(liveness.kibrisarabaal, "polite_sleep", lambda: None)
+    monkeypatch.setattr(liveness, "_kaa_gbp", lambda d: 5000.0)
+
+
+def test_kaa_sold_removed_or_repriced_listing_not_sent(monkeypatch):
+    fake_kaa(monkeypatch, {"is_active": False, "urgency_signals": ["satildi"]})
+    repo = LiveRepo("pasif")
+    assert liveness.recheck_before_send(repo, [ev("k", KAA_URL)], kaa_client=FakeClient()) == [] and repo.calls == 1  # pasifleşir de
+    fake_kaa(monkeypatch, {"price_amount": 4000, "currency": "GBP"})
+    assert liveness.recheck_before_send(LiveRepo("fiyat"), [ev("k", KAA_URL)], kaa_client=FakeClient()) == []
+
+
+def test_kaa_unchanged_or_unreadable_listing_still_sent(monkeypatch):
+    fake_kaa(monkeypatch, {"price_amount": 5000, "currency": "GBP"})
+    assert len(liveness.recheck_before_send(LiveRepo(None), [ev("k", KAA_URL)], kaa_client=FakeClient())) == 1
+    fake_kaa(monkeypatch, None)  # okunamadı (geçici hata/şablon): doğrulanamadı diye fırsat kaçmasın, 'kaldırıldı' da yazılmaz
+    repo = LiveRepo("pasif")
+    assert len(liveness.recheck_before_send(repo, [ev("k", KAA_URL)], kaa_client=FakeClient())) == 1 and repo.calls == 0
+
+
+def test_mixed_sources_are_checked_independently_and_other_sources_skipped(monkeypatch):
+    fake_fetch(monkeypatch, {"price_amount": 5000, "currency": "GBP"})  # KKTCar: değişmedi
+    fake_kaa(monkeypatch, {"is_active": False, "urgency_signals": ["kaldirildi"]})  # KAA: kaldırılmış
+    repo = LiveRepo("pasif")
+    evs = [ev("kk"), ev("kaa", KAA_URL), ev("ig", "https://www.instagram.com/p/x/")]
+    out = liveness.recheck_before_send(repo, evs, client=FakeClient(), kaa_client=FakeClient())
+    assert [e.listing["id"] for e in out] == ["ig"]  # kk: apply_refresh 'pasif' döndü (sahte) → düştü; kaa düştü; ig atlandı
