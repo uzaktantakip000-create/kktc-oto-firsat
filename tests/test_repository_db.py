@@ -212,7 +212,7 @@ def test_unevaluated_active_rules_version_branch_only_picks_notification_candida
     add_versioned_eval(c, alerted, ago(hours=3), "eski", tier="guclu")
     db.save_alert(alerted, "c1", "guclu", 1, evaluation_id=None, price_gbp=None)
     assert items(db.unevaluated_active(rules_version="yeni")) == {"fresh_old", "fresh_null", "repriced", "old_green", "alerted"}
-    assert items(db.unevaluated_active(recent_hours=3, rules_version="yeni")) == set()  # hızlı tur sürüm dalına bakmaz
+    assert items(db.unevaluated_active(recent_hours=3, rules_version="yeni")) == {"repriced"}  # hızlı tur sürüm dalına bakmaz (yalnız fiyatı değişen gelir)
     assert db.count_stale_rules("yeni") == 6  # bilgi sayacı: fresh_old, fresh_null, old, repriced, old_green, alerted
     assert db.conn.execute("SELECT count(*) AS n FROM evaluations").fetchone()["n"] == 7  # HİÇBİR satır silinmedi
 
