@@ -1,5 +1,8 @@
+import json
+
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from domain.normalize import normalize_brand, normalize_model, reclassify_non_car
 
@@ -277,9 +280,10 @@ class Repository:
 
     def save_evaluation(self, listing_id, ev: dict) -> None:
         cols = list(ev)
+        vals = [Jsonb(v, dumps=lambda o: json.dumps(o, default=str)) if k == "evidence" and v is not None else v for k, v in ev.items()]
         self.conn.execute(
             f"INSERT INTO evaluations (listing_id,{','.join(cols)}) VALUES (%s,{','.join(['%s'] * len(cols))})",
-            [listing_id, *ev.values()],
+            [listing_id, *vals],
         )
 
     # --- kullanıcı kararları ---

@@ -263,3 +263,20 @@ def test_market_pool_carries_seller_handle_for_the_seller_key_shadow(db):
     c, sid = db.conn, add_source(db.conn)
     add_listing(c, sid, "h", seller_handle="kktcar:abc")
     assert [r["seller_handle"] for r in db.market_pool(days=120)] == ["kktcar:abc"]
+
+
+def test_save_evaluation_stores_the_decision_record_columns(db):
+    """Adım 5b-1: karar kaydı sütunları gerçek Postgres'te yazılır/okunur (JSONB, TEXT[], sayılar); UUID kanıt içinde yazı olur."""
+    import uuid
+    sid = add_source(db.conn)
+    lid = add_listing(db.conn, sid, "a")
+    other = uuid.uuid4()
+    db.save_evaluation(lid, {"comparables_n": 8, "confidence": "orta", "tier": "guclu", "rules_version": "2026-10-04c", "saticilar_n": 6,
+                             "alt_ceyrek_gbp": 7000.5, "tablo_degeri_gbp": 8700, "nedenler": ["km_yuksek", "plaka_uyari"],
+                             "evidence": {"yontem": "A", "emsal_ids": [other], "gbp_only": False}})
+    row = db.conn.execute("SELECT rules_version, saticilar_n, alt_ceyrek_gbp::float8 AS alt, tablo_degeri_gbp::float8 AS tablo, nedenler, evidence "
+                          "FROM evaluations").fetchone()
+    assert row["rules_version"] == "2026-10-04c" and row["saticilar_n"] == 6 and row["alt"] == 7000.5 and row["tablo"] == 8700
+    assert row["nedenler"] == ["km_yuksek", "plaka_uyari"]
+    assert row["evidence"] == {"yontem": "A", "emsal_ids": [str(other)], "gbp_only": False}
+    db.save_evaluation(lid, {"comparables_n": 8, "confidence": "orta", "tier": "yok", "evidence": None, "nedenler": None})  # boş kayıt da yazılır

@@ -1,12 +1,13 @@
 from dataclasses import dataclass, field
 
+from application.decision_record import decision_record
 from domain.comparables import Market
 from domain.decision import Decision, decide, send_allowed
 from domain.normalize import is_car_brand
 from domain.price_book import BookRow, PriceBook
 from domain.profit import Confidence, ProfitResult, Tier
 from domain.red_flags import urgency_signals
-from domain.settings import Settings
+from domain.settings import RULES_VERSION, Settings
 from infrastructure.config import redact
 from infrastructure.db.repository import DatabaseDown, Repository
 
@@ -68,12 +69,17 @@ def _evaluate_one(repo: Repository, listing: dict, pool: list[dict], s: Settings
     if not s.min_plausible_price_gbp <= price <= s.max_plausible_price_gbp:
         # Eksik rakam/yanlış yazım olasılığı: değerlendirme kaydı atılır ama bildirim üretilmez
         repo.save_evaluation(listing["id"], {"comparables_n": 0, "confidence": Confidence.NONE.value,
-                                             "tier": Tier.NONE.value, "red_flags": ["fiyat_gecersiz"]})
+                                             "tier": Tier.NONE.value, "red_flags": ["fiyat_gecersiz"], "rules_version": RULES_VERSION})
         return None
     a = decide(listing, pool, s, book)
     if a is None:
         return None
     market, profit = a.market, a.profit
+    try:
+        record = decision_record(a, listing, book, s)
+    except Exception as e:  # karar kaydı eksik kalabilir; değerlendirme ve bildirim ASLA buna bağlı olmasın
+        print("karar kaydı kurulamadı:", type(e).__name__, redact(str(e))[:120])
+        record = {"rules_version": RULES_VERSION}
     repo.save_evaluation(
         listing["id"],
         {
@@ -90,6 +96,7 @@ def _evaluate_one(repo: Repository, listing: dict, pool: list[dict], s: Settings
             "tier": profit.tier.value,
             "red_flags": a.blocking + a.warnings + a.gaps,  # "bu yüzden 🟢 değil" sadece gerçekten düşürüldüyse
             **({"method": a.method} if a.method != "A" else {}),  # A = kolon varsayılanı
+            **record,
         },
     )
     return Evaluated(listing, market, profit, a.blocking, a.warnings, urgency_signals(a.text), method=a.method)
