@@ -296,3 +296,48 @@ def test_pending_strong_returns_the_evaluation_id_and_save_alert_stores_it_with_
     db.save_alert(lid, "c1", "guclu", 7, evaluation_id=row["evaluation_id"], price_gbp=row["price_gbp"])
     got = c.execute("SELECT evaluation_id, fiyat_gonderimde::float8 AS p, kind FROM alerts").fetchone()
     assert got["evaluation_id"] == eval_id and got["p"] == 5000 and got["kind"] is None
+
+
+def lifecycle(conn, lid):
+    return conn.execute("SELECT is_active, inactive_at, inactive_reason, last_alive_at FROM listings WHERE id=%s", (lid,)).fetchone()
+
+
+def test_every_deactivation_path_records_inactive_time_and_reason(db):
+    """Adım 5c: pasifleşme AN'ı ve NEDENİ yazılır; 'satildi' yalnız sayfanın kendi sinyali ya da sahibin beyanı, gerisi 'belirsiz'."""
+    c = db.conn
+    web, ig = add_source(c, "W", "web"), add_source(c, "I", "instagram")
+    old = {"price_amount": 6000, "currency": "GBP", "price_gbp": 6000}
+    sold, gone, archived = (add_listing(c, web, n) for n in ("sold", "gone", "archived"))
+    db.apply_refresh(sold, old, {"is_active": False, "urgency_signals": ["satildi"]})
+    db.apply_refresh(gone, old, {"is_active": False, "urgency_signals": ["kaldirildi"]})
+    db.apply_refresh(archived, old, {"is_active": False, "urgency_signals": ["arsiv"]})
+    assert [lifecycle(c, i)["inactive_reason"] for i in (sold, gone, archived)] == ["satildi", "kaldirildi", "belirsiz"]
+    assert all(lifecycle(c, i)["inactive_at"] is not None for i in (sold, gone, archived))
+    first = lifecycle(c, sold)["inactive_at"]
+    db.apply_refresh(sold, old, {"is_active": False, "urgency_signals": ["kaldirildi"]})  # ikinci pasifleştirme ilk kaydı ezmez
+    assert lifecycle(c, sold)["inactive_reason"] == "satildi" and lifecycle(c, sold)["inactive_at"] == first
+    # site haritasından düşme: belirsiz; haritada olan dokunulmaz
+    missing, present = add_listing(c, web, "missing"), add_listing(c, web, "present")
+    assert db.deactivate_missing(web, {"present", "sold", "gone", "archived"}) == 1
+    assert lifecycle(c, missing)["inactive_reason"] == "belirsiz" and lifecycle(c, missing)["inactive_at"] is not None
+    assert lifecycle(c, present)["is_active"] and lifecycle(c, present)["inactive_reason"] is None
+    # Instagram: 30 günlük süre dolumu ve "ilan no" ile kapatma ASLA 'satildi' olmaz
+    stale_ig = add_listing(c, ig, "stale", posted_at=ago(days=40))
+    numbered = add_listing(c, ig, "numbered", raw_text="Toyota Vitz İlan No: 4455 temiz araç")
+    assert db.expire_unverifiable(30) == 1 and db.deactivate_by_ilan_no(ig, "4455") == 1
+    assert lifecycle(c, stale_ig)["inactive_reason"] == "belirsiz" and lifecycle(c, numbered)["inactive_reason"] == "belirsiz"
+    # sahibin düğmesi: 'satildi'e yükseltir, ilk pasifleşme zamanı korunur
+    first_missing = lifecycle(c, missing)["inactive_at"]
+    db.mark_sold(missing)
+    assert lifecycle(c, missing)["inactive_reason"] == "satildi" and lifecycle(c, missing)["inactive_at"] == first_missing
+    live = add_listing(c, web, "live")
+    db.mark_sold(live)
+    assert lifecycle(c, live)["inactive_reason"] == "satildi" and lifecycle(c, live)["inactive_at"] is not None
+
+
+def test_listing_born_inactive_keeps_the_reason_but_not_a_fake_inactive_time(db):
+    c, web = db.conn, add_source(db.conn, "W", "web")
+    db.upsert_listing(web, "born", {"brand_norm": "Toyota", "model_norm": "vitz", "is_active": False, "urgency_signals": ["arsiv"],
+                                    "inactive_reason": "belirsiz"})
+    got = lifecycle(c, c.execute("SELECT id FROM listings WHERE source_item_id='born'").fetchone()["id"])
+    assert got["inactive_reason"] == "belirsiz" and got["inactive_at"] is None and got["last_alive_at"] is None

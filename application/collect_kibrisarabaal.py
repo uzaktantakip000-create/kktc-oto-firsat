@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import httpx
 
 from application.safeguards import check_read_rate, removed_message, removed_rate_suspect, sitemap_shrunk
+from domain.lifecycle import inactive_reason
 from infrastructure.collectors import kibrisarabaal
 from infrastructure.db.repository import Repository
 from infrastructure.fx.frankfurter import gbp_rate
@@ -96,7 +97,8 @@ def collect_kibrisarabaal(repo: Repository, source: dict, max_new: int = 10) -> 
             stats.suspect.append(removed_message(source["name"], fetched_ok, len(closed_new)))  # yazılmaz: sonraki turda yeniden denenir
         else:
             for entry, data in closed_new:
-                repo.upsert_listing(source["id"], entry.item_id, {**data, "url": entry.url, "photo_urls": [], "extraction_by": None})
+                repo.upsert_listing(source["id"], entry.item_id, {**data, "url": entry.url, "photo_urls": [], "extraction_by": None,
+                                                                  "inactive_reason": inactive_reason(data.get("urgency_signals"))})
                 stats.deactivated += 1
         shrunk = sitemap_shrunk(repo, source["id"], len(entries))
         if len(entries) > 500 and not shrunk:  # sitemap makul büyüklükteyse kaybolan (kaldırılan) ilanları pasifleştir

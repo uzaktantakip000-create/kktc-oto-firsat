@@ -4,6 +4,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from domain.lifecycle import UNKNOWN, inactive_reason
 from domain.normalize import normalize_brand, normalize_model, reclassify_non_car
 
 # Bağlantı/sunucu hatası: tek bir ilanın sorunu değildir, yutulmamalı (döngüler "ilan başına hata" yakalarken bunu yeniden fırlatır)
@@ -71,8 +72,9 @@ class Repository:
     def deactivate_missing(self, source_id, present_ids: set[str]) -> int:
         """Sitemap'ten kaybolan aktif ilanları pasifleştirir (muhtemelen satıldı). Etkilenen sayıyı döner."""
         cur = self.conn.execute(
-            "UPDATE listings SET is_active=FALSE WHERE source_id=%s AND is_active AND NOT (source_item_id = ANY(%s))",
-            (source_id, list(present_ids)),
+            "UPDATE listings SET is_active=FALSE, inactive_at=NOW(), inactive_reason=%s "
+            "WHERE source_id=%s AND is_active AND NOT (source_item_id = ANY(%s))",
+            (UNKNOWN, source_id, list(present_ids)),
         )
         return cur.rowcount
 
@@ -166,10 +168,10 @@ class Repository:
     def expire_unverifiable(self, days: int = 30) -> int:
         """Satıldı/silindi bilgisi izlenemeyen kaynaklarda (Instagram, kktcarabam) eski ilanı pasifleştirir."""
         cur = self.conn.execute(
-            """UPDATE listings l SET is_active=FALSE FROM sources s
+            """UPDATE listings l SET is_active=FALSE, inactive_at=NOW(), inactive_reason=%s FROM sources s
                WHERE s.id=l.source_id AND l.is_active AND (s.platform='instagram' OR s.url LIKE '%%kktcarabam.com%%' OR s.url LIKE '%%mezunumsatiyorumkibris%%')
                  AND COALESCE(l.posted_at, l.first_seen_at) < NOW() - make_interval(days => %s)""",
-            (days,),
+            (UNKNOWN, days),
         )
         return cur.rowcount
 
@@ -237,8 +239,9 @@ class Repository:
         """Yeniden okunan ilanı işler. Dönen: 'fiyat' (fiyat değişti), 'pasif' (satıldı/arşiv) ya da None."""
         if data.get("is_active") is False:
             self.conn.execute(
-                "UPDATE listings SET is_active=FALSE, urgency_signals=%s, last_seen_at=NOW() WHERE id=%s",
-                (data.get("urgency_signals"), listing_id),
+                "UPDATE listings SET is_active=FALSE, urgency_signals=%s, last_seen_at=NOW(), inactive_at=COALESCE(inactive_at, NOW()), "
+                "inactive_reason=COALESCE(inactive_reason, %s) WHERE id=%s",
+                (data.get("urgency_signals"), inactive_reason(data.get("urgency_signals")), listing_id),
             )
             return "pasif"
         if data.get("engine_l") is not None:  # motor hacmi sonradan öğrenilebilir (yeni alan)
@@ -269,7 +272,8 @@ class Repository:
     def deactivate_by_ilan_no(self, source_id, ilan_no: str) -> int:
         """Aynı sayfadaki, metninde bu ilan numarası geçen aktif ilanı satıldı olarak kapatır."""
         cur = self.conn.execute(
-            r"UPDATE listings SET is_active=FALSE, urgency_signals=ARRAY['satildi'] WHERE source_id=%s AND is_active "
+            r"UPDATE listings SET is_active=FALSE, urgency_signals=ARRAY['satildi'], inactive_at=NOW(), inactive_reason='belirsiz' "  # Instagram: asla 'satildi' sayılmaz
+            r"WHERE source_id=%s AND is_active "
             r"AND raw_text ~ ('[iİIı]lan\s*([nN]umaras[ıiİI]|[nN][oO])\s*[:.]?\s*\W{0,4}' || %s || '\M') "
             r"AND NOT (raw_text ~* 'sat[ıiİI]ld[ıiİI]')",
             (source_id, ilan_no))
@@ -305,7 +309,7 @@ class Repository:
     def mark_sold(self, listing_id) -> None:
         """Kullanıcı 'satılmış' dedi: ilan kapanır ve gerçek bir satış olarak işaretlenir (emsal olarak 'satıldı' sayılır)."""
         self.conn.execute(
-            """UPDATE listings SET is_active=FALSE,
+            """UPDATE listings SET is_active=FALSE, inactive_at=COALESCE(inactive_at, NOW()), inactive_reason='satildi',  -- sahibin açık beyanı en güvenilir neden
                    urgency_signals = CASE WHEN 'satildi' = ANY(COALESCE(urgency_signals, '{}')) THEN urgency_signals
                                           ELSE COALESCE(urgency_signals, '{}') || ARRAY['satildi'] END
                WHERE id=%s""", (listing_id,))
