@@ -14,6 +14,14 @@ def test_detail_parse():
     assert d["posted_at"].day == 30 and d["posted_at"].month == 9
 
 
+def test_seller_handle_is_prefixed_and_only_on_active_pages():
+    assert parse_detail(HTML)["seller_handle"] == "kktcar:59974999-2294-49b5-abf0-16f412ae6dd7"
+    sold = (Path(__file__).parent / "fixtures/kktcar_detail_sold.html").read_text()
+    d = parse_detail(sold)
+    assert d is not None and not d.get("seller_handle")  # satılmış sayfada satıcı bağlantısı yok
+    assert parse_detail(HTML.replace("/seller/59974999-2294-49b5-abf0-16f412ae6dd7", "/profil/x"))["seller_handle"] is None
+
+
 def test_not_a_listing():
     assert parse_detail("<html><body>404</body></html>") is None
 

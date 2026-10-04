@@ -92,6 +92,19 @@ def _parse_sold(title: str, lines: list[str], marker: str, signal: str) -> dict 
     }
 
 
+_SELLER_HREF = re.compile(r"^/seller/([0-9a-fA-F-]{8,64})/?$")
+
+
+def seller_handle(tree: HTMLParser) -> str | None:
+    """Aktif ilan sayfasındaki satıcı bağlantısından ("/seller/<kimlik>") "kktcar:<kimlik>". Satılmış/arşiv sayfalarında bağlantı yoktur.
+    Önek zorunlu: başka sitelerin satıcı adlarıyla (KibrisArabaAl yazar adı, Instagram hesabı) karışmasın."""
+    for a in tree.css("a[href]"):
+        m = _SELLER_HREF.match(a.attributes.get("href") or "")
+        if m:
+            return f"kktcar:{m.group(1).lower()}"
+    return None
+
+
 def parse_detail(html: str) -> dict | None:
     tree = HTMLParser(html)
     for n in tree.css("script,style,noscript,svg"):
@@ -127,6 +140,7 @@ def parse_detail(html: str) -> dict | None:
             break
     swap_txt = f.get("Takaslı", "").lower()
     return {
+        "seller_handle": seller_handle(tree),
         "brand": f["Marka"],
         "model": f.get("Model"),
         "year": int(re.sub(r"\D", "", f["Yıl"])),

@@ -37,3 +37,12 @@ def test_real_price_drop_is_logged():
 def test_sold_page_deactivates():
     r = repo()
     assert r.apply_refresh("id", OLD_TRY, dict(is_active=False, urgency_signals=["satildi"])) == "pasif"
+
+
+def test_refresh_fills_seller_handle_only_when_present():
+    r = repo()
+    r.apply_refresh("id", OLD_TRY, {**new(600_000.0, "TRY", 12_000.0), "seller_handle": "kktcar:abc"})
+    assert any("seller_handle" in s for s in r.conn.sql)
+    r = repo()
+    r.apply_refresh("id", OLD_TRY, new(600_000.0, "TRY", 12_000.0))
+    assert not any("seller_handle" in s for s in r.conn.sql)

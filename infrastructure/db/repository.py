@@ -206,6 +206,8 @@ class Repository:
             return "pasif"
         if data.get("engine_l") is not None:  # motor hacmi sonradan öğrenilebilir (yeni alan)
             self.conn.execute("UPDATE listings SET engine_l=COALESCE(engine_l, %s) WHERE id=%s", (data["engine_l"], listing_id))
+        if data.get("seller_handle"):  # satıcı kimliği sonradan öğrenilebilir (KKTCar "kktcar:<kimlik>"); var olanın üzerine yazılmaz
+            self.conn.execute("UPDATE listings SET seller_handle=COALESCE(seller_handle, %s) WHERE id=%s", (data["seller_handle"], listing_id))
         new_price, change = data.get("price_gbp"), None
         old_amount, old_price_gbp = old.get("price_amount"), old.get("price_gbp")
         changed = bool(new_price) and (

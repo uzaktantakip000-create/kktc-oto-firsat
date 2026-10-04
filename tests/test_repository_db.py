@@ -215,3 +215,16 @@ def test_migration_019_only_adds_nullable_columns_and_changes_nothing_else(db):
     db.save_alert(lid, "c1", "guclu", 1)
     row = db.conn.execute("SELECT rules_version, evidence FROM evaluations").fetchone()
     assert row["rules_version"] is None and row["evidence"] is None
+
+
+def test_apply_refresh_fills_seller_handle_without_overwriting(db):
+    c, sid = db.conn, add_source(db.conn)
+    empty = add_listing(c, sid, "e", seller_handle=None)
+    kept = add_listing(c, sid, "k", seller_handle="Ahmet Galeri")
+    old = {"price_amount": 6000, "currency": "GBP", "price_gbp": 6000}
+    new = {"price_amount": 6000, "currency": "GBP", "price_gbp": 6000, "price_raw": "6000", "currency_guess": False,
+           "seller_handle": "kktcar:abc-123", "is_active": True}
+    db.apply_refresh(empty, old, new)
+    db.apply_refresh(kept, old, new)
+    got = {r["source_item_id"]: r["seller_handle"] for r in c.execute("SELECT source_item_id, seller_handle FROM listings").fetchall()}
+    assert got == {"e": "kktcar:abc-123", "k": "Ahmet Galeri"}
