@@ -136,16 +136,18 @@ def est_ev(i, price=5000):
 
 def test_format_estimated_alert():
     t = notify.format_alert(est_ev(1))
-    assert t.splitlines()[0] == "🟠 TAHMİNİ FIRSAT — az emsal, kendin de kontrol et"
-    assert "📘 Tablo değeri ~£7.600 (en kötü ihtimalle £6.700) → ~%34 ucuz" in t
-    assert "🟢" not in t and "GÜÇLÜ" not in t
+    assert t.splitlines()[0] == "🟠 KONTROL ET — az emsal, kendin de bak"
+    assert "📘 Tablo değeri ~£7.600 (en kötü ihtimalle £6.700) → ~%34 ucuz" in t and "kâr (temkinli) ~£1.065" in t and "30 ilanlık eğri" in t
+    assert "💡 Neden: az benzer araç var: fiyat model eğrisinden hesaplandı" in t
+    assert "🟢" not in t and "GÜÇLÜ" not in t and "Güven" not in t
 
 
-def test_green_alert_gets_book_line_only_when_row_known():
+def test_green_alert_shows_one_market_number_even_when_a_book_row_is_known():
+    """Sahibin kararı: mesajda TEK piyasa ortası (iki farklı sayı görünmesin); değer tablosu satırı mesajdan kalktı."""
     e = notify_ev(1)
-    assert "📘" not in notify.format_alert(e)
     e.book_row = row()
-    assert "📘 Değer tablosu: £8.000 (12 ilan, oturmuş)" in notify.format_alert(e)
+    t = notify.format_alert(e)
+    assert "📘" not in t and "Değer tablosu" not in t and "📊 Piyasa ortası" in t
 
 
 def test_send_alerts_tier_filter(monkeypatch):
@@ -184,7 +186,8 @@ def test_exactly_at_limit_sends_individually(monkeypatch):
     sent = patch_api(monkeypatch, {})
     repo = NotifyRepo(["a"])
     evs = [est_ev(i) for i in range(S.est_burst_limit)]
-    assert notify.send_alerts(repo, "t", evs, max_per_run=100, tier=Tier.ESTIMATED, s=S) == S.est_burst_limit
+    no_daily_cap = S.model_copy(update={"est_daily_limit": 1000})  # günlük sınır (3) bu testin konusu değil: arıza freni sınırı sınanıyor
+    assert notify.send_alerts(repo, "t", evs, max_per_run=100, tier=Tier.ESTIMATED, s=no_daily_cap) == S.est_burst_limit
     assert len(sent) == S.est_burst_limit
 
 
@@ -383,7 +386,7 @@ def test_ad_check_answers_estimated(monkeypatch):
     monkeypatch.setattr(ad_check, "load_book", lambda repo: PriceBook())
     monkeypatch.setattr(decision, "estimate_from_book", lambda l, b, s, now=None: EST)
     out = ad_check.handle(Repo(pool=[]), AD, None, None)
-    assert "🟠 TAHMİNİ FIRSAT — az emsal, kendin de kontrol et" in out
+    assert "🟠 TAHMİNİ FIRSAT — az emsal, kendin de kontrol et" in out  # /ad_check (iletilen ilan) yanıtı ayrı, ayrıntılı biçim
     assert "Tablo değeri ~£10.000 (en kötü ihtimalle £8.000)" in out and "~%50 ucuz" in out
     assert "En yakın emsaller" not in out
 

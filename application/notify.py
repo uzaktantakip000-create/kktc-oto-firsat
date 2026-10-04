@@ -36,8 +36,7 @@ def api(token: str, method: str, **payload) -> dict:
     return r.json()["result"]
 
 
-BOOK_STATUS = {"oturmus": "oturmuş", "ince": "ince", "supheli": "şüpheli"}
-EST_HEAD = "🟠 TAHMİNİ FIRSAT — az emsal, kendin de kontrol et"
+EST_HEAD = "🟠 KONTROL ET — az emsal, kendin de bak"
 
 
 def _gbp(x: float) -> str:
@@ -49,63 +48,49 @@ def estimate_line(price: float, value: float, lower: float) -> str:
     return f"📘 Tablo değeri ~{_gbp(value)} (en kötü ihtimalle {_gbp(lower)}) → ~%{(1 - price / value) * 100:.0f} ucuz"
 
 
-def format_alert(ev: Evaluated, note: dict | None = None, comps: list[dict] | None = None) -> str:
+def _reason(ev: Evaluated) -> str:
+    """Mesajdaki TEK satır "neden": 🟢'de fiyat benzer araçların en ucuz çeyreğinde (karar kapısı bunu şart koşar), 🟠'de eğriden hesaplandığı;
+    ilan metnindeki aciliyet işareti varsa başa eklenir."""
+    base = "az benzer araç var: fiyat model eğrisinden hesaplandı" if ev.profit.tier is Tier.ESTIMATED else "fiyat benzer araçların en ucuz çeyreğinde"
+    return " · ".join([*(f"ilanda '{u}' yazıyor" for u in ev.urgency), base])
+
+
+def format_alert(ev: Evaluated, note: dict | None = None) -> str:
+    """Sahibin kararı (03.10.2026): her mesaj = araç, fiyat, piyasa ortası + emsal sayısı, tek satır "neden", link (+ 2 düğme). Güven etiketi, 🆕, telefon
+    satırı (WhatsApp düğmesi var), emsal listesi ve gümrük hatırlatması kalktı. KALANLAR güvenlik/veri uyarısıdır (km şüpheli, para birimi tahmin,
+    yapay zekâ şüphesi, doğrulama işareti...): bunlar kısaltılmaz."""
     l, m, p = ev.listing, ev.market, ev.profit
     est = p.tier is Tier.ESTIMATED
-    head = "🟢 GÜÇLÜ FIRSAT" if p.tier is Tier.STRONG else "🟡 PAZARLIKLA FIRSAT"
+    price = float(l["price_gbp"])
     km = f"{l['km']:,} km".replace(",", ".") if l["km"] else "km yok"
-    where = f"📍 {l['location'] or '?'} · {l['source_name']}"
-    car = f"{l['year']} {l['brand']} {l['model'] or ''} · {km} · {(l['transmission'] or '?').capitalize()} · {l['steering'] or 'RHD (yazmıyor, sağ varsayıldı)'}"
+    steering = " · SOL DİREKSİYON" if l.get("steering") == "LHD" else ""
     if est:  # değer tablosu eğrisinden tahmin: çıkış fiyatı alt sınırdan (temkinli), emsal sayısı yerine eğri ilan sayısı
-        lines = [
-            EST_HEAD, car, where, estimate_line(float(l["price_gbp"]), m.median_gbp, m.low_gbp),
-            f"💷 İstenen: {_gbp(float(l['price_gbp']))} → En kötü ihtimalle satılabilir: ~{_gbp(p.exit_price_gbp)}",
-            f"💰 Tahmini kâr (temkinli): ~{_gbp(p.profit_gbp)} (masraf {_gbp(Settings().fixed_cost_gbp)} düşüldü) · "
-            f"Güven: {confidence_label(p.confidence)} ({m.n} ilanlık fiyat eğrisi)",
-        ]
+        head = EST_HEAD
+        market = estimate_line(price, m.median_gbp, m.low_gbp) + f" · kâr (temkinli) ~{_gbp(p.profit_gbp)} ({m.n} ilanlık eğri)"
     else:
-        lines = [
-            f"{head} — %{p.profit_pct * 100:.0f} kâr potansiyeli",
-            car,
-            where,
-            f"💷 İstenen: £{float(l['price_gbp']):,.0f} → Satılabilir: ~£{p.exit_price_gbp:,.0f}".replace(",", "."),
-            f"💰 Tahmini kâr: ~£{p.profit_gbp:,.0f} (masraf £{Settings().fixed_cost_gbp:,.0f} düşüldü) · "
-            f"Güven: {confidence_label(p.confidence)} ({m.n} emsal)".replace(",", "."),
-        ]
-        if ev.book_row is not None:  # 🟢/🟡'de de tablo değeri görünür (isteğe bağlı: satır yoksa yok)
-            r = ev.book_row
-            lines.append(f"📘 Değer tablosu: {_gbp(r.value_gbp)} ({r.n} ilan, {BOOK_STATUS.get(r.status, r.status)})")
+        head = (f"🟢 FIRSAT · %{p.profit_pct * 100:.0f} kâr potansiyeli" if p.tier is Tier.STRONG else f"🟡 PAZARLIKLA FIRSAT · %{p.profit_pct * 100:.0f} kâr potansiyeli")
+        market = (f"📊 Piyasa ortası {_gbp(m.median_gbp)} ({m.n} emsal) → satılabilir ~{_gbp(p.exit_price_gbp)} · "
+                  f"kâr ~{_gbp(p.profit_gbp)} (masraf {_gbp(Settings().fixed_cost_gbp)} düşüldü)")
+    lines = [
+        head,
+        f"{l['year']} {l['brand']} {l['model'] or ''} · {_gbp(price)}",
+        f"📍 {l['location'] or '?'} · {l['source_name']} · {km} · {(l['transmission'] or '?').capitalize()}{steering}",
+        market,
+        "💡 Neden: " + _reason(ev),
+    ]
     if l["currency_guess"]:
         lines.append(f"⚠️ Para birimi yazmıyordu, {CURRENCY_NAMES.get(l['currency'], l['currency'])} varsayıldı")
-    if ev.urgency:
-        lines.append("🔥 " + ", ".join(ev.urgency))
     lines += ev.checks
     if ev.warnings:
         lines.append("⚠️ Dikkat: " + ", ".join(ev.warnings))
     if m.archived_share > 0.6:
         lines.append(f"ℹ️ Emsallerin %{m.archived_share * 100:.0f}'i satılmış ilan (sitenin son ilan fiyatı; gerçek satış fiyatı olmayabilir)")
-    if note:
+    if note and note.get("gercek_firsat_mi") is False:  # yapay zekâ şüpheli buldu: mesaj yine gider ama uyarı görünür
         risks = note.get("risk_notlari") or []
-        if note.get("gercek_firsat_mi") is False:  # yapay zekâ şüpheli buldu: mesaj yine gider ama uyarı en başta görünür
-            lines.append("⚠️ Yapay zekâ şüpheli buldu" + (": " + str(risks[0])[:160] if risks else ""))
-        elif risks:
-            lines.append("🔎 " + str(risks[0])[:160])
-        if note.get("sorulacak_sorular"):
-            lines.append("❓ " + " · ".join(str(q) for q in note["sorulacak_sorular"][:2])[:200])
-    if comps:
-        lines.append("📊 En yakın emsaller:")
-        for c in comps:
-            ckm = f"{c['km']:,} km".replace(",", ".") if c.get("km") else "km yok"
-            tag = "" if c.get("is_active", True) else " (satılmış)"
-            lines.append(f"• {c['year']} · {ckm} · £{float(c['price_gbp']):,.0f}{tag}".replace(",", ".")
-                         + (f"\n  {c['url']}" if c.get("url") else ""))
+        lines.append("⚠️ Yapay zekâ şüpheli buldu" + (": " + str(risks[0])[:160] if risks else ""))
     age = posted_age_text(l.get("posted_at"), l.get("platform"))
     if age:
         lines.append(age)
-    if not customs_stated((l.get("raw_text") or "") + " " + (l.get("model") or "")):
-        lines.append("❓ Gümrük/plaka/evrak durumu ilanda yazmıyor — satıcıya sor")
-    if l["seller_phone"]:
-        lines.append(f"📞 0{l['seller_phone'][2:]}")
     if l["url"]:
         lines.append(f"🔗 {l['url']}")
     return "\n".join(lines)
@@ -136,14 +121,13 @@ def greeting(l: dict) -> str:
 
 
 def keyboard(listing_id, wa_url: str | None = None) -> dict:
+    """2 düğme (sahibin kararı 03.10.2026): 👍 İşe yarar / 👎 Yanlış. 👎 yalnız KAYIT tutar (10 oydan önce otomatik eylem yok:
+    application/learning.py). Eski mesajlardaki düğmeler (pas, zaten satılmış, kusurlu...) çalışmaya devam eder."""
     def btn(text, action):
         return {"text": text, "callback_data": f"fb:{action}:{listing_id}"}
 
     top = [[{"text": "📲 WhatsApp'tan ulaş", "url": wa_url}]] if wa_url else []
-    return {"inline_keyboard": top + [
-        [btn("İlgileniyorum", "ilgilendim"), btn("Pas", "pas")],
-        [btn("Yanlış fiyat", "yanlis_fiyat"), btn("Zaten satılmış", "satilmis"), btn("Kusurlu/sahte", "kusurlu")],
-    ]}
+    return {"inline_keyboard": top + [[btn("👍 İşe yarar", "ilgilendim"), btn("👎 Yanlış", "yanlis_fiyat")]]}
 
 
 def is_fresh(first_seen_at, posted_at, now: datetime | None = None, fresh_hours: int = 36, max_post_days: int = 4,
@@ -198,7 +182,7 @@ def _burst_summary(repo: Repository, token: str, fresh: list[Evaluated], subs: l
 
 
 def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes: dict | None = None,
-                max_per_run: int = 10, comps: dict | None = None, tier: Tier = Tier.STRONG,
+                max_per_run: int = 10, tier: Tier = Tier.STRONG,
                 s: Settings | None = None) -> int:
     """Verilen seviyedeki ilanlar anında gider (varsayılan 🟢; 🟠 ayrı çağrıyla; 🟡 günlük özetle). Tek aboneye gönderim
     hatası diğerlerini ve sonraki ilanları durdurmaz; gönderilemeyen ilan bir sonraki turda yeniden denenir (alerts kaydı
@@ -209,6 +193,11 @@ def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes:
         fresh = [ev for ev in evaluated if ev.profit.tier is tier and _is_fresh_ev(ev)]
         if len(fresh) > s.est_burst_limit:
             return _burst_summary(repo, token, fresh, subs, s.est_burst_limit)
+    if tier is Tier.ESTIMATED:  # günde en çok est_daily_limit tane 🟠 (sahibin kararı); sıra: pending_alerts'in kâr sıralaması (güven sırası)
+        quota = s.est_daily_limit - repo.alerts_sent_since(Tier.ESTIMATED.value, 24)
+        if quota <= 0:
+            return 0
+        max_per_run = min(max_per_run, quota)
     sent = 0
     rate_limited = False
     for ev in evaluated:
@@ -219,7 +208,7 @@ def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes:
         if not is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
                         platform=ev.listing.get("platform")):
             continue
-        text = format_alert(ev, (notes or {}).get(ev.listing["id"]), (comps or {}).get(ev.listing["id"]))
+        text = format_alert(ev, (notes or {}).get(ev.listing["id"]))
         delivered = False
         for sub in subs:
             if repo.alert_exists(ev.listing["id"], sub["chat_id"], ev.profit.tier.value):

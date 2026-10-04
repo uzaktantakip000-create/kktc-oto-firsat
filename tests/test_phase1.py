@@ -18,12 +18,10 @@ def ev(i="L1", url="https://www.kktcar.com/x"):
     return Evaluated(l, Market(5, 8000, 7000, 9000, 1, 0.0, 80_000), ProfitResult(7600, 2600, 0.52, Confidence.MEDIUM, Tier.STRONG), [], [], [])
 
 
-def test_comparable_lines_in_message():
-    comps = [dict(year=2015, km=79_000, price_gbp=6000, url="https://a/1", is_active=True),
-             dict(year=2014, km=None, price_gbp=6200, url="https://a/2", is_active=False)]
-    text = notify.format_alert(ev(), comps=comps)
-    assert "En yakın emsaller" in text and "79.000 km" in text and "£6.000" in text and "https://a/1" in text
-    assert "(satılmış)" in text and "km yok" in text
+def test_comparable_list_is_no_longer_in_the_message():
+    """Sahibin kararı (03.10.2026): mesaj kısa; emsal listesi gösterilmez (piyasa ortası + emsal sayısı yeter)."""
+    text = notify.format_alert(ev())
+    assert "En yakın emsaller" not in text and "(5 emsal)" in text
 
 
 def test_ai_doubt_line_shown_first_among_notes():
@@ -31,7 +29,7 @@ def test_ai_doubt_line_shown_first_among_notes():
     text = notify.format_alert(ev(), note)
     assert "⚠️ Yapay zekâ şüpheli buldu: fiyat çok düşük" in text and "🔎" not in text
     ok = notify.format_alert(ev(), {"gercek_firsat_mi": True, "risk_notlari": ["kontrol et"]})
-    assert "🔎 kontrol et" in ok and "şüpheli" not in ok
+    assert "şüpheli" not in ok and "🔎" not in ok  # yapay zekâ olumluysa mesaj kısa kalır; yalnız ŞÜPHE uyarısı gösterilir
 
 
 class LiveRepo:

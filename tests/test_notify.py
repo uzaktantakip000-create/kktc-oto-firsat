@@ -19,6 +19,9 @@ class FakeRepo:
     def approved_subscribers(self):
         return [{"chat_id": c} for c in self.subs]
 
+    def alerts_sent_since(self, tier, hours=24):
+        return getattr(self, "sent_today", 0)
+
     def alert_exists(self, listing_id, chat_id, tier):
         return (listing_id, chat_id) in self.alerts
 
@@ -97,6 +100,7 @@ def test_whatsapp_button_on_top_when_phone_valid():
     assert url.startswith("https://wa.me/905330000021?text=") and " " not in url
     kb = notify.keyboard("L1", url)["inline_keyboard"]
     assert kb[0][0]["url"] == url and kb[1][0]["callback_data"].startswith("fb:")
+    assert [b["text"] for b in kb[1]] == ["👍 İşe yarar", "👎 Yanlış"] and len(kb) == 2  # sahibin kararı: 2 düğme
 
 
 def test_no_whatsapp_button_without_valid_phone():
@@ -107,9 +111,22 @@ def test_no_whatsapp_button_without_valid_phone():
 def test_sold_comparables_are_described_as_sold_not_archived():
     e = ev(1)
     e.market = Market(5, 8000, 7000, 9000, 1, 0.8)  # emsallerin %80'i satılmış (pasif) ilan
-    msg = notify.format_alert(e, comps=[{"year": 2015, "km": 50_000, "price_gbp": 8000, "is_active": False, "url": None}])
+    msg = notify.format_alert(e)
     assert "satılmış ilan" in msg and "arşiv" not in msg  # "arşiv" yanıltıcıydı: bunlar sitenin satıldı işaretli ilanları
-    assert "(satılmış)" in msg
+
+
+def test_message_is_short_and_has_exactly_the_decided_parts():
+    """Sahibin kararı (03.10.2026): araç, fiyat, piyasa ortası + emsal sayısı, tek satır neden, link. Güven etiketi/telefon/emsal listesi/gümrük hatırlatması YOK."""
+    e = ev(1)
+    e.listing.update(url="https://x/1", seller_phone="905330000021", raw_text="")
+    e.urgency = ["acil"]
+    msg = notify.format_alert(e)
+    lines = msg.splitlines()
+    assert lines[0].startswith("🟢 FIRSAT") and "£5.000" in lines[1] and "Piyasa ortası £8.000 (5 emsal)" in msg
+    assert sum(l.startswith("💡 Neden:") for l in lines) == 1 and "ilanda 'acil' yazıyor" in msg and lines[-1] == "🔗 https://x/1"
+    for gone in ("Güven", "En yakın emsaller", "📞", "Gümrük", "🆕", "🔥", "GÜÇLÜ"):
+        assert gone not in msg, gone
+    assert len(lines) <= 7  # kısa
 
 
 def test_alert_record_links_the_evaluation_and_stores_the_price_at_send_time(monkeypatch):
@@ -123,3 +140,18 @@ def test_alert_record_links_the_evaluation_and_stores_the_price_at_send_time(mon
     repo2 = FakeRepo(["a"])
     notify.send_alerts(repo2, "t", [ev(2)])  # değerlendirme kimliği olmayan satır (eski yol): None yazılır, gönderim engellenmez
     assert repo2.saved_alerts[0]["evaluation_id"] is None and repo2.saved_alerts[0]["price_gbp"] == 5000.0
+
+
+def test_estimated_alerts_respect_the_daily_limit(monkeypatch):
+    """Sahibin kararı (03.10.2026): 🟠 KONTROL ET günde en çok 3; son 24 saatte gidenler sayılır."""
+    sent = patch_api(monkeypatch, {})
+    repo = FakeRepo(["a"])
+    repo.sent_today = 1  # bugün zaten 1 tane gitti: kalan hak 2
+    evs = [ev(i, tier=Tier.ESTIMATED) for i in range(1, 6)]
+    assert notify.send_alerts(repo, "t", evs, tier=Tier.ESTIMATED) == 2 and len(sent) == 2
+    repo = FakeRepo(["a"])
+    repo.sent_today = 3  # hak bitti
+    assert notify.send_alerts(repo, "t", [ev(9, tier=Tier.ESTIMATED)], tier=Tier.ESTIMATED) == 0
+    repo = FakeRepo(["a"])
+    repo.sent_today = 3  # 🟢 sınırdan etkilenmez
+    assert notify.send_alerts(repo, "t", [ev(10)]) == 1

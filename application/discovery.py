@@ -5,6 +5,7 @@ from application.health import notify_owner
 from application.notify import TelegramError, api
 from infrastructure.db.repository import Repository
 
+ENABLED = False  # KAPALI (sahibin kararı 03.10.2026): sosyal medya konu dışıyken Instagram hesabı önermesin; kod, geri açılabilsin diye duruyor
 MAX_PER_WEEK = 5
 MIN_POSTS = 2
 JUNK = ("gmail", "hotmail", "yahoo", "outlook", "icloud")
@@ -23,7 +24,7 @@ def candidates(repo: Repository) -> list[dict]:
 
 
 def send_discovery(repo: Repository, token: str, owner: str) -> int:
-    if repo.alert_recent("discovery", 24 * 7 - 2):
+    if not ENABLED or repo.alert_recent("discovery", 24 * 7 - 2):
         return 0
     found = candidates(repo)
     if not found:

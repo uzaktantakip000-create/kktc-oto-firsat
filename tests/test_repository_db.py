@@ -457,3 +457,14 @@ def test_feedback_votes_counts_only_button_votes_on_opportunity_messages(db):
     for action in ("ilgilendim", "pas", "yanlis_fiyat", "kusurlu", "audit_dogru", "audit_yanlis", "satilmis"):
         c.execute("INSERT INTO feedback (listing_id, action) VALUES (%s,%s)", (lid, action))
     assert db.feedback_votes() == 4
+
+
+def test_alerts_sent_since_counts_distinct_listings_of_the_tier_in_the_window(db):
+    c, sid = db.conn, add_source(db.conn)
+    a, b, old = (add_listing(c, sid, n) for n in "abo")
+    db.save_alert(a, "c1", "tahmini", 1, evaluation_id=None, price_gbp=None)
+    db.save_alert(a, "c2", "tahmini", 2, evaluation_id=None, price_gbp=None)  # aynı ilan iki aboneye: 1 sayılır
+    db.save_alert(b, "c1", "guclu", 3, evaluation_id=None, price_gbp=None)
+    db.save_alert(old, "c1", "tahmini", 4, evaluation_id=None, price_gbp=None)
+    c.execute("UPDATE alerts SET sent_at = now() - interval '30 hours' WHERE listing_id=%s", (old,))
+    assert db.alerts_sent_since("tahmini", 24) == 1 and db.alerts_sent_since("guclu", 24) == 1 and db.alerts_sent_since("tahmini", 48) == 2

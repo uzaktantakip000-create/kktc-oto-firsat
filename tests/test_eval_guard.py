@@ -36,7 +36,7 @@ def wire(monkeypatch, evaluate_new):
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     nop = lambda *a, **k: None  # noqa: E731
-    for name in ("apply_rules_version", "poll_bot", "mark_duplicates", "run_maintenance"):
+    for name in ("apply_rules_version", "poll_bot", "ensure_menu", "mark_duplicates", "run_maintenance"):
         monkeypatch.setattr(cron_evaluate, name, nop)
     monkeypatch.setattr(cron_evaluate, "load_settings", lambda repo: cron_evaluate.Settings())
     monkeypatch.setattr(cron_evaluate, "load_book", lambda repo: object())

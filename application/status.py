@@ -1,4 +1,4 @@
-"""Sahibe sade dille sistem durumu: /durum komutu ve her sabah otomatik özet."""
+"""Sahibe sade dille sistem durumu: /durum komutu (ayrıntılı) ve her sabah KISA "sistem çalışıyor" nabzı."""
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -42,17 +42,18 @@ def _source_line(r: dict, quiet: set | frozenset = frozenset()) -> str:
     return f"{mark} {kind}: {r['name']} · {_ago(r['hours_since_check'])} · {r['fresh_n']} güncel ilan, bugün {r['new_24h']} yeni"
 
 
-def build_status(repo: Repository, now: datetime | None = None) -> str:
-    now = now or datetime.now(timezone.utc)
-    rows = repo.conn.execute(
-        """SELECT s.name, s.platform, s.url, s.status, s.alert_level,
+_SOURCE_SQL = """SELECT s.name, s.platform, s.url, s.status, s.alert_level,
                   EXTRACT(EPOCH FROM (NOW() - s.last_checked_at)) / 3600 AS hours_since_check,
                   (SELECT count(*) FROM listings l WHERE l.source_id = s.id AND l.is_active
                       AND COALESCE(l.posted_at, l.first_seen_at) > NOW() - interval '60 days') AS fresh_n,
                   (SELECT count(*) FROM listings l WHERE l.source_id = s.id AND l.is_active
                       AND COALESCE(l.posted_at, l.first_seen_at) > NOW() - interval '24 hours') AS new_24h
            FROM sources s ORDER BY s.platform, s.name"""
-    ).fetchall()
+
+
+def build_status(repo: Repository, now: datetime | None = None) -> str:
+    now = now or datetime.now(timezone.utc)
+    rows = repo.conn.execute(_SOURCE_SQL).fetchall()
     paused = feed_switch.paused_platforms(repo, now)
     scanned_all = [r for r in rows if r["status"] in ("aktif", "deneme")]
     paused_n = [r for r in scanned_all if r["platform"] in paused]  # duraklatılmış sosyal kaynaklar: tek satırda özetlenir
@@ -131,9 +132,27 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
     return "\n".join(lines)[:3900]
 
 
+def build_heartbeat(repo: Repository, now: datetime | None = None) -> str:
+    """Günlük "sistem çalışıyor" nabzı (sahibin kararı 03.10.2026: sabah durumu kalktı; ayrıntı /durum'da). Arıza varsa ayrıca haber gider
+    (check_sources, kaynak alarmı); burada yalnız gecikme sayısı + son 24 saat sayıları."""
+    now = now or datetime.now(timezone.utc)
+    new_n = repo.conn.execute("SELECT count(*) AS n FROM listings WHERE first_seen_at > NOW() - interval '24 hours'").fetchone()["n"]
+    sent = repo.conn.execute(
+        "SELECT count(DISTINCT listing_id) FILTER (WHERE tier='guclu') AS strong, count(DISTINCT listing_id) FILTER (WHERE tier='tahmini') AS est "
+        "FROM alerts WHERE sent_at > NOW() - interval '24 hours'").fetchone()
+    rows = repo.conn.execute(_SOURCE_SQL).fetchall()
+    paused = feed_switch.paused_platforms(repo, now)
+    quiet = feed_switch.quiet_platforms(repo, now)
+    late = [r for r in rows if r["status"] in ("aktif", "deneme") and r["platform"] not in paused and _is_late(r, quiet)]
+    text = f"✅ Sistem çalışıyor · son 24 saatte {new_n} yeni ilan tarandı, {sent['strong'] or 0} 🟢 ve {sent['est'] or 0} 🟠 gönderildi."
+    if late:
+        text += f"\n⚠️ {len(late)} yerde gecikme var (ayrıntı: /durum)."
+    return text
+
+
 def send_morning_status(repo: Repository, now: datetime | None = None) -> bool:
-    """Her sabah bir kez sahibe durum özeti (gece gönderme)."""
+    """Her sabah (KKTC 08–11) bir kez KISA "sistem çalışıyor" nabzı. Eski ayrıntılı rapor yalnız /durum komutuyla gelir."""
     now = now or datetime.now(timezone.utc)
     if now.hour not in MORNING_HOURS_UTC:
         return False
-    return notify_owner(repo, "durum-sabah", build_status(repo, now), repeat_hours=20)
+    return notify_owner(repo, "durum-sabah", build_heartbeat(repo, now), repeat_hours=20)

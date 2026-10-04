@@ -31,7 +31,15 @@ def test_candidates_skip_known_junk_and_decided():
     assert [c["handle"] for c in discovery.candidates(repo)] == ["yenigaleri"]
 
 
+def test_discovery_is_switched_off_by_default(monkeypatch):
+    """Sahibin kararı (03.10.2026): sosyal medya konu dışıyken haftalık Instagram önerisi gitmez."""
+    sent = []
+    monkeypatch.setattr(discovery, "api", lambda token, method, **kw: sent.append(kw))
+    assert discovery.ENABLED is False and discovery.send_discovery(Repo([{"handle": "yenigaleri", "n": 5}]), "t", "1") == 0 and sent == []
+
+
 def test_weekly_message_has_buttons_and_is_sent_once(monkeypatch):
+    monkeypatch.setattr(discovery, "ENABLED", True)
     sent = []
     monkeypatch.setattr(discovery, "api", lambda token, method, **kw: sent.append(kw))
     repo = Repo([{"handle": "yenigaleri", "n": 5}])

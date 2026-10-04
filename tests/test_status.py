@@ -25,7 +25,7 @@ class FakeRepo:
         if "FROM sources s" in sql:
             return Rows(self.src_rows)
         if "FROM alerts" in sql:
-            return Rows([{"strong": 2, "other": 1}])
+            return Rows([{"strong": 2, "est": 1, "other": 1}])
         if "LATERAL" in sql:
             return Rows([{"total": 100, "ok": 40}])
         return Rows([{"n": 3}])  # feedback
@@ -68,7 +68,14 @@ def test_morning_status_only_in_morning_window(monkeypatch):
     repo = FakeRepo([src("KKTCar")])
     assert status.send_morning_status(repo, datetime(2026, 10, 2, 14, 0, tzinfo=timezone.utc)) is False and sent == []
     assert status.send_morning_status(repo, datetime(2026, 10, 2, 5, 30, tzinfo=timezone.utc)) is True
-    assert sent and sent[0].startswith("📊")
+    assert sent and sent[0].startswith("✅ Sistem çalışıyor")  # KISA nabız (ayrıntılı rapor yalnız /durum)
+    assert "3 yeni ilan tarandı, 2 🟢 ve 1 🟠 gönderildi" in sent[0] and len(sent[0].splitlines()) == 1 and "gecikme" not in sent[0]
+
+
+def test_heartbeat_mentions_delays_briefly_and_points_to_the_detailed_report():
+    text = status.build_heartbeat(FakeRepo([src("KKTCar"), src("Yeni", hours=None)]), NOW)
+    assert "⚠️ 1 yerde gecikme var (ayrıntı: /durum)" in text and len(text.splitlines()) == 2
+    assert "SANA HABER VEREN" not in text  # eski uzun rapor sabah mesajı değil
 
 
 def test_source_limits_per_platform():

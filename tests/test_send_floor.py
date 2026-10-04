@@ -73,7 +73,7 @@ def test_cron_evaluate_sends_only_what_passes_the_floor(monkeypatch):
     for e in (low, ok, orange):
         e.listing |= {"first_seen_at": None, "posted_at": None, "platform": "web"}
     nop = lambda *a, **k: None  # noqa: E731
-    for name in ("apply_rules_version", "poll_bot", "mark_duplicates", "run_maintenance"):
+    for name in ("apply_rules_version", "poll_bot", "ensure_menu", "mark_duplicates", "run_maintenance"):
         monkeypatch.setattr(cron_evaluate, name, nop)
     monkeypatch.setattr(cron_evaluate, "load_settings", lambda repo: cron_evaluate.Settings())
     monkeypatch.setattr(cron_evaluate, "load_book", lambda repo: object())
@@ -83,7 +83,6 @@ def test_cron_evaluate_sends_only_what_passes_the_floor(monkeypatch):
     monkeypatch.setattr(cron_evaluate, "recheck_before_send", lambda repo, evs: evs)
     monkeypatch.setattr(cron_evaluate.llm_reader, "from_env", lambda repo: None)
     monkeypatch.setattr(cron_evaluate.llm_reader, "verify_candidates", lambda repo, reader, evs: evs)
-    monkeypatch.setattr(cron_evaluate, "nearest_comparables", lambda *a, **k: [])
     seen = []
     monkeypatch.setattr(cron_evaluate, "send_alerts", lambda repo, token, evs, *a, **k: seen.append([e.listing["id"] for e in evs]) or len(evs))
 
@@ -93,10 +92,3 @@ def test_cron_evaluate_sends_only_what_passes_the_floor(monkeypatch):
         monkeypatch.setattr(cron_evaluate, name, nop)
     cron_evaluate.run(Repo())
     assert seen == [[2], []]  # 🟢: yalnızca 9 emsallisi; 🟠: hiçbiri
-
-
-def test_alert_market_falls_back_to_the_stored_market_when_decide_fails():
-    """Mesaj emsalleri bildirimi asla engellemez: karar kurulamazsa kayıtlı piyasa kullanılır."""
-    stored = object()
-    bad = type("E", (), {"listing": {"id": "x"}, "market": stored})()  # price_gbp yok: decide() KeyError verir
-    assert cron_evaluate._alert_market(bad, [], cron_evaluate.Settings()) is stored

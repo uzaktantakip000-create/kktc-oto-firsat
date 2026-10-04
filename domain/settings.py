@@ -52,6 +52,7 @@ class Settings(BaseModel):
     book_confirm_nights: int = 2
     book_self_check_max_error: float = 0.25  # öz-kontrolde model ortanca hatası bundan büyükse 🟠 kapanır
     est_burst_limit: int = 15  # tek turda bundan fazla 🟠 çıkarsa arıza say: tek özet mesaj
+    est_daily_limit: int = 3  # sahibin kararı (03.10.2026): 🟠 KONTROL ET günde en çok bu kadar (güven sırasıyla; son 24 saat)
 
     @model_validator(mode="after")
     def _consistent_thresholds(self):

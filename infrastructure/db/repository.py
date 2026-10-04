@@ -440,6 +440,11 @@ class Repository:
                  AND (l.posted_at IS NULL OR l.posted_at > l.first_seen_at - interval '4 days')
                ORDER BY l.first_seen_at""", (days,)).fetchall()
 
+    def alerts_sent_since(self, tier: str, hours: int = 24) -> int:
+        """Son `hours` saatte bu seviyede bildirim gönderilen FARKLI ilan sayısı (🟠 günlük sınırı için)."""
+        return self.conn.execute("SELECT count(DISTINCT listing_id) AS n FROM alerts WHERE tier=%s AND sent_at > NOW() - make_interval(hours => %s)",
+                                 (tier, hours)).fetchone()["n"]
+
     def feedback_votes(self) -> int:
         """Fırsat mesajlarındaki düğme oyları (denetim ve "satılmış" bildirimi hariç): öğrenme kapısı bunu sayar (application/learning.py)."""
         return self.conn.execute("SELECT count(*) AS n FROM feedback WHERE action IN ('ilgilendim','pas','yanlis_fiyat','kusurlu')").fetchone()["n"]

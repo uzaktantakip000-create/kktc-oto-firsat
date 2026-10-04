@@ -4,6 +4,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from application.audit import send_monthly_audit
+from application.bot_menu import ensure_menu
 from application.bot_poll import poll_bot
 from application.maintenance import run_maintenance
 from application.dedupe import mark_duplicates
@@ -20,8 +21,6 @@ from application.settings_store import load_settings
 from application.source_alarm import check_source_alarms
 from application.source_guard import demote_failing_sources
 from application.status import send_morning_status
-from domain.comparables import nearest_comparables
-from domain.decision import decide
 from domain.profit import Tier
 from domain.settings import RULES_VERSION, Settings
 from infrastructure.config import load_env, redact, require
@@ -98,17 +97,6 @@ def report_eval_failures(repo: Repository, failures: list[tuple[str, str]]) -> N
         print("değerlendirme hatası bildirilemedi:", type(e).__name__)
 
 
-def _alert_market(ev, pool, s):
-    """Mesajdaki emsallerin dayanacağı piyasa. Kayıtlı özetten kurulan Market emsal kimliği/gbp_only taşımaz: taze piyasa kurulur
-    (karar aynı `decide()`). Hata olursa kayıtlı piyasaya düşer: mesaj emsalleri bildirimi ASLA engellemez."""
-    try:
-        d = decide(ev.listing, pool, s)
-    except Exception as e:
-        print("mesaj emsali için piyasa kurulamadı, kayıtlı özet kullanıldı:", type(e).__name__)
-        d = None
-    return d.market if d is not None else ev.market
-
-
 def run(repo: Repository) -> None:
     token = require("TELEGRAM_BOT_TOKEN")
     owner = require("TELEGRAM_CHAT_ID")
@@ -122,6 +110,10 @@ def run(repo: Repository) -> None:
         poll_bot(repo, token, owner_chat_id=owner)  # önce abone onayları ve komutlar
     except Exception as e:  # bot komutları değerlendirmeyi engellemesin
         print("bot güncellemeleri alınamadı:", type(e).__name__, redact(str(e))[:150])
+    try:
+        ensure_menu(repo, token)  # görünür komut menüsü (bir kez; sahibin kararıyla yalnız 6 komut)
+    except Exception as e:
+        print("komut menüsü yazılamadı:", type(e).__name__, redact(str(e))[:150])
 
     now = datetime.now(timezone.utc)
     try:
@@ -177,13 +169,6 @@ def run(repo: Repository) -> None:
     strong = recheck_before_send(repo, strong)  # satılmış/fiyatı değişmiş ilan gönderilmez
     strong = llm_reader.verify_candidates(repo, llm_reader.from_env(repo), strong)  # sosyal medya 🟢'sini bağımsız okut; uyuşmazsa 🟡
 
-    comps = {}
-    if strong:
-        s = settings
-        pool = repo.market_pool(days=s.comparable_window_days + 30)
-        for ev in strong:
-            comps[ev.listing["id"]] = nearest_comparables(ev.listing, pool, _alert_market(ev, pool, s), 3, s)
-
     notes = {}
     key, model = os.environ.get("OPENROUTER_API_KEY"), os.environ.get("OPENROUTER_MODEL")
     if key and model:
@@ -194,7 +179,7 @@ def run(repo: Repository) -> None:
                 notes[l["id"]] = check_deal(key, model, (l["raw_text"] or "")[:1500], summary)
             except Exception as e:  # LLM hatası bildirimi engellemesin
                 print("LLM notu alınamadı:", type(e).__name__)
-    sent = send_alerts(repo, token, strong, notes, comps=comps)
+    sent = send_alerts(repo, token, strong, notes)
     est_sent = 0
     if settings.estimated_alerts and book is not None:  # 🟠 tahmini fırsat: ayrı gönderim (tablo yoksa hiç çıkmaz)
         try:

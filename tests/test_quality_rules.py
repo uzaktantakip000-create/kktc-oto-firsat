@@ -91,13 +91,12 @@ def test_social_post_older_than_48h_gets_no_instant_alert():
     assert notify.is_fresh(t, t - timedelta(hours=50), platform=None)  # siteler için bu kural yok
 
 
-def test_alert_shows_age_and_asks_about_customs():
+def test_alert_shows_age_and_no_longer_asks_about_customs():
+    """Gümrük hatırlatması mesajdan kalktı (sahibin kısa mesaj kararı; gümrüksüz/evraksız ilan zaten engel kelimeyle elenir)."""
     e = ev("1", posted=datetime.now(timezone.utc) - timedelta(hours=5))
     e.listing["platform"] = "instagram"
     text = notify.format_alert(e)
-    assert "5 saat önce paylaşıldı" in text and "Gümrük/plaka/evrak durumu ilanda yazmıyor" in text
-    e.listing["raw_text"] = "Gümrüklü araç"
-    assert "Gümrük/plaka/evrak durumu" not in notify.format_alert(e)
+    assert "5 saat önce paylaşıldı" in text and "Gümrük" not in text
 
 
 def test_suspicious_low_km_is_treated_as_unknown():
