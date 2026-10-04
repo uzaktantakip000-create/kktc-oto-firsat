@@ -93,3 +93,10 @@ def test_cron_evaluate_sends_only_what_passes_the_floor(monkeypatch):
         monkeypatch.setattr(cron_evaluate, name, nop)
     cron_evaluate.run(Repo())
     assert seen == [[2], []]  # 🟢: yalnızca 9 emsallisi; 🟠: hiçbiri
+
+
+def test_alert_market_falls_back_to_the_stored_market_when_decide_fails():
+    """Mesaj emsalleri bildirimi asla engellemez: karar kurulamazsa kayıtlı piyasa kullanılır."""
+    stored = object()
+    bad = type("E", (), {"listing": {"id": "x"}, "market": stored})()  # price_gbp yok: decide() KeyError verir
+    assert cron_evaluate._alert_market(bad, [], cron_evaluate.Settings()) is stored

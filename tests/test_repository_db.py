@@ -256,3 +256,10 @@ def test_renormalize_dry_candidates_apply_and_undo(db):
     assert db.undo_renormalize(since) == 1  # geri alma: eski anahtar döner, geri alma kayıtları temizlenir
     assert c.execute("SELECT model_norm FROM listings WHERE id=%s", (cx5,)).fetchone()["model_norm"] == "cx"
     assert c.execute("SELECT count(*) AS n FROM listing_history WHERE field IN ('brand_norm','model_norm')").fetchone()["n"] == 0
+
+
+def test_market_pool_carries_seller_handle_for_the_seller_key_shadow(db):
+    """Unutulursa (Adım 7) satıcı anahtarı CANLIDA sessizce ilan kimliğine düşer; testler geçse de çeşitlilik abartılır."""
+    c, sid = db.conn, add_source(db.conn)
+    add_listing(c, sid, "h", seller_handle="kktcar:abc")
+    assert [r["seller_handle"] for r in db.market_pool(days=120)] == ["kktcar:abc"]

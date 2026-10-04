@@ -35,6 +35,9 @@ class Market:
     median_km: int | None = None  # km'si bilinen emsallerin medyanı (en az 3 emsalde)
     p25_gbp: float | None = None  # emsal fiyatlarının alt çeyreği: 🟢 için ilan bunun altında olmalı
     gbp_only: bool = False  # piyasa TL fiyatlı emsal OLMADAN kuruldu (mesajdaki emsaller de aynı havuzdan seçilir)
+    sellers_n: int = 0  # emsallerdeki farklı satıcı sayısı (seller_key)
+    median_year: float | None = None  # emsal yıllarının medyanı (±2 genişlemede hedefe göre kayıklığı ölçmek için)
+    comparable_ids: tuple = ()  # piyasayı KURAN emsal ilanlarının kimlikleri (mesajdaki emsaller yalnız bunlardan seçilir)
 
 
 def _is_comparable(target: dict, row: dict, year_span: int, widen_km: bool, now: datetime, s: Settings, gbp_only: bool = False) -> bool:
@@ -79,9 +82,10 @@ def _is_comparable(target: dict, row: dict, year_span: int, widen_km: bool, now:
     return True
 
 
-def seller_key(row: dict) -> str:
-    """Aynı satıcıyı tanımak için telefon; telefon yoksa ilan kendi başına bir satıcı sayılır."""
-    return row.get("seller_phone") or f"id:{row['id']}"
+def seller_key(row: dict, fallback=None) -> str:
+    """Aynı satıcıyı tanımak için telefon; telefon yoksa ilan kendi başına bir satıcı sayılır.
+    TEK tanım: find_market, değer tablosu (price_book) ve altın dosya aynı fonksiyonu kullanır (satıcı sayısı her yerde aynı olsun)."""
+    return row.get("seller_phone") or f"id:{row.get('id', fallback)}"
 
 
 def _drop_outliers(prices: list[float], band: float = 0.5) -> list[float]:
@@ -111,13 +115,16 @@ def find_market(target: dict, pool: list[dict], settings: Settings | None = None
                     continue
                 kept = set(prices)
                 used = [r for r in rows if r["price_gbp"] in kept]
-                if len({seller_key(r) for r in used}) < s.min_distinct_sellers:
+                sellers_n = len({seller_key(r) for r in used})
+                if sellers_n < s.min_distinct_sellers:
                     continue  # emsallerin çoğu tek satıcıdan: piyasa fiyatı sayılmaz, havuzu genişlet
                 archived = sum(1 for r in used if not r.get("is_active", True)) / len(used)
                 kms = [k for k in (effective_km(r, now.date()) for r in used) if k]
                 median_km = int(statistics.median(kms)) if len(kms) >= 3 else None
                 p25 = statistics.quantiles(prices, n=4, method="inclusive")[0] if len(prices) >= 2 else min(prices)
-                return Market(len(prices), statistics.median(prices), min(prices), max(prices), span, archived, median_km, p25, gbp_only)
+                years = [r["year"] for r in used if r.get("year") is not None]
+                return Market(len(prices), statistics.median(prices), min(prices), max(prices), span, archived, median_km, p25, gbp_only,
+                              sellers_n, statistics.median(years) if years else None, tuple(r["id"] for r in used))
     return None
 
 
@@ -127,8 +134,12 @@ def nearest_comparables(target: dict, pool: list[dict], market: Market, k: int =
     s = settings or Settings()
     now = now or datetime.now(timezone.utc)
     widen = market.year_span >= 2
-    rows = [r for r in pool if _is_comparable(target, r, market.year_span, widen, now, s, market.gbp_only)
-            and market.low_gbp <= r["price_gbp"] <= market.high_gbp]
+    if market.comparable_ids:  # piyasayı kuran emsaller (satıcı sınırı/aykırı atma sonrası): mesajda GÖSTERİLEN = SAYILAN
+        ids = set(market.comparable_ids)
+        rows = [r for r in pool if r["id"] in ids]
+    else:  # piyasa kayıtlı özetten yeniden kurulmuş (kimlik yok): eski süzme
+        rows = [r for r in pool if _is_comparable(target, r, market.year_span, widen, now, s, market.gbp_only)
+                and market.low_gbp <= r["price_gbp"] <= market.high_gbp]
 
     def distance(r: dict) -> float:
         d = abs((r["year"] or 0) - (target["year"] or 0))

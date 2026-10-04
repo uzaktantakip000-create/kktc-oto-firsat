@@ -126,7 +126,7 @@ class Repository:
         return self.conn.execute(
             """SELECT id, brand_norm, model_norm, year, km, steering, transmission, fuel, engine_l::float8 AS engine_l,
                       price_gbp::float8 AS price_gbp, currency,
-                      currency_guess, first_seen_at, is_active, duplicate_of, url, seller_phone, urgency_signals,
+                      currency_guess, first_seen_at, is_active, duplicate_of, url, seller_phone, seller_handle, urgency_signals,
                       COALESCE(posted_at, data_as_of, first_seen_at) AS ref_date
                FROM listings WHERE price_gbp IS NOT NULL AND brand_norm IS NOT NULL
                  AND COALESCE(extraction_by, '') <> 'llm'  -- yapay zekâ okuması emsal olmaz

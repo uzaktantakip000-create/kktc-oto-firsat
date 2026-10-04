@@ -14,7 +14,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 
-from domain.comparables import _drop_outliers, _is_comparable, effective_km
+from domain.comparables import _drop_outliers, _is_comparable, effective_km, seller_key
 from domain.quality import YEAR_RANGE
 from domain.settings import Settings
 
@@ -129,7 +129,7 @@ def variant_of(row: dict) -> str:
 
 # --- eğri ---
 def _skey(r: dict, i: int) -> str:
-    return r.get("seller_phone") or f"id:{r.get('id', i)}"
+    return seller_key(r, i)  # find_market ile AYNI satıcı tanımı (comparables.seller_key)
 
 
 def _usable_fit_rows(rows: list[dict], weights: list[float] | None) -> list[tuple[dict, float, float, float, float]]:

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import random
 
-from domain.comparables import find_market, km_band, nearest_comparables
+from domain.comparables import find_market, km_band, nearest_comparables, seller_key
 
 NOW = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
@@ -161,3 +161,29 @@ def test_nearest_comparables_follow_the_same_pool_as_the_market():
     m = find_market(TARGET, pool, now=NOW)
     near = nearest_comparables(TARGET, pool, m, 8, now=NOW)
     assert m.gbp_only and near and all(r["currency"] == "GBP" for r in near)
+
+
+# --- Adım 7 hazırlığı: piyasa özeti satıcı sayısı / medyan yıl / emsal kimliklerini taşır; tek seller_key ---
+
+def test_market_summary_carries_sellers_median_year_and_comparable_ids():
+    pool = [row(i, 6000 + i * 100, year=2014 + (i % 3), seller_phone=f"90{i % 4}") for i in range(8)]  # 4 telefon = 4 satıcı
+    m = find_market(TARGET, pool, now=NOW)
+    assert m.sellers_n == 4 and m.n == 8 and set(m.comparable_ids) == set(range(8))
+    import statistics
+    assert m.median_year == statistics.median(r["year"] for r in pool)
+
+
+def test_nearest_comparables_come_only_from_the_comparables_that_built_the_market():
+    pool = gbp_rows(8) + tl_rows(3, start=8150, step=100)
+    m = find_market(TARGET, pool, now=NOW)
+    # piyasa kimlikleri dışındaki satır (aynı özellikte ama sayılmayan) mesajda ASLA görünmez
+    extra = row("x", 8400, currency="GBP")
+    near = nearest_comparables(TARGET, pool + [extra], m, 8, now=NOW)
+    assert {r["id"] for r in near} <= set(m.comparable_ids) and "x" not in {r["id"] for r in near}
+
+
+def test_seller_key_is_the_single_definition_used_by_the_price_book():
+    from domain import price_book
+    for r in (row(1, 6000, seller_phone="905"), row(2, 6000), {"seller_phone": None}):
+        assert price_book._skey(r, 7) == seller_key(r, 7)
+    assert seller_key(row(3, 6000)) == "id:3" and seller_key({"seller_phone": None}, 9) == "id:9"

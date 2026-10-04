@@ -21,6 +21,7 @@ from application.source_alarm import check_source_alarms
 from application.source_guard import demote_failing_sources
 from application.status import send_morning_status
 from domain.comparables import nearest_comparables
+from domain.decision import decide
 from domain.profit import Tier
 from domain.settings import RULES_VERSION, Settings
 from infrastructure.config import load_env, redact, require
@@ -92,6 +93,17 @@ def report_eval_failures(repo: Repository, failures: list[tuple[str, str]]) -> N
                      repeat_hours=24)
     except Exception as e:
         print("değerlendirme hatası bildirilemedi:", type(e).__name__)
+
+
+def _alert_market(ev, pool, s):
+    """Mesajdaki emsallerin dayanacağı piyasa. Kayıtlı özetten kurulan Market emsal kimliği/gbp_only taşımaz: taze piyasa kurulur
+    (karar aynı `decide()`). Hata olursa kayıtlı piyasaya düşer: mesaj emsalleri bildirimi ASLA engellemez."""
+    try:
+        d = decide(ev.listing, pool, s)
+    except Exception as e:
+        print("mesaj emsali için piyasa kurulamadı, kayıtlı özet kullanıldı:", type(e).__name__)
+        d = None
+    return d.market if d is not None else ev.market
 
 
 def run(repo: Repository) -> None:
@@ -167,7 +179,7 @@ def run(repo: Repository) -> None:
         s = settings
         pool = repo.market_pool(days=s.comparable_window_days + 30)
         for ev in strong:
-            comps[ev.listing["id"]] = nearest_comparables(ev.listing, pool, ev.market, 3, s)
+            comps[ev.listing["id"]] = nearest_comparables(ev.listing, pool, _alert_market(ev, pool, s), 3, s)
 
     notes = {}
     key, model = os.environ.get("OPENROUTER_API_KEY"), os.environ.get("OPENROUTER_MODEL")

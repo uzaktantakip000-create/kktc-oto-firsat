@@ -10,7 +10,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from application.evaluate import assess_listing, load_book
-from domain.comparables import find_market
+from domain.comparables import find_market, seller_key
 from domain.normalize import is_car_brand
 from domain.price_book import estimate_from_book
 from domain.red_flags import blocking_flags, customs_stated, plate_flags, urgency_signals, warning_flags
@@ -27,7 +27,7 @@ def _days_ago(ts, now: datetime) -> float | None:
 
 def snapshot_pool_row(r: dict, now: datetime, sellers: dict) -> dict:
     """Emsal satırı: kimlik yok, satıcı yeniden adlandırılır, tarih 'kaç gün önce'."""
-    seller = r.get("seller_phone") or f"id:{r['id']}"  # telefonsuz ilan kendi başına satıcı (comparables.seller_key ile aynı)
+    seller = seller_key(r)  # telefonsuz ilan kendi başına satıcı (tek tanım: comparables.seller_key)
     sellers.setdefault(seller, f"s{len(sellers) + 1}")
     out = {k: (round(float(r[k]), 2) if k in ("engine_l", "price_gbp") and r.get(k) is not None else r.get(k)) for k in POOL_FIELDS}
     out["ref_days_ago"] = _days_ago(r.get("ref_date") or r.get("first_seen_at"), now)
