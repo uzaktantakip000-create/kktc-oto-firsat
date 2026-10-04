@@ -79,6 +79,40 @@ class Repository:
         m = normalize_model(b, model)
         return {"brand_norm": reclassify_non_car(b, m, model), "model_norm": m}  # motosiklet/kamyon araba markası altında kalmasın
 
+    def renormalize_candidates(self) -> list[dict]:
+        """Ham marka/modelden YENİDEN hesaplanan anahtarı kayıtlıdan farklı olan ilanlar (model anahtarı kuralları değişince).
+        Her satır: id, brand, model, eski ve yeni (brand_norm, model_norm). Salt okunur."""
+        out = []
+        for r in self.conn.execute("SELECT id, brand, model, brand_norm, model_norm FROM listings WHERE brand IS NOT NULL").fetchall():
+            new = self.norm_keys(r["brand"], r["model"])
+            if (new["brand_norm"], new["model_norm"]) != (r["brand_norm"], r["model_norm"]):
+                out.append({**r, "new_brand_norm": new["brand_norm"], "new_model_norm": new["model_norm"]})
+        return out
+
+    def apply_renormalize(self, changes: list[dict]) -> int:
+        """Anahtar düzeltmelerini TEK işlemde uygular; her değişiklik listing_history'ye (field='model_norm'/'brand_norm', eski değerle) yazılır:
+        geri alma = undo_renormalize. Dönen: güncellenen ilan sayısı."""
+        with self.conn.transaction():
+            for c in changes:
+                for field, old, new in (("brand_norm", c["brand_norm"], c["new_brand_norm"]), ("model_norm", c["model_norm"], c["new_model_norm"])):
+                    if old != new:
+                        self.conn.execute("INSERT INTO listing_history (listing_id, field, old_value, new_value) VALUES (%s,%s,%s,%s)",
+                                          (c["id"], field, old, new))
+                self.conn.execute("UPDATE listings SET brand_norm=%s, model_norm=%s WHERE id=%s", (c["new_brand_norm"], c["new_model_norm"], c["id"]))
+        return len(changes)
+
+    def undo_renormalize(self, since) -> int:
+        """`since` tarihinden beri apply_renormalize'in yaptığı anahtar değişikliklerini eski değerlerine döndürür (en eski kayıt kazanır).
+        Dönen: geri alınan ilan sayısı."""
+        with self.conn.transaction():
+            rows = self.conn.execute(
+                """SELECT DISTINCT ON (listing_id, field) listing_id, field, old_value FROM listing_history
+                   WHERE field IN ('brand_norm','model_norm') AND changed_at >= %s ORDER BY listing_id, field, changed_at ASC""", (since,)).fetchall()
+            for r in rows:
+                self.conn.execute(f"UPDATE listings SET {r['field']}=%s WHERE id=%s", (r["old_value"], r["listing_id"]))
+            self.conn.execute("DELETE FROM listing_history WHERE field IN ('brand_norm','model_norm') AND changed_at >= %s", (since,))
+        return len({r["listing_id"] for r in rows})
+
     # --- değerleme ---
     def market_pool(self, days: int = 120, keys: list[tuple[str | None, str | None]] | None = None) -> list[dict]:
         """Emsal havuzu. `keys` verilirse yalnız bu (brand_norm, model_norm) çiftlerinin ilanları gelir: `find_market` zaten

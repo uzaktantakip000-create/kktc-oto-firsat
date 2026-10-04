@@ -2,6 +2,8 @@
 import re
 import unicodedata
 
+from domain.model_keys import model_key
+
 _BRANDS = {
     "bmw": "BMW", "mercedes": "Mercedes-Benz", "mercedes-benz": "Mercedes-Benz", "mercedes benz": "Mercedes-Benz",
     "vw": "Volkswagen", "volkswagen": "Volkswagen", "vauxhall": "Opel", "opel": "Opel", "mg": "MG",
@@ -122,18 +124,31 @@ def normalize_model(brand_norm: str | None, model: str | None) -> str | None:
     if not model:
         return None
     m = fold(model).replace("-", " ")
-    m = re.sub(r"[^a-z0-9. ]", "", m)
+    m = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9. ]", "", m)).strip()  # baştaki boşluk önek temizliğini engelliyordu ("- Benz GLE" -> "benz")
+    if not m:
+        return None
+    if brand_norm == "Land Rover":
+        m = re.sub(r"^rover\s+(?=\S)", "", m)  # KKTCarabam: marka "Land", model "Rover Range Rover Evoque"
     if brand_norm == "Mercedes-Benz":
         m = re.sub(r"^(mercedes\s+)?(benz\s+)?(?=\S)", "", m)  # marka "Mercedes", model "Benz C200"
+        key = model_key(brand_norm, m)
+        if key:
+            return key
         mm = _MERCEDES.match(m)
         if mm:
             return mm.group(1)  # "e 220d", "e serisi", "e220" -> "e"
     if brand_norm == "BMW":
+        key = model_key(brand_norm, m)
+        if key:
+            return key
         mm = _BMW.match(m)
         if mm:
             return next(g for g in mm.groups() if g)  # "520d m sport" -> "5"
     if brand_norm == "Land Rover":
         return _land_rover(m)
+    key = model_key(brand_norm, m)
+    if key:
+        return key
     two = " ".join(m.split()[:2])
     if two in _TWO_WORD:
         return two

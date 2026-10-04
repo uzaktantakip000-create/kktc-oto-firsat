@@ -237,3 +237,22 @@ def test_market_pool_carries_currency_so_the_tl_rule_can_work(db):
     add_listing(c, sid, "gbp", currency="GBP", price_gbp=7000)
     got = {r["id"]: r["currency"] for r in db.market_pool(days=120)}
     assert sorted(got.values()) == ["GBP", "TRY"]
+
+
+def test_renormalize_dry_candidates_apply_and_undo(db):
+    c, sid = db.conn, add_source(db.conn)
+    cx5 = add_listing(c, sid, "a", brand="Mazda", model="CX-5 2.0 Skyactiv-G", brand_norm="Mazda", model_norm="cx")  # eski anahtar
+    add_listing(c, sid, "b", brand="Toyota", model="Vitz 1.3", brand_norm="Toyota", model_norm="vitz")  # değişmez
+    add_listing(c, sid, "c", brand=None, model=None, brand_norm="Toyota", model_norm="vitz")  # ham ad yok: dokunulmaz
+    since = c.execute("SELECT now() AS t").fetchone()["t"]
+    ch = db.renormalize_candidates()
+    assert [(x["model_norm"], x["new_model_norm"]) for x in ch] == [("cx", "cx-5")]  # kuru deneme: hiçbir şey yazılmadı
+    assert c.execute("SELECT model_norm FROM listings WHERE id=%s", (cx5,)).fetchone()["model_norm"] == "cx"
+    assert db.apply_renormalize(ch) == 1
+    assert c.execute("SELECT model_norm FROM listings WHERE id=%s", (cx5,)).fetchone()["model_norm"] == "cx-5"
+    hist = c.execute("SELECT field, old_value, new_value FROM listing_history WHERE listing_id=%s", (cx5,)).fetchall()
+    assert [(h["field"], h["old_value"], h["new_value"]) for h in hist] == [("model_norm", "cx", "cx-5")]
+    assert db.renormalize_candidates() == []  # tekrar çalıştırınca değişecek bir şey kalmaz
+    assert db.undo_renormalize(since) == 1  # geri alma: eski anahtar döner, geri alma kayıtları temizlenir
+    assert c.execute("SELECT model_norm FROM listings WHERE id=%s", (cx5,)).fetchone()["model_norm"] == "cx"
+    assert c.execute("SELECT count(*) AS n FROM listing_history WHERE field IN ('brand_norm','model_norm')").fetchone()["n"] == 0
