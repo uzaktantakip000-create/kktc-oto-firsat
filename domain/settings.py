@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-RULES_VERSION = "2026-10-04"  # değerleme kuralları değişince artır: son 7 günün (bildirimsiz) değerlendirmeleri yeniden yapılır
+RULES_VERSION = "2026-10-04b"  # değerleme kuralları değişince artır: son 7 günün (bildirimsiz) değerlendirmeleri yeniden yapılır
 
 
 class Settings(BaseModel):
@@ -13,6 +13,7 @@ class Settings(BaseModel):
     comparable_window_days: int = 90
     absurd_price_ratio: float = 0.50
     low_confidence_min_profit: float = 0.30
+    gbp_only_min_comparables: int = 8  # £ hedefte TL emsalsiz havuz tek başına ≥ bu kadar emsal verirse TL'siz piyasa kullanılır (TL ilanlar ~%12-23 ucuz görünür)
     min_plausible_price_gbp: float = 500  # altı yanlış yazım/eksik rakam sayılır (arabanın fiyatı değil)
     max_plausible_price_gbp: float = 250_000
     small_pool_band: float = 0.5  # 8'den az emsalde medyanın %50'sinden az / 2 katından çok olanlar atılır

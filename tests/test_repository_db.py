@@ -228,3 +228,12 @@ def test_apply_refresh_fills_seller_handle_without_overwriting(db):
     db.apply_refresh(kept, old, new)
     got = {r["source_item_id"]: r["seller_handle"] for r in c.execute("SELECT source_item_id, seller_handle FROM listings").fetchall()}
     assert got == {"e": "kktcar:abc-123", "k": "Ahmet Galeri"}
+
+
+def test_market_pool_carries_currency_so_the_tl_rule_can_work(db):
+    """Unutulursa TL emsal kuralı SESSİZCE kapanır (muhafazakâr yön ama kimse fark etmez): havuz satırında currency olmalı."""
+    c, sid = db.conn, add_source(db.conn)
+    add_listing(c, sid, "tl", currency="TRY", price_gbp=5000)
+    add_listing(c, sid, "gbp", currency="GBP", price_gbp=7000)
+    got = {r["id"]: r["currency"] for r in db.market_pool(days=120)}
+    assert sorted(got.values()) == ["GBP", "TRY"]

@@ -34,11 +34,14 @@ class Market:
     archived_share: float  # emsalin ne kadarı arşiv/satıldı sayfalarından (daha az güvenilir)
     median_km: int | None = None  # km'si bilinen emsallerin medyanı (en az 3 emsalde)
     p25_gbp: float | None = None  # emsal fiyatlarının alt çeyreği: 🟢 için ilan bunun altında olmalı
+    gbp_only: bool = False  # piyasa TL fiyatlı emsal OLMADAN kuruldu (mesajdaki emsaller de aynı havuzdan seçilir)
 
 
-def _is_comparable(target: dict, row: dict, year_span: int, widen_km: bool, now: datetime, s: Settings) -> bool:
+def _is_comparable(target: dict, row: dict, year_span: int, widen_km: bool, now: datetime, s: Settings, gbp_only: bool = False) -> bool:
     if row["id"] == target["id"] or row.get("duplicate_of"):
         return False
+    if gbp_only and row.get("currency") == "TRY":
+        return False  # TL ilanlar GBP komşularından ~%12-23 ucuz görünür (satıcı eski kurla fiyatlar / eski tarihli ilan bugünkü kurla çevrilir)
     if row["price_gbp"] is None or row.get("currency_guess"):
         return False
     # Piyasa fiyatı = satışa en yakın veri: aktif ilan taze olmalı, pasif ilan ancak "satıldı" ise sayılır.
@@ -93,24 +96,28 @@ def _drop_outliers(prices: list[float], band: float = 0.5) -> list[float]:
 
 
 def find_market(target: dict, pool: list[dict], settings: Settings | None = None, now: datetime | None = None) -> Market | None:
-    """Önce ±1 yıl ve aynı km bandı; emsal azsa yıl ±2 ve komşu bant. Hiç emsal yoksa None."""
+    """Önce ±1 yıl ve aynı km bandı; emsal azsa yıl ±2 ve komşu bant. Hiç emsal yoksa None.
+    £ hedefte, her yıl aralığında önce TL fiyatlı emsal OLMADAN denenir (yalnız o havuz tek başına ≥ gbp_only_min_comparables emsal
+    verirse kullanılır); olmazsa eskisi gibi TL dahil. Yıl aralığı bu yüzden bugünkünden ASLA genişlemez. TL hedefte davranış aynı."""
     s = settings or Settings()
     now = now or datetime.now(timezone.utc)
+    gbp_first = target.get("currency") != "TRY" and any(r.get("currency") == "TRY" for r in pool)
     for span, widen in ((1, False), (2, True)):
-        rows = [r for r in pool if _is_comparable(target, r, span, widen, now, s)]
-        if len(rows) >= s.min_comparables_alert:
-            prices = _drop_outliers(sorted(r["price_gbp"] for r in rows), s.small_pool_band)
-            if len(prices) < s.min_comparables_alert:
-                continue
-            kept = set(prices)
-            used = [r for r in rows if r["price_gbp"] in kept]
-            if len({seller_key(r) for r in used}) < s.min_distinct_sellers:
-                continue  # emsallerin çoğu tek satıcıdan: piyasa fiyatı sayılmaz, havuzu genişlet
-            archived = sum(1 for r in used if not r.get("is_active", True)) / len(used)
-            kms = [k for k in (effective_km(r, now.date()) for r in used) if k]
-            median_km = int(statistics.median(kms)) if len(kms) >= 3 else None
-            p25 = statistics.quantiles(prices, n=4, method="inclusive")[0] if len(prices) >= 2 else min(prices)
-            return Market(len(prices), statistics.median(prices), min(prices), max(prices), span, archived, median_km, p25)
+        for gbp_only in ((True, False) if gbp_first else (False,)):
+            rows = [r for r in pool if _is_comparable(target, r, span, widen, now, s, gbp_only)]
+            if len(rows) >= s.min_comparables_alert:
+                prices = _drop_outliers(sorted(r["price_gbp"] for r in rows), s.small_pool_band)
+                if len(prices) < s.min_comparables_alert or (gbp_only and len(prices) < s.gbp_only_min_comparables):
+                    continue
+                kept = set(prices)
+                used = [r for r in rows if r["price_gbp"] in kept]
+                if len({seller_key(r) for r in used}) < s.min_distinct_sellers:
+                    continue  # emsallerin çoğu tek satıcıdan: piyasa fiyatı sayılmaz, havuzu genişlet
+                archived = sum(1 for r in used if not r.get("is_active", True)) / len(used)
+                kms = [k for k in (effective_km(r, now.date()) for r in used) if k]
+                median_km = int(statistics.median(kms)) if len(kms) >= 3 else None
+                p25 = statistics.quantiles(prices, n=4, method="inclusive")[0] if len(prices) >= 2 else min(prices)
+                return Market(len(prices), statistics.median(prices), min(prices), max(prices), span, archived, median_km, p25, gbp_only)
     return None
 
 
@@ -120,7 +127,7 @@ def nearest_comparables(target: dict, pool: list[dict], market: Market, k: int =
     s = settings or Settings()
     now = now or datetime.now(timezone.utc)
     widen = market.year_span >= 2
-    rows = [r for r in pool if _is_comparable(target, r, market.year_span, widen, now, s)
+    rows = [r for r in pool if _is_comparable(target, r, market.year_span, widen, now, s, market.gbp_only)
             and market.low_gbp <= r["price_gbp"] <= market.high_gbp]
 
     def distance(r: dict) -> float:

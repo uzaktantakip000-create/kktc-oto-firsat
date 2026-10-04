@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 
-from domain.comparables import find_market, km_band
+import random
+
+from domain.comparables import find_market, km_band, nearest_comparables
 
 NOW = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
@@ -106,3 +108,56 @@ def test_effective_km_depends_on_the_given_date_not_the_clock():
     assert effective_km(car, date(2027, 1, 1)) is None
     assert effective_km({"km": 500, "year": 2015}, date(2026, 6, 1)) is None  # eski araçta <1000 km: eksik rakam
     assert effective_km({"km": None, "year": 2015}, date(2026, 6, 1)) is None
+
+
+# --- TL fiyatlı emsal (Adım 6c): £ hedefte TL'siz piyasa, yalnız tek başına yeterliyse; yıl aralığı asla genişlemez ---
+
+def gbp_rows(n, start=8000, step=100, **kw):
+    return [row(f"g{i}", start + i * step, currency="GBP", **kw) for i in range(n)]
+
+
+def tl_rows(n, start=6000, step=50, **kw):
+    return [row(f"t{i}", start + i * step, currency="TRY", **kw) for i in range(n)]
+
+
+def test_tl_comparables_excluded_when_gbp_alone_is_enough():
+    m = find_market(TARGET, gbp_rows(8) + tl_rows(4), now=NOW)
+    assert m.gbp_only and m.n == 8 and m.median_gbp == 8350
+
+
+def test_tl_kept_when_gbp_alone_is_not_enough():
+    m = find_market(TARGET, gbp_rows(5) + tl_rows(4), now=NOW)  # 5 £ emsal < 8: eski davranış (TL dahil)
+    assert not m.gbp_only and m.n == 9
+
+
+def test_tl_target_and_rows_without_currency_behave_as_before():
+    tl_target = row("t", 5000, currency="TRY")
+    assert not find_market(tl_target, gbp_rows(8) + tl_rows(4), now=NOW).gbp_only
+    no_cur = [row(i, 8000 + i * 100) for i in range(8)] + [row(f"x{i}", 6000 + i) for i in range(4)]
+    assert not find_market(TARGET, no_cur, now=NOW).gbp_only  # currency anahtarı yok: hepsi sayılır
+
+
+def test_year_span_not_widened_by_tl_exclusion():
+    """Golf düzeneği: ±1'de 2 £ + 1 TL emsal; £ yetmeyince aynı aralıkta TL de sayılır, ±2'ye ATLANMAZ."""
+    pool = [row(1, 6000, year=2014, currency="GBP"), row(2, 6200, year=2016, currency="GBP"), row(3, 5800, year=2015, currency="TRY")]
+    pool += [row(f"w{i}", 9000 + i * 100, year=2013 if i % 2 else 2017, currency="GBP") for i in range(8)]
+    m = find_market(TARGET, pool, now=NOW)
+    assert m.year_span == 1 and m.n == 3 and not m.gbp_only
+
+
+def test_year_span_never_wider_than_before_property():
+    rnd = random.Random(7)
+    for _ in range(400):
+        pool = [row(i, rnd.randint(4000, 12000), year=rnd.randint(2012, 2018), currency=rnd.choice(["GBP", "GBP", "TRY"]))
+                for i in range(rnd.randint(3, 25))]
+        old = find_market(TARGET, [{**r, "currency": None} for r in pool], now=NOW)  # eski davranış: TL ayrımı yok
+        new = find_market(TARGET, pool, now=NOW)
+        if old is not None:
+            assert new is not None and new.year_span <= old.year_span
+
+
+def test_nearest_comparables_follow_the_same_pool_as_the_market():
+    pool = gbp_rows(8) + tl_rows(3, start=8150, step=100)  # TL fiyatları £ aralığının İÇİNDE: dışlanmazsa mesajda görünürdü
+    m = find_market(TARGET, pool, now=NOW)
+    near = nearest_comparables(TARGET, pool, m, 8, now=NOW)
+    assert m.gbp_only and near and all(r["currency"] == "GBP" for r in near)
