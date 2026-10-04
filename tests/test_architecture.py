@@ -40,18 +40,28 @@ def rel(path: Path) -> str:
 
 
 def imports(path: Path):
-    """(modül, ad|None) çiftleri: `import a.b` -> ('a.b', None); `from a.b import c` -> ('a.b', 'c')."""
+    """(modül, ad|None) çiftleri: `import a.b` -> ('a.b', None); `from a.b import c` -> ('a.b', 'c').
+    `from domain import comparables` gibi alt modül içe aktarmaları da ('domain.comparables', None) olarak görülür;
+    göreli import (`from . import x`) yasaktır (testi kandırmasın)."""
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 yield alias.name, None
-        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-            for alias in node.names:
-                yield node.module, alias.name
+        elif isinstance(node, ast.ImportFrom):
+            assert node.level == 0, f"{rel(path)}: göreli import kullanılmaz (mutlak `from domain.x import y` yaz)"
+            if node.module:
+                for alias in node.names:
+                    yield node.module, alias.name
+                    yield f"{node.module}.{alias.name}", None
 
 
-def test_domain_imports_only_standard_library_pydantic_and_domain():
-    allowed_roots = set(sys.stdlib_module_names) | {"pydantic", "domain"}
+# Standart kütüphanede olup dış dünyaya (dosya, ağ, süreç, veritabanı, ortam) açılan modüller: domain bunları kullanmaz.
+IO_STDLIB = {"os", "sys", "socket", "ssl", "http", "urllib", "ftplib", "smtplib", "sqlite3", "subprocess", "shutil", "pathlib",
+             "tempfile", "requests", "asyncio", "threading", "multiprocessing", "logging", "pickle", "shelve", "glob", "io", "json"}
+
+
+def test_domain_imports_only_pure_standard_library_pydantic_and_domain():
+    allowed_roots = (set(sys.stdlib_module_names) - IO_STDLIB) | {"pydantic", "domain"}
     offenders = sorted({f"{rel(p)} -> {module}" for p in py_files("domain") for module, _ in imports(p)
                         if module.split(".")[0] not in allowed_roots})
     assert not offenders, "domain/ dış bağımlılık/G-Ç import etmemeli:\n" + "\n".join(offenders)
@@ -73,6 +83,25 @@ def test_decision_primitives_are_only_called_through_decision_module():
     assert not offenders, ("Karar ilkelleri yalnız domain/decision.py'den çağrılabilir (decide() kullan):\n" + "\n".join(offenders))
     stale = sorted(LEGACY_ALLOWED - seen)
     assert not stale, f"İzin listesindeki satırlar artık gereksiz, silin (liste yalnız küçülür): {stale}"
+
+
+def test_decision_primitives_are_not_reached_through_module_attribute_either():
+    """`from domain import comparables; comparables.find_market(...)` ve `import domain.comparables` de kuralı atlatmasın."""
+    primitive_modules = {m for m, _ in DECISION_PRIMITIVES}
+    names = {n for _, n in DECISION_PRIMITIVES}
+    offenders = []
+    for p in py_files(*SCAN_DIRS):
+        f = rel(p)
+        if f == "domain/decision.py" or f in DEFINING_FILES:
+            continue
+        tree = ast.parse(p.read_text(encoding="utf-8"))
+        module_imported = any(module in primitive_modules and name is None for module, name in imports(p))
+        if not module_imported:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and node.attr in names and (f, node.attr) not in LEGACY_ALLOWED:
+                offenders.append(f"{f}:{node.lineno}: .{node.attr}")
+    assert not offenders, "Karar ilkelleri modül üzerinden de çağrılamaz (decide() kullan):\n" + "\n".join(offenders)
 
 
 def test_decision_module_exists_and_uses_every_primitive():

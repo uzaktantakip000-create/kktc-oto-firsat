@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from application import collect_instagram as ci
 from infrastructure.collectors.instagram_apify import RawPost
@@ -40,13 +40,14 @@ def test_single_apify_run_for_all_sources_and_posts_routed_by_owner(monkeypatch)
 
     monkeypatch.setattr(ci, "fetch_posts", fake_fetch)
     monkeypatch.setattr(ci, "gbp_rate", lambda c: 1.0)
-    sources = [dict(id="A", name="A", url="https://www.instagram.com/Acc_A/", cursor="2026-09-30T10:00:00"),
+    cursor = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S")  # bugüne göre: 3 günlük sınırın içinde (sabit tarih zamanla testi bozar)
+    sources = [dict(id="A", name="A", url="https://www.instagram.com/Acc_A/", cursor=cursor),
                dict(id="B", name="B", url="https://www.instagram.com/acc_b/", cursor=None)]
     repo = FakeRepo()
     res = ci.collect_sources(repo, "tok", sources)
     # imleci olan hesap ana çağrıda (son imleçten itibaren), hiç taranmamış hesap ayrı tek seferlik çağrıda (3 güne kadar)
     assert [c[0] for c in calls] == [["Acc_A"], ["acc_b"]]
-    assert calls[0][1] == "2026-09-30T10:00:00" and calls[1][1] < calls[0][1]
+    assert calls[0][1] == cursor and calls[1][1] < calls[0][1]
     assert (res["A"].new, res["B"].new) == (1, 1)  # yeniden adlandırılmış hesabın gönderisi hiçbir kaynağa karışmaz
     assert set(repo.checked) == {"A", "B"}
 

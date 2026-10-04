@@ -1,6 +1,6 @@
 """Değer tablosu (price book): her marka + model (+ varyant) + yıl için oturmuş piyasa değeri ve model değer eğrisi.
 Saf mantık (ağ/DB yok, yalnızca standart kütüphane). Her gece application/price_book_job.py kurar; yeni ilan
-application/evaluate.assess_listing içinde estimate_from_book ile karşılaştırılır (🟠 tahmini fırsat).
+domain/decision.decide içinde estimate_from_book ile karşılaştırılır (🟠 tahmini fırsat).
 
 Yöntemler:
   A = doğrudan emsal: aynı model, yıl ±1, fiyatlar curve ile aynı yıl/km'ye çekilip medyan (galeri başına ≤2 ilan)
