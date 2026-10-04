@@ -165,3 +165,55 @@ def test_listing_born_closed_gets_a_reason_but_no_inactive_time(monkeypatch):
     kk.collect_kktcar(r, SOURCE)
     (item, data), = r.upserts
     assert item == "x" and data["inactive_reason"] == "belirsiz" and "inactive_at" not in data  # pasifleşme AN'ı bilinmiyor: boş kalır
+
+
+# --- last_alive_at (Adım 5c kısım 2): kaynakta AKTİF görüldüğü son an ---
+
+def test_active_page_read_marks_alive_but_a_failed_read_does_not():
+    r = repo()
+    r.apply_refresh("L1", {"price_amount": 6000, "currency": "GBP", "price_gbp": 6000},
+                    {"price_amount": 6000, "currency": "GBP", "price_gbp": 6000, "price_raw": "6000", "currency_guess": False, "is_active": True})
+    assert any("last_alive_at=NOW()" in sql for sql, _ in r.conn.calls)
+    r = repo()
+    r.touch("L1")  # okunamayan sayfa (toplayıcılar bunu çağırır): canlı görüldü SAYILMAZ
+    assert not any("last_alive_at" in sql for sql, _ in r.conn.calls)
+    r = repo()
+    r.apply_refresh("L1", {"price_amount": 1, "currency": "GBP", "price_gbp": 1}, {"is_active": False, "urgency_signals": ["satildi"]})
+    assert not any("last_alive_at" in sql for sql, _ in r.conn.calls)  # kapalı sayfa canlı değil
+
+
+def test_list_collectors_mark_known_listings_seen_in_the_list_as_alive(monkeypatch):
+    from application import collect_kktcarabam as kka
+    from infrastructure.collectors import kktcarabam as kk_site
+
+    class Card:
+        def __init__(self, i):
+            self.item_id = i
+
+    class FeedRepo:
+        def __init__(self):
+            self.alive, self.upserts = [], []
+
+        def known_item_ids(self, source_id):
+            return {"a", "b"}
+
+        def mark_alive(self, source_id, item_ids):
+            self.alive.append((source_id, sorted(item_ids)))
+
+        def upsert_listing(self, *a):
+            self.upserts.append(a)
+            return True
+
+        def mark_checked(self, *a, **k):
+            pass
+
+        def count_recent(self, source_id):
+            return 0
+
+    monkeypatch.setattr(kk_site, "open_session", lambda: nullcontext())
+    monkeypatch.setattr(kk_site, "fetch_html", lambda session, url: "<html/>")
+    monkeypatch.setattr(kk_site, "parse_list", lambda html: [Card("a"), Card("c")])  # a bilinen, c yeni
+    monkeypatch.setattr(kk_site, "card_to_listing", lambda card: None)
+    r = FeedRepo()
+    kka.collect_kktcarabam(r, {"id": "k1", "name": "KKTCarabam"})
+    assert r.alive == [("k1", ["a"])]  # yalnız listede görülen BİLİNEN ilan; "b" listede yok → canlı sayılmaz

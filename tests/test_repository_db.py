@@ -341,3 +341,29 @@ def test_listing_born_inactive_keeps_the_reason_but_not_a_fake_inactive_time(db)
                                     "inactive_reason": "belirsiz"})
     got = lifecycle(c, c.execute("SELECT id FROM listings WHERE source_item_id='born'").fetchone()["id"])
     assert got["inactive_reason"] == "belirsiz" and got["inactive_at"] is None and got["last_alive_at"] is None
+
+
+def test_last_alive_at_is_written_only_when_the_source_really_showed_the_listing_active(db):
+    """Adım 5c kısım 2: aktif sayfa okuması / yeni aktif ilan / listede görülen bilinen ilan → last_alive_at. Okunamayan sayfa (touch),
+    kapalı sayfa ve pasif doğan ilan → DEĞİL."""
+    c, web = db.conn, add_source(db.conn, "W", "web")
+    other = add_source(c, "O", "web")
+    old = {"price_amount": 6000, "currency": "GBP", "price_gbp": 6000}
+    new = {"price_amount": 6000, "currency": "GBP", "price_gbp": 6000, "price_raw": "6000", "currency_guess": False, "is_active": True}
+    a, b, closed = (add_listing(c, web, n) for n in ("a", "b", "closed"))
+    db.touch(a)
+    assert lifecycle(c, a)["last_alive_at"] is None  # okunamadı: sıra kaydı, canlı değil
+    db.apply_refresh(a, old, new)
+    assert lifecycle(c, a)["last_alive_at"] is not None
+    db.apply_refresh(closed, old, {"is_active": False, "urgency_signals": ["satildi"]})
+    assert lifecycle(c, closed)["last_alive_at"] is None
+    # yeni ilan: aktifse damga, pasif doğduysa yok
+    db.upsert_listing(web, "fresh", {"brand_norm": "Toyota", "model_norm": "vitz"})
+    db.upsert_listing(web, "born", {"brand_norm": "Toyota", "model_norm": "vitz", "is_active": False})
+    ids = {r["source_item_id"]: r for r in c.execute("SELECT source_item_id, last_alive_at FROM listings").fetchall()}
+    assert ids["fresh"]["last_alive_at"] is not None and ids["born"]["last_alive_at"] is None
+    # liste kaynağı: yalnız aynı kaynağın, aktif ve listedeki ilanlar
+    stray = add_listing(c, other, "a")  # başka kaynakta aynı kimlik
+    assert db.mark_alive(web, ["b", "closed", "nope"]) == 1  # b aktif ve listede; closed pasif; nope yok
+    assert lifecycle(c, b)["last_alive_at"] is not None and lifecycle(c, closed)["last_alive_at"] is None and lifecycle(c, stray)["last_alive_at"] is None
+    assert db.mark_alive(web, []) == 0

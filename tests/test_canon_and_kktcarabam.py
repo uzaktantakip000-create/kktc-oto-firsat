@@ -56,6 +56,9 @@ class Repo:
     def known_item_ids(self, source_id):
         return set()
 
+    def mark_alive(self, source_id, item_ids):
+        return 0
+
     def mark_checked(self, *a, **k):
         self.checked.append(1)
 

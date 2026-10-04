@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 import psycopg
 from psycopg.rows import dict_row
@@ -39,6 +40,8 @@ class Repository:
             self.conn.execute("UPDATE listings SET last_seen_at=NOW() WHERE id=%s", (row["id"],))
             return False
         data = {**data, **self.norm_keys(data.get("brand"), data.get("model"))}
+        if data.get("is_active", True) is not False and "last_alive_at" not in data:
+            data["last_alive_at"] = datetime.now(timezone.utc)  # yeni ve aktif: şu an canlı görüldü (pasif doğan ilanda boş kalır)
         cols = ["source_id", "source_item_id", *data.keys()]
         vals = [source_id, item_id, *data.values()]
         try:
@@ -68,6 +71,21 @@ class Repository:
     def known_item_ids(self, source_id) -> set[str]:
         rows = self.conn.execute("SELECT source_item_id FROM listings WHERE source_id=%s", (source_id,)).fetchall()
         return {r["source_item_id"] for r in rows}
+
+    def mark_alive(self, source_id, item_ids) -> int:
+        """Liste kaynaklarında (KKTCarabam, Mezunum) listede yeniden görülen BİLİNEN aktif ilanlar: last_alive_at güncellenir.
+        (KKTCar site haritasında bulunmak 'canlı' sayılmaz: harita satılmış/arşiv ilanları da içerir.)"""
+        ids = list(item_ids)
+        if not ids:
+            return 0
+        try:
+            return self.conn.execute("UPDATE listings SET last_alive_at=NOW() WHERE source_id=%s AND is_active AND source_item_id = ANY(%s)",
+                                     (source_id, ids)).rowcount
+        except DatabaseDown:
+            raise
+        except psycopg.Error as e:  # yalnız bir ölçüm alanı: yazılamazsa toplama bozulmasın (bağlantı hatası yine yükselir)
+            print("last_alive_at yazılamadı:", type(e).__name__)
+            return 0
 
     def deactivate_missing(self, source_id, present_ids: set[str]) -> int:
         """Sitemap'ten kaybolan aktif ilanları pasifleştirir (muhtemelen satıldı). Etkilenen sayıyı döner."""
@@ -266,7 +284,8 @@ class Repository:
                 (data["price_raw"], data["price_amount"], data["currency"], data["currency_guess"], new_price, listing_id),
             )
             change = "fiyat"
-        self.touch(listing_id)
+        # sayfa AKTİF okundu: canlı görüldü (touch() okunamayan sayfada da çağrıldığı için last_alive_at ona yazılmaz)
+        self.conn.execute("UPDATE listings SET last_seen_at=NOW(), last_alive_at=NOW() WHERE id=%s", (listing_id,))
         return change
 
     def deactivate_by_ilan_no(self, source_id, ilan_no: str) -> int:

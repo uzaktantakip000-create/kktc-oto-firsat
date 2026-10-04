@@ -72,6 +72,7 @@ def collect_mezunum(repo: Repository, source: dict, reader: LlmReader | None = N
             entries += mezunum.parse_list(r.text)
             mezunum.polite_sleep()
         stats.seen = len(entries)
+        repo.mark_alive(source["id"], [e.slug for e in entries if e.slug in known])  # listede görüldü: canlı
         for entry in [e for e in entries if e.slug not in known][:MAX_NEW]:
             if clock() > deadline:
                 stats.time_limited = True

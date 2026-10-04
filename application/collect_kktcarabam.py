@@ -25,6 +25,7 @@ def collect_kktcarabam(repo: Repository, source: dict) -> KkaStats:
     stats.seen = len(cards)
     if not cards:  # sayfa geldi ama hiç ilan kartı yok: şablon değişmiş ya da engel/boş sayfa
         raise RuntimeError(f"{source['name']}: liste sayfasında hiç ilan kartı bulunamadı — site şablonu değişmiş ya da engel sayfası olabilir")
+    repo.mark_alive(source["id"], [c.item_id for c in cards if c.item_id in known])  # listede görüldü: canlı
     for card in cards:
         if card.item_id in known:
             continue

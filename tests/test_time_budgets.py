@@ -35,6 +35,9 @@ class Repo:
     def known_item_ids(self, source_id):
         return set()
 
+    def mark_alive(self, source_id, item_ids):
+        return 0
+
     def upsert_listing(self, source_id, item_id, data):
         self.upserts.append(item_id)
         return True
