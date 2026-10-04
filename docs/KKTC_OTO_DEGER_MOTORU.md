@@ -41,7 +41,7 @@ Medyan hesaplanırken galeri + bireysel ilanlar birlikte kullanılır (galeri fi
 | 3–7 | DÜŞÜK | Sadece kâr ≥ %30 ise, "düşük güven — kontrol et" etiketiyle |
 | < 3 | YOK | Bildirim yok; ilan kaydedilir (veri birikir) |
 
-Ek güven düşürücüler: para birimi tahmin edildi, km yazmıyor, yıl belirsiz ("2019 (2024 çıkışlı)" → üretim yılı esas, not düşülür).
+Ek güven düşürücüler: para birimi tahmin edildi, yıl belirsiz ("2019 (2024 çıkışlı)" → üretim yılı esas, not düşülür). km yazmıyor/şüpheli artık güveni düşürmez (sahip kararı 04.10.2026): kâr şartı aynı, mesajda uyarı çıkar.
 
 ## 4. TUZAK KONTROLÜ (Kırmızı Bayraklar)
 Bildirimi engelleyen veya uyaran durumlar:

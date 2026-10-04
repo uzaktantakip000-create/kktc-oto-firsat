@@ -6,8 +6,10 @@ from domain.llm_read import MISMATCH_LABELS
 from domain.model_ambiguity import model_ambiguous
 from domain.settings import Settings
 
+KM_UNKNOWN_WARNING = "km yazmıyor ya da şüpheli: aracı görmeden km'ye güvenme (fiyat kıyası km'siz yapıldı)"
+
 GAP_LABELS = {
-    "km_yok": "km yazmıyor",
+    "km_yok": "km yazmıyor",  # ESKİ kayıtlar için etiket: km eksikliği artık 🟢'yi engellemez, uyarı olarak gider (KM_UNKNOWN_WARNING)
     "para_birimi_tahmin": "para birimi tahmin",
     "tl_fiyat": "fiyat TL: TL ilanları piyasada genelde %6-10 düşük görünüyor; kontrol et",
     "fiyat_asiri_dusuk": "fiyat emsallerin yarısından düşük (az emsal): yazım hatası ya da tuzak olabilir",
@@ -24,12 +26,15 @@ GAP_LABELS = {
 GAP_LABELS.update(MISMATCH_LABELS)
 
 
+def km_unknown(listing: dict, now: datetime | None = None) -> bool:
+    """km yok ya da şüpheli (eski araçta <1000 km). Sahip kararı (04.10.2026): tek başına fırsatı ENGELLEMEZ; mesajda uyarı olur."""
+    return not effective_km(listing, now.date() if now else None)
+
+
 def data_gaps(listing: dict, market: Market, settings: Settings | None = None, now: datetime | None = None) -> list[str]:
     s = settings or Settings()
     today = now.date() if now else None
     gaps = []
-    if not effective_km(listing, today):  # yok ya da şüpheli (eski araçta <1000 km)
-        gaps.append("km_yok")
     if listing.get("currency_guess"):
         gaps.append("para_birimi_tahmin")
     if listing.get("currency") == "TRY":

@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 
 from domain.alert_policy import send_floor_ok
 from domain.comparables import Market, find_market
-from domain.data_gate import below_cheap_quartile, data_gaps
+from domain.data_gate import KM_UNKNOWN_WARNING, below_cheap_quartile, data_gaps, km_unknown
 from domain.model_ambiguity import model_ambiguous
 from domain.price_book import STATUS_SUSPECT, Estimate, PriceBook, estimate_from_book
 from domain.profit import Confidence, ProfitResult, Tier, evaluate_profit
@@ -75,6 +75,8 @@ def _market_assessment(listing: dict, market: Market, price: float, text: str, b
         tier = Tier.NEGOTIABLE
     final = ProfitResult(profit.exit_price_gbp, profit.profit_gbp, profit.profit_pct, profit.confidence, tier)
     absurd = market.n < 8 and price < market.median_gbp * s.absurd_price_ratio  # evaluate_profit bunu 'yok' yaptı: kırmızı bayrak
+    if tier in (Tier.STRONG, Tier.NEGOTIABLE) and km_unknown(listing, now):
+        warnings = warnings + [KM_UNKNOWN_WARNING]  # km eksik/şüpheli tek başına engel değil (sahip kararı 04.10.2026): uyarıyla gider
     return Decision(market, final, blocking, warnings, gaps if downgraded else ["fiyat_asiri_dusuk"] if absurd else [], text)
 
 

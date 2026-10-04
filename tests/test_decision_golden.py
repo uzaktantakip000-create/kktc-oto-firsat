@@ -1,7 +1,8 @@
 """Karar altın dosyası (tests/fixtures/decision_golden.json): 49 GERÇEK ilan vakası + her birinin "olması gereken" etiketi.
 Etiketler: yesil (🟢 FIRSAT) · kontrol (🟠 KONTROL ET) · yok (bildirim yok). Dosya canlı veriden 03.10.2026'da alındı
 (entrypoints/golden_snapshot.py); kimlik bilgisi içermez. Etiketleri iki bağımsız okuyucu yazdı: biri çakışırsa vaka `strict: false`.
-Bu testler (1) dosyanın bütünlüğünü ve gizliliğini, (2) bugünkü sistemin 'yok olmalı' vakalarda 🟢 üretmediğini, (3) bugünkü
+Sahip kararı (04.10.2026): km eksik/şüpheli tek başına engel değil (kâr şartı %20 aynı kalır): bu yüzden etiketi yalnızca km yüzünden
+'kontrol' olan g17/g18/g19/g21/g48'in olması gereken etiketi `owner_override` ile 'yesil'dir. Bu testler (1) dosyanın bütünlüğünü ve gizliliğini, (2) bugünkü sistemin 'yok olmalı' vakalarda 🟢 üretmediğini, (3) bugünkü
 eksiklerin (olması gereken 🟠'ların henüz gelmemesi) yalnızca AZALABİLECEĞİNİ (ratchet) doğrular. AlertPolicy v2 (İş 6) ve model
 adı tablosu (İş 8) bu dosyaya karşı ölçülür."""
 import json
@@ -28,9 +29,13 @@ FORBIDDEN_KEYS = {"seller_phone", "phone", "telefon", "url", "raw_text", "seller
 # Bugünkü sistemin "olması gerekenden" ayrıştığı STRICT vakalar. Bu liste yalnızca KÜÇÜLEBİLİR: sistem düzeldikçe satır silinir.
 # (Bugün hepsi "olması gereken 🟠 KONTROL ET, sistem bildirim yok": 🟠 yeni tasarımla (İş 6) gelecek.)
 KNOWN_MISMATCHES = {
-    ("g03", "kontrol"), ("g07", "kontrol"), ("g17", "kontrol"), ("g18", "kontrol"), ("g19", "kontrol"), ("g21", "kontrol"),
-    ("g25", "kontrol"), ("g32", "kontrol"), ("g48", "kontrol"),
+    ("g03", "kontrol"), ("g07", "kontrol"), ("g25", "kontrol"), ("g32", "kontrol"),
 }
+
+
+def want(case: dict) -> str:
+    """Olması gereken etiket: iki okuyucunun etiketi (`expected`); sahip sonradan karar verdiyse `owner_override` (okuyucu kaydı değişmez)."""
+    return (case.get("owner_override") or {}).get("label", case["expected"])
 
 # Engel işaretini (ilan metnindeki anahtar kelime) geri üretmek için örnek ifade: dosyada ilan metni saklanmaz
 FLAG_PHRASE = {"pert/ağır hasar": "pert", "airbag açık/patlak": "airbag patlak", "vuruk/su basmış": "vuruk", "hasarlı": "hasarlı",
@@ -120,8 +125,18 @@ def test_bad_data_and_blocked_text_never_alert_today():
 
 def test_system_never_greens_a_case_that_should_not_be_green():
     """Sahibin en çok nefret ettiği hata: yanlış 🟢. Bugünkü hat, olması gereken 'yesil' olmayan hiçbir vakada 🟢 vermez."""
-    wrong = [c["id"] for c in CASES if c["expected"] != "yesil" and current_label(c) == "yesil"]
+    wrong = [c["id"] for c in CASES if want(c) != "yesil" and current_label(c) == "yesil"]
     assert wrong == []
+
+
+def test_owner_overrides_are_documented_and_limited():
+    """Sahip kararıyla değişen etiketler açıkça kayıtlı (etiket, tarih, neden) ve azdır; okuyucu kaydı (expected/second_opinion) korunur."""
+    over = [c for c in CASES if "owner_override" in c]
+    assert {c["id"] for c in over} == {"g17", "g18", "g19", "g21", "g48"}
+    for c in over:
+        o = c["owner_override"]
+        assert o["label"] in LABELS and o["date"] == "2026-10-04" and len(o["why"]) >= 30
+        assert c["expected"] == "kontrol" and c["second_opinion"]["label"] == "kontrol"  # okuyucu kaydı değişmedi
 
 
 def test_clean_synthetic_control_is_green_today():
@@ -133,6 +148,6 @@ def test_clean_synthetic_control_is_green_today():
 def test_known_mismatches_only_shrink():
     """Ratchet: olması gereken etiketten ayrışan STRICT vakalar KNOWN_MISMATCHES ile birebir aynı olmalı. Yeni ayrışma = gerileme;
     kapanan ayrışma = listeden silinmeli (liste yalnızca küçülür)."""
-    now_missing = {(c["id"], c["expected"]) for c in CASES if c["strict"] and current_label(c) != c["expected"]}
+    now_missing = {(c["id"], want(c)) for c in CASES if c["strict"] and current_label(c) != want(c)}
     assert not (now_missing - KNOWN_MISMATCHES), f"yeni gerileme: {sorted(now_missing - KNOWN_MISMATCHES)}"
     assert not (KNOWN_MISMATCHES - now_missing), f"kapandı, listeden sil: {sorted(KNOWN_MISMATCHES - now_missing)}"

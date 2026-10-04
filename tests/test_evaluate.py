@@ -4,6 +4,7 @@ import psycopg
 import pytest
 
 from application.evaluate import PCT_LIMIT, EvaluationFailure, clamp_pct, evaluate_new
+from domain.data_gate import KM_UNKNOWN_WARNING
 from domain.profit import Tier
 
 
@@ -61,10 +62,12 @@ def test_implausible_price_saved_as_none_without_alert():
     assert repo.saved[0][1]["tier"] == "yok" and "fiyat_gecersiz" in repo.saved[0][1]["red_flags"]
 
 
-def test_missing_km_never_strong():
+def test_missing_km_does_not_block_strong_but_warns():
+    """Sahip kararı (04.10.2026): km eksik/yanlışsa diğer her şey uygunsa fırsat engellenmez; mesajda uyarı olur."""
     repo = FakeRepo([car("t", 5000, km=None)], POOL)
     (ev,) = evaluate_new(repo)
-    assert ev.profit.tier is Tier.NEGOTIABLE and "km_yok" in repo.saved[0][1]["red_flags"]
+    assert ev.profit.tier is Tier.STRONG and KM_UNKNOWN_WARNING in ev.warnings
+    assert "km_yok" not in repo.saved[0][1]["red_flags"]
 
 
 def test_guessed_currency_never_strong():
@@ -94,13 +97,31 @@ def test_similar_km_stays_strong():
     assert ev.profit.tier is Tier.STRONG
 
 
-def test_zero_km_counts_as_missing_and_flag_only_when_downgraded():
+def test_zero_or_suspicious_km_counts_as_unknown_and_warns():
     repo = FakeRepo([car("t", 5000, km=0)], POOL)
     (ev,) = evaluate_new(repo)
-    assert ev.profit.tier is Tier.NEGOTIABLE and "km_yok" in repo.saved[0][1]["red_flags"]
-    repo = FakeRepo([car("t", 7000, km=None)], POOL)  # zaten kâr yetersiz (🟢 olmazdı): "bu yüzden 🟢 değil" yazılmaz
-    evaluate_new(repo)
-    assert "km_yok" not in repo.saved[0][1]["red_flags"]
+    assert ev.profit.tier is Tier.STRONG and KM_UNKNOWN_WARNING in ev.warnings
+    repo = FakeRepo([car("t", 5000, km=215)], POOL)  # eski araçta 215 km: "215 bin" yazılmış olabilir
+    (ev,) = evaluate_new(repo)
+    assert ev.profit.tier is Tier.STRONG and KM_UNKNOWN_WARNING in ev.warnings
+    repo = FakeRepo([car("t", 7000, km=None)], POOL)  # kâr <%20: 🟡; "bu yüzden 🟢 değil" (km_yok) yazılmaz ama km uyarısı görünür
+    (ev,) = evaluate_new(repo)
+    assert ev.profit.tier is Tier.NEGOTIABLE and "km_yok" not in repo.saved[0][1]["red_flags"] and KM_UNKNOWN_WARNING in ev.warnings
+
+
+def test_unknown_km_uses_the_same_20_percent_rule():
+    """Sahip kararı (04.10.2026): km bilinmiyorsa kâr şartı DEĞİŞMEZ (%20); yalnız mesajda uyarı olur."""
+    repo = FakeRepo([car("t", 6500, km=None)], POOL)  # kâr ~%22
+    (ev,) = evaluate_new(repo)
+    assert ev.profit.tier is Tier.STRONG and KM_UNKNOWN_WARNING in ev.warnings and "km_yok" not in repo.saved[0][1]["red_flags"]
+    (ev,) = evaluate_new(FakeRepo([car("t", 7500, km=None)], POOL))  # kâr ~%8: yine 🟢 değil
+    assert ev.profit.tier is not Tier.STRONG
+
+
+def test_known_km_gets_no_km_warning():
+    pool = [car(f"p{i}", 8000 + i * 100, km=60_000) for i in range(8)]
+    (ev,) = evaluate_new(FakeRepo([car("t", 5000, km=70_000)], pool))
+    assert ev.profit.tier is Tier.STRONG and KM_UNKNOWN_WARNING not in ev.warnings
 
 
 # --- Adım 1: taşma ve ilan başına hata sınırı ---

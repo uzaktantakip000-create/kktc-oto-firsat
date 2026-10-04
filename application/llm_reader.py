@@ -6,7 +6,8 @@ import os
 from datetime import datetime, timezone
 
 from application.evaluate import Evaluated
-from domain.llm_read import LlmRead, compare, parse_llm_read
+from domain.data_gate import km_unknown
+from domain.llm_read import MISMATCH_LABELS, LlmRead, compare, parse_llm_read
 from domain.profit import Tier
 from infrastructure.db.repository import Repository
 from infrastructure.fx.frankfurter import gbp_rate
@@ -17,6 +18,8 @@ SOCIAL = ("instagram", "facebook")
 FREE_TEXT = ("parser_serbest", "llm")  # serbest metinden okunan ilan (site olsa bile) bağımsız okumadan geçer
 UNCHECKED = "yapay zekâ kontrolü yapılamadı (kontrol edilmedi)"
 UNCONFIRMED = "yapay zekâ fiyatı doğrulayamadı"
+SOFT_MISMATCH = {"okuma_km"}  # km farkı 🟢'yi tek başına düşürmez, uyarı olur (sahip kararı 04.10.2026); 🟠'da engel: tahmin km'ye dayanır
+KM_READ_WARNING = MISMATCH_LABELS["okuma_km"] + ": km'yi kontrol et"
 OK_CHECK = "✅ Yapay zekâ ilanı bağımsız okudu, fiyat uyuşuyor"
 OK_CHECK_EST = "✅ Yapay zekâ ilanı bağımsız okudu: fiyat uyuşuyor, ucuzluk için gizli sorun görmedi"
 
@@ -120,8 +123,10 @@ def verify_candidates(repo: Repository, reader: LlmReader | None, evs: list[Eval
             continue
         key = _verify_key(ev)
         cached = repo.get_state(key)
-        if cached == "ok":
+        if cached in ("ok", "ok_km"):
             ev.checks.append(OK_CHECK_EST if est else OK_CHECK)
+            if cached == "ok_km":
+                ev.warnings.append(KM_READ_WARNING)
             kept.append(ev)
             continue
         if cached == "bad" and est:
@@ -136,6 +141,11 @@ def verify_candidates(repo: Repository, reader: LlmReader | None, evs: list[Eval
             kept.append(ev)
             continue
         reasons, price_ok = compare(ev.listing, read)
+        # Yumuşak yön: kayıttaki km yapay zekânın okuduğundan YÜKSEK (emsal daha ucuz bantta aranır: temkinli) ya da kayıttaki km zaten
+        # şüpheli (km bilinmiyor sayılıyor). TEHLİKELİ yön: kayıtta makul ama DÜŞÜK km (emsal şişer, "km yüksek" kontrolü susar): engel kalır.
+        km_safe = read.km is not None and (km_unknown(ev.listing) or read.km < (ev.listing.get("km") or 0))
+        soft = [r for r in reasons if r in SOFT_MISMATCH] if (not est and km_safe) else []
+        reasons = [r for r in reasons if r not in soft]
         if reasons:
             flags = reasons + ([f"sorun: «{read.problem}»"] if read.problem else [])
             _drop(repo, ev, flags, "bad")
@@ -144,9 +154,11 @@ def verify_candidates(repo: Repository, reader: LlmReader | None, evs: list[Eval
             _drop(repo, ev, ["llm_okudu"], "bad")
             continue
         if price_ok:
-            repo.set_state(key, "ok")
+            repo.set_state(key, "ok_km" if soft else "ok")
             ev.checks.append(OK_CHECK_EST if est else OK_CHECK)
         else:
             ev.warnings.append(UNCONFIRMED)
+        if soft:
+            ev.warnings.append(KM_READ_WARNING)
         kept.append(ev)
     return kept

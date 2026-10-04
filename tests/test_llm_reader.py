@@ -73,6 +73,37 @@ def test_mismatch_downgrades_and_drops_candidate():
     assert out == [] and repo.downgraded == [("L1", ["okuma_fiyat"])]
 
 
+def test_km_difference_in_safe_direction_only_warns():
+    repo = FakeRepo()
+    r = reader(repo)
+    out = lr.verify_candidates(repo, r, [ev(km=90000)])  # kayıt 90.000, yapay zekâ metinden 53.000 okudu: emsal daha ucuz bantta aranır (temkinli)
+    assert len(out) == 1 and not repo.downgraded and lr.KM_READ_WARNING in out[0].warnings and repo.state["verify:L1"] == "ok_km"
+    out = lr.verify_candidates(repo, r, [ev(km=90000)])  # önbellekten: uyarı yine eklenir, ikinci okuma ücreti yok
+    assert lr.KM_READ_WARNING in out[0].warnings and len(r.seen) == 1
+
+
+def test_km_recorded_lower_than_read_is_still_blocked():
+    """Tehlikeli yön: kayıtta makul ama düşük km (emsal şişer, 'km yüksek' kontrolü susar): 🟡'ye düşer."""
+    repo = FakeRepo()
+    out = lr.verify_candidates(repo, reader(repo), [ev(km=30000)])  # kayıt 30.000, yapay zekâ metinden 53.000 okudu
+    assert out == [] and repo.downgraded == [("L1", ["okuma_km"])]
+
+
+def test_suspicious_recorded_km_is_only_a_warning_even_if_read_is_higher():
+    repo = FakeRepo()
+    out = lr.verify_candidates(repo, reader(repo), [ev(km=215)])  # 2016 araçta 215 km zaten "bilinmiyor" sayılıyor
+    assert len(out) == 1 and not repo.downgraded and lr.KM_READ_WARNING in out[0].warnings
+
+
+def test_km_difference_still_blocks_estimated_tier():
+    from domain.profit import Tier
+    repo = FakeRepo()
+    e = ev(km=90000)
+    e.profit = type("P", (), {"tier": Tier.ESTIMATED})()
+    out = lr.verify_candidates(repo, reader(repo), [e])
+    assert out == [] and repo.downgraded and "okuma_km" in repo.downgraded[0][1]
+
+
 def test_llm_failure_keeps_candidate_with_unchecked_note():
     repo = FakeRepo()
     out = lr.verify_candidates(repo, reader(repo, data=None, err="http 500"), [ev()])

@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-RULES_VERSION = "2026-10-03b"  # değerleme kuralları değişince artır: son 7 günün (bildirimsiz) değerlendirmeleri yeniden yapılır
+RULES_VERSION = "2026-10-04"  # değerleme kuralları değişince artır: son 7 günün (bildirimsiz) değerlendirmeleri yeniden yapılır
 
 
 class Settings(BaseModel):
