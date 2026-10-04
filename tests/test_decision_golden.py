@@ -45,7 +45,7 @@ def want(case: dict) -> str:
 # Engel işaretini (ilan metnindeki anahtar kelime) geri üretmek için örnek ifade: dosyada ilan metni saklanmaz
 FLAG_PHRASE = {"pert/ağır hasar": "pert", "airbag açık/patlak": "airbag patlak", "vuruk/su basmış": "vuruk", "hasarlı": "hasarlı",
                "motor/şanzıman sorunlu": "motor sorunlu", "as is / parça": "parça araç", "kira/taksit": "peşinat",
-               "gümrüksüz/evraksız": "gümrüksüz"}
+               "gümrüksüz/evraksız": "gümrüksüz", "kredi devri/senet": "kredi devri"}
 
 
 def current_label(case: dict) -> str:

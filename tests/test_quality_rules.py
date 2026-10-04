@@ -111,3 +111,21 @@ def test_suspicious_low_km_is_treated_as_unknown():
     assert km_unknown({"km": 370, "year": 2016, "model_norm": "x"})
     assert "km_yok" not in data_gaps({"km": 370, "year": 2016, "model_norm": "x"}, m)  # km şüphesi artık engel değil (uyarı)
     assert not km_unknown({"km": 98000, "year": 2012})
+
+
+def test_credit_takeover_and_promissory_note_phrases_block_but_negations_do_not():
+    """Adım 8: kredi devri / senetle satış ilanındaki fiyat araç bedeli değildir (engel); 'senet yok' gibi olumsuzlamalar tetiklemez."""
+    from domain.red_flags import blocking_flags
+    for text in ("kredi devri ile satılık", "Kredi devir fırsatı", "krediyi devralacak alıcı aranıyor", "senetle satış yapılır",
+                 "senet var, peşin değil", "SENETLİ satılık"):
+        assert "kredi devri/senet" in blocking_flags(text), text
+    for text in ("senet yok, temiz araç", "senet istenmez", "kredisiz temiz araç", "araç krediyle alınmadı", "tek elden, bakımlı"):
+        assert "kredi devri/senet" not in blocking_flags(text), text
+
+
+def test_absurdly_cheap_price_is_flagged_for_every_comparable_count():
+    from application.evaluate import evaluate_new
+    from tests.test_evaluate import POOL, FakeRepo, car
+    repo = FakeRepo([car("t", 3000)], POOL)  # 8 emsal (medyan ~8.700), fiyat medyanın yarısından az
+    (ev,) = evaluate_new(repo)
+    assert ev.profit.tier.value == "pazarlik" and "fiyat_asiri_dusuk" in repo.saved[0][1]["red_flags"]

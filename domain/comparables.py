@@ -9,12 +9,19 @@ from domain.settings import Settings
 KM_BANDS = [(0, 50_000), (50_000, 100_000), (100_000, 150_000), (150_000, 10**9)]
 
 
+LOW_KM_OLD_AGE = 10  # bu yaştan eski araçta...
+LOW_KM_OLD_LIMIT = 15_000  # ...bu kadar kmden azı (ör. 2013 model 11.500 km = 115.000 yazılmış olabilir) şüpheli: bilinmiyor sayılır
+
+
 def effective_km(row: dict, today: date | None = None) -> int | None:
     """İlandaki km makul mü? Eski araçta 1.000 km altı çoğunlukla 'bin' yazılmış/eksik rakam (370 = 370.000): bilinmiyor say.
-    `today` verilirse (karar `now`'ı) sonuç saatten bağımsızdır; yıl dönümünde altın dosya/testler kaymasın."""
+    10+ yaşındaki araçta 15.000 km altı da şüpheli (düşük-km emsallerle kıyaslanıp sahte ucuz görünmesin; sahip kararı: km yanlışı fırsatı
+    ENGELLEMEZ, yalnız uyarı olur). `today` verilirse (karar `now`'ı) sonuç saatten bağımsızdır; yıl dönümünde altın dosya/testler kaymasın."""
     km, year = row.get("km"), row.get("year")
-    if km is not None and km < 1000 and year is not None and year <= (today or date.today()).year - 2:
-        return None
+    if km is not None and year is not None:
+        age = (today or date.today()).year - year
+        if (km < 1000 and age >= 2) or (km < LOW_KM_OLD_LIMIT and age >= LOW_KM_OLD_AGE):
+            return None
     return km
 
 

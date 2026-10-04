@@ -12,7 +12,7 @@ GAP_LABELS = {
     "km_yok": "km yazmıyor",  # ESKİ kayıtlar için etiket: km eksikliği artık 🟢'yi engellemez, uyarı olarak gider (KM_UNKNOWN_WARNING)
     "para_birimi_tahmin": "para birimi tahmin",
     "tl_fiyat": "fiyat TL: TL ilanlar GBP ilanlara göre ortalama %12-23 ucuz görünüyor; kontrol et",
-    "fiyat_asiri_dusuk": "fiyat emsallerin yarısından düşük (az emsal): yazım hatası ya da tuzak olabilir",
+    "fiyat_asiri_dusuk": "fiyat emsallerin yarısından düşük: yazım hatası ya da tuzak olabilir",
     "model_yok": "model okunamadı",
     "model_belirsiz": "model karışık havuzda (ör. CX-3/CX-5, Yaris/Yaris Cross): fiyat kıyası güvenilmez",
     "km_yuksek": "km emsallerden çok yüksek",

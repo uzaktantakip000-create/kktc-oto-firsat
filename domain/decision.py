@@ -78,7 +78,7 @@ def _market_assessment(listing: dict, market: Market, price: float, text: str, b
     if downgraded:  # eksik/şüpheli veriyle 🟢 yok: en fazla 🟡
         tier = Tier.NEGOTIABLE
     final = ProfitResult(profit.exit_price_gbp, profit.profit_gbp, profit.profit_pct, profit.confidence, tier)
-    absurd = market.n < 8 and price < market.median_gbp * s.absurd_price_ratio  # evaluate_profit bunu 'yok' yaptı: kırmızı bayrak
+    absurd = price < market.median_gbp * s.absurd_price_ratio  # evaluate_profit: n<8'de 'yok', ≥8'de en fazla 🟡 (yazım hatası/tuzak): kırmızı bayrak her n'de kayda geçer
     if tier in (Tier.STRONG, Tier.NEGOTIABLE) and km_unknown(listing, now):
         warnings = warnings + [KM_UNKNOWN_WARNING]  # km eksik/şüpheli tek başına engel değil (sahip kararı 04.10.2026): uyarıyla gider
     return Decision(market, final, blocking, warnings, gaps if downgraded else ["fiyat_asiri_dusuk"] if absurd else [], text)

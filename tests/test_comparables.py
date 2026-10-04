@@ -309,3 +309,24 @@ def test_inconsistent_thresholds_are_refused():
     from domain.settings import Settings
     with pytest.raises(ValueError):
         Settings(gbp_only_min_comparables=5, widen_until_comparables=8)  # £-yalnız piyasa genişleme eşiğinden önce geçerli olurdu: 6c tersine döner
+
+
+def test_old_cars_with_implausibly_low_km_are_treated_as_unknown_km():
+    """Adım 8: 10+ yaşında araçta 15.000 km altı (2013 model 11.500 km = 115.000 yazılmış olabilir) şüpheli; 10 yaşından genç araçta makul."""
+    from datetime import date
+
+    from domain.comparables import effective_km
+    today = date(2026, 10, 4)
+    assert effective_km({"km": 11_500, "year": 2013}, today) is None  # 13 yaşında
+    assert effective_km({"km": 14_999, "year": 2016}, today) is None  # tam 10 yaşında
+    assert effective_km({"km": 15_000, "year": 2013}, today) == 15_000  # sınır: makul
+    assert effective_km({"km": 11_500, "year": 2017}, today) == 11_500  # 9 yaşında: makul
+    assert effective_km({"km": 1000, "year": 2006}, today) is None  # (eski kural 1000'i kaçırıyordu: <1000)
+    assert effective_km({"km": 11_500, "year": None}, today) == 11_500  # yıl bilinmiyorsa dokunulmaz
+
+
+def test_old_low_km_listing_is_compared_without_a_km_band():
+    pool = [row(f"p{i}", 6000 + i * 100, year=2013, km=120_000 + i * 1000) for i in range(8)]  # 100-150 bin km bandı
+    target = row("t", 4800, year=2013, km=11_500)  # 115.000 yazılacakken 11.500: band 0'a düşüp emsalsiz kalmasın
+    m = find_market(target, pool, now=NOW)
+    assert m is not None and m.n == 8
