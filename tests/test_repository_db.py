@@ -162,13 +162,13 @@ def test_a_listing_is_sent_once_across_green_and_orange_but_the_digest_record_sp
     (alerts benzersiz indeksi hâlâ ilan+sohbet+seviye: kural kodda, 019b'de `kind` ile genişleyecek.)"""
     c, sid = db.conn, add_source(db.conn)
     lid = add_listing(c, sid, "a")
-    db.save_alert(lid, "c1", "pazarlik", 1)  # günlük özet kaydı
+    db.save_alert(lid, "c1", "pazarlik", 1, evaluation_id=None, price_gbp=None)  # günlük özet kaydı
     assert not db.alert_exists(lid, "c1", "guclu") and not db.alert_exists(lid, "c1", "tahmini")
     assert db.alert_exists(lid, "c1", "pazarlik")  # kendi seviyesi için aynen
-    db.save_alert(lid, "c1", "tahmini", 2)
+    db.save_alert(lid, "c1", "tahmini", 2, evaluation_id=None, price_gbp=None)
     assert db.alert_exists(lid, "c1", "guclu") and db.alert_exists(lid, "c1", "tahmini")  # 🟠 gitti: 🟢 de gitmez
     assert not db.alert_exists(lid, "c2", "guclu")  # başka sohbet etkilenmez
-    db.save_alert(lid, "c1", "tahmini", 3)  # aynı seviye: ON CONFLICT DO NOTHING
+    db.save_alert(lid, "c1", "tahmini", 3, evaluation_id=None, price_gbp=None)  # aynı seviye: ON CONFLICT DO NOTHING
     assert c.execute("SELECT count(*) AS n FROM alerts").fetchone()["n"] == 2
 
 
@@ -179,8 +179,8 @@ def test_pending_strong_skips_listings_already_sent_as_green_or_orange_but_not_d
     for lid in (only_digest, sent_orange, fresh):
         c.execute("INSERT INTO evaluations (listing_id, comparables_n, market_median_gbp, exit_price_gbp, profit_gbp, profit_pct, confidence, tier, evaluated_at) "
                   "VALUES (%s, 9, 8000, 7600, 1600, 26.7, 'orta', 'guclu', NOW())", (lid,))
-    db.save_alert(only_digest, "c1", "pazarlik", 1)
-    db.save_alert(sent_orange, "c1", "tahmini", 2)
+    db.save_alert(only_digest, "c1", "pazarlik", 1, evaluation_id=None, price_gbp=None)
+    db.save_alert(sent_orange, "c1", "tahmini", 2, evaluation_id=None, price_gbp=None)
     ids = {r["id"] for r in db.pending_strong(36, "guclu")}
     assert ids == {only_digest, fresh}  # 🟠 gönderilmiş ilan 🟢 olarak yeniden gelmez; yalnız özet kaydı olan gelir
 
@@ -194,7 +194,7 @@ def test_reset_evaluations_skips_alerted_inactive_and_old_ones(db):
     for lid in (plain, alerted, inactive):
         add_eval(c, lid, ago(days=1))
     add_eval(c, old, ago(days=20))
-    db.save_alert(alerted, "c1", "guclu", 1)
+    db.save_alert(alerted, "c1", "guclu", 1, evaluation_id=None, price_gbp=None)
     assert db.reset_evaluations(7) == 1  # yalnız bildirimsiz, aktif, son 7 günün değerlendirmesi
     assert c.execute("SELECT count(*) AS n FROM evaluations").fetchone()["n"] == 3
 
@@ -212,7 +212,7 @@ def test_migration_019_only_adds_nullable_columns_and_changes_nothing_else(db):
     sid = add_source(db.conn)
     lid = add_listing(db.conn, sid, "a")
     db.save_evaluation(lid, {"comparables_n": 8, "confidence": "orta", "tier": "yok"})  # eski biçimli kayıt hâlâ yazılır
-    db.save_alert(lid, "c1", "guclu", 1)
+    db.save_alert(lid, "c1", "guclu", 1, evaluation_id=None, price_gbp=None)
     row = db.conn.execute("SELECT rules_version, evidence FROM evaluations").fetchone()
     assert row["rules_version"] is None and row["evidence"] is None
 
@@ -280,3 +280,19 @@ def test_save_evaluation_stores_the_decision_record_columns(db):
     assert row["nedenler"] == ["km_yuksek", "plaka_uyari"]
     assert row["evidence"] == {"yontem": "A", "emsal_ids": [str(other)], "gbp_only": False}
     db.save_evaluation(lid, {"comparables_n": 8, "confidence": "orta", "tier": "yok", "evidence": None, "nedenler": None})  # boş kayıt da yazılır
+
+
+def test_pending_strong_returns_the_evaluation_id_and_save_alert_stores_it_with_the_price(db):
+    """Adım 5b dilim 3: bildirim kaydı, onu doğuran değerlendirme satırına ve gönderildiği andaki fiyata bağlanır (l.id ezilmez)."""
+    c, sid = db.conn, add_source(db.conn, platform="web")
+    c.execute("UPDATE sources SET alert_level='yesil' WHERE id=%s", (sid,))
+    c.execute("INSERT INTO subscribers (chat_id, status) VALUES ('c1','onayli')")
+    lid = add_listing(c, sid, "a", price_gbp=5000)
+    c.execute("INSERT INTO evaluations (listing_id, comparables_n, market_median_gbp, exit_price_gbp, profit_gbp, profit_pct, confidence, tier, evaluated_at) "
+              "VALUES (%s, 8, 9000, 8550, 3250, 65, 'orta', 'guclu', now())", (lid,))
+    (row,) = db.pending_strong(36, "guclu")
+    eval_id = c.execute("SELECT id FROM evaluations").fetchone()["id"]
+    assert row["id"] == lid and row["evaluation_id"] == eval_id
+    db.save_alert(lid, "c1", "guclu", 7, evaluation_id=row["evaluation_id"], price_gbp=row["price_gbp"])
+    got = c.execute("SELECT evaluation_id, fiyat_gonderimde::float8 AS p, kind FROM alerts").fetchone()
+    assert got["evaluation_id"] == eval_id and got["p"] == 5000 and got["kind"] is None

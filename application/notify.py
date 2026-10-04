@@ -188,7 +188,8 @@ def _burst_summary(repo: Repository, token: str, fresh: list[Evaluated], subs: l
             print(f"özet gönderilemedi (chat {sub['chat_id']}): {e.status} {e.description}")
             continue
         for ev in todo:
-            repo.save_alert(ev.listing["id"], sub["chat_id"], Tier.ESTIMATED.value, res["message_id"])
+            repo.save_alert(ev.listing["id"], sub["chat_id"], Tier.ESTIMATED.value, res["message_id"],
+                            evaluation_id=ev.listing.get("evaluation_id"), price_gbp=float(ev.listing["price_gbp"]))
         done += 1
     print(f"🟠 arıza freni: {len(fresh)} tahmini fırsat tek özet olarak gönderildi")
     notify_owner(repo, "est_burst", f"⚠️ 🟠 arıza freni: bu turda {len(fresh)} tahmini fırsat çıktı (sınır {limit}). "
@@ -235,7 +236,8 @@ def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes:
                     subs = [x for x in subs if x["chat_id"] != sub["chat_id"]]
                 print(f"bildirim gönderilemedi (chat {sub['chat_id']}): {e.status} {e.description}")
                 continue
-            repo.save_alert(ev.listing["id"], sub["chat_id"], ev.profit.tier.value, res["message_id"])
+            repo.save_alert(ev.listing["id"], sub["chat_id"], ev.profit.tier.value, res["message_id"],
+                            evaluation_id=ev.listing.get("evaluation_id"), price_gbp=float(ev.listing["price_gbp"]))
             delivered = True
         if delivered:
             sent += 1

@@ -346,7 +346,7 @@ class Repository:
         en az birine henüz gitmemiş ilanlar."""
         return self.conn.execute(
             """SELECT l.*, l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform, s.created_at AS source_created_at,
-                      e.comparables_n, e.market_median_gbp::float8 AS market_median_gbp,
+                      e.id AS evaluation_id, e.comparables_n, e.market_median_gbp::float8 AS market_median_gbp,
                       e.market_low_gbp::float8 AS market_low_gbp, e.market_high_gbp::float8 AS market_high_gbp,
                       e.exit_price_gbp::float8 AS exit_price_gbp, e.profit_gbp::float8 AS profit_gbp,
                       e.profit_pct::float8 AS profit_pct, e.confidence, e.red_flags, e.year_span,
@@ -401,7 +401,7 @@ class Repository:
         return self.conn.execute(
             """SELECT l.id, l.url, l.year, l.brand, l.model, l.km, l.location, l.first_seen_at, l.posted_at,
                       l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform,
-                      e.comparables_n, e.exit_price_gbp::float8 AS exit_price_gbp, e.profit_gbp::float8 AS profit_gbp,
+                      e.id AS evaluation_id, e.comparables_n, e.exit_price_gbp::float8 AS exit_price_gbp, e.profit_gbp::float8 AS profit_gbp,
                       e.profit_pct::float8 AS profit_pct, e.confidence, e.red_flags, e.tier, s.alert_level,
                       (SELECT MAX(h.changed_at) FROM listing_history h WHERE h.listing_id = l.id AND h.field = 'price_gbp')
                           AS price_changed_at
@@ -544,10 +544,13 @@ class Repository:
             "SELECT 1 FROM alerts WHERE listing_id=%s AND chat_id=%s AND tier = ANY(%s)", (listing_id, chat_id, _tiers_blocking(tier))
         ).fetchone() is not None
 
-    def save_alert(self, listing_id, chat_id: str, tier: str, msg_id) -> None:
+    def save_alert(self, listing_id, chat_id: str, tier: str, msg_id, *, evaluation_id, price_gbp) -> None:
+        """Bildirim kaydı. `evaluation_id`: bildirimi doğuran değerlendirme satırı; `price_gbp`: gönderildiği andaki fiyat (£).
+        İkisi de ZORUNLU anahtar (bilinmiyorsa açıkça None): unutulan bir çağıran sessizce NULL yazmasın (migration 019)."""
         self.conn.execute(
-            "INSERT INTO alerts (listing_id,chat_id,tier,telegram_msg_id) VALUES (%s,%s,%s,%s) ON CONFLICT DO NOTHING",
-            (listing_id, chat_id, tier, str(msg_id)),
+            "INSERT INTO alerts (listing_id,chat_id,tier,telegram_msg_id,evaluation_id,fiyat_gonderimde) "
+            "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+            (listing_id, chat_id, tier, str(msg_id), evaluation_id, price_gbp),
         )
 
     def acquire_lock(self, name: str, minutes: int = 16) -> str | None:

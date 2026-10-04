@@ -73,7 +73,8 @@ def send_daily_digest(repo: Repository, token: str, now: datetime | None = None)
                 break
             continue
         for r in items:
-            repo.save_alert(r["id"], sub["chat_id"], "pazarlik", res["message_id"])
+            repo.save_alert(r["id"], sub["chat_id"], "pazarlik", res["message_id"],
+                            evaluation_id=r.get("evaluation_id"), price_gbp=r.get("price_gbp"))
         sent += 1
     if sent:
         repo.mark_alerted("digest")

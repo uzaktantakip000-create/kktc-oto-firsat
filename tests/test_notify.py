@@ -13,6 +13,7 @@ NOW = datetime.now(timezone.utc)
 class FakeRepo:
     def __init__(self, subs):
         self.subs, self.alerts, self.blocked = subs, set(), []
+        self.saved_alerts = []
         self.conn = self
 
     def approved_subscribers(self):
@@ -21,8 +22,9 @@ class FakeRepo:
     def alert_exists(self, listing_id, chat_id, tier):
         return (listing_id, chat_id) in self.alerts
 
-    def save_alert(self, listing_id, chat_id, tier, msg_id):
+    def save_alert(self, listing_id, chat_id, tier, msg_id, *, evaluation_id, price_gbp):
         self.alerts.add((listing_id, chat_id))
+        self.saved_alerts.append({"listing": listing_id, "chat": chat_id, "tier": tier, "evaluation_id": evaluation_id, "price_gbp": price_gbp})
 
     def execute(self, sql, params):  # subscribers durumu güncellemesi
         self.blocked.append(params[0])
@@ -108,3 +110,16 @@ def test_sold_comparables_are_described_as_sold_not_archived():
     msg = notify.format_alert(e, comps=[{"year": 2015, "km": 50_000, "price_gbp": 8000, "is_active": False, "url": None}])
     assert "satılmış ilan" in msg and "arşiv" not in msg  # "arşiv" yanıltıcıydı: bunlar sitenin satıldı işaretli ilanları
     assert "(satılmış)" in msg
+
+
+def test_alert_record_links_the_evaluation_and_stores_the_price_at_send_time(monkeypatch):
+    """Migration 019: alerts.evaluation_id (bildirimi doğuran değerlendirme) ve fiyat_gonderimde (£) yazılır."""
+    patch_api(monkeypatch, {})
+    repo = FakeRepo(["a"])
+    e = ev(1)
+    e.listing["evaluation_id"] = "eval-uuid-1"
+    notify.send_alerts(repo, "t", [e])
+    assert repo.saved_alerts == [{"listing": 1, "chat": "a", "tier": "guclu", "evaluation_id": "eval-uuid-1", "price_gbp": 5000.0}]
+    repo2 = FakeRepo(["a"])
+    notify.send_alerts(repo2, "t", [ev(2)])  # değerlendirme kimliği olmayan satır (eski yol): None yazılır, gönderim engellenmez
+    assert repo2.saved_alerts[0]["evaluation_id"] is None and repo2.saved_alerts[0]["price_gbp"] == 5000.0
