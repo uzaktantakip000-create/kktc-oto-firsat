@@ -28,7 +28,7 @@ class Repo:
         return 0
 
     def purge_personal_data(self):
-        return 0, 0
+        return 0, 0, 0
 
 
 def wire(monkeypatch, evaluate_new):

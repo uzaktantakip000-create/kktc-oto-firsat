@@ -62,7 +62,7 @@ class Repo:
         return 0
 
     def purge_personal_data(self):
-        return 0, 0
+        return 0, 0, 0
 
 
 def test_cron_evaluate_sends_only_what_passes_the_floor(monkeypatch):

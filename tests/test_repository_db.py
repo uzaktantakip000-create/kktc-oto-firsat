@@ -133,13 +133,17 @@ def test_deactivate_missing_only_closes_active_listings_absent_from_the_sitemap(
 
 def test_retention_purges_personal_data_of_inactive_listings_only(db):
     c, sid = db.conn, add_source(db.conn)
-    add_listing(c, sid, "old", is_active=False, seller_phone="905550000001", raw_text="metin", last_seen_at=ago(days=200))
-    add_listing(c, sid, "mid", is_active=False, seller_phone="905550000002", raw_text="metin", last_seen_at=ago(days=100))
-    add_listing(c, sid, "new", is_active=False, seller_phone="905550000003", raw_text="metin", last_seen_at=ago(days=10))
-    add_listing(c, sid, "live", is_active=True, seller_phone="905550000004", raw_text="metin", last_seen_at=ago(days=300))
-    assert db.purge_personal_data() == (2, 1)  # telefon: 90+ gün (old, mid); metin: 180+ gün (old)
-    got = {r["source_item_id"]: (r["seller_phone"], r["raw_text"]) for r in c.execute("SELECT * FROM listings").fetchall()}
-    assert got["old"] == (None, None) and got["mid"] == (None, "metin") and got["new"][0] and got["live"] == ("905550000004", "metin")
+    kw = dict(raw_text="metin", seller_handle="Ad Soyad")
+    add_listing(c, sid, "old", is_active=False, seller_phone="905550000001", last_seen_at=ago(days=200), **kw)
+    add_listing(c, sid, "mid", is_active=False, seller_phone="905550000002", last_seen_at=ago(days=100), **kw)
+    add_listing(c, sid, "m160", is_active=False, seller_phone="905550000005", last_seen_at=ago(days=160), **kw)
+    add_listing(c, sid, "new", is_active=False, seller_phone="905550000003", last_seen_at=ago(days=10), **kw)
+    add_listing(c, sid, "live", is_active=True, seller_phone="905550000004", last_seen_at=ago(days=300), **kw)
+    # telefon: 90+ gün (old, m160, mid); satıcı adı: 150+ gün (old, m160); metin: 180+ gün (old)
+    assert db.purge_personal_data() == (3, 2, 1)
+    got = {r["source_item_id"]: (r["seller_phone"], r["seller_handle"], r["raw_text"]) for r in c.execute("SELECT * FROM listings").fetchall()}
+    assert got["old"] == (None, None, None) and got["m160"] == (None, None, "metin") and got["mid"] == (None, "Ad Soyad", "metin")
+    assert got["new"][0] and got["new"][1] and got["live"] == ("905550000004", "Ad Soyad", "metin")
 
 
 def test_expire_unverifiable_closes_old_social_but_not_web_listings(db):

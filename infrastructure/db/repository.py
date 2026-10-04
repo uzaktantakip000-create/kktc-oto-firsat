@@ -136,20 +136,27 @@ class Repository:
         )
         return cur.rowcount
 
-    def purge_personal_data(self, phone_days: int = 90, text_days: int = 180) -> tuple[int, int]:
-        """Saklama politikası: pasif ilanın telefonu phone_days, ilan metni text_days sonra silinir.
-        Fiyat/yıl/km gibi emsal alanları kalır (değerleme bozulmaz). Süre, ilanın son görülmesinden sayılır."""
+    def purge_personal_data(self, phone_days: int = 90, text_days: int = 180, handle_days: int = 150) -> tuple[int, int, int]:
+        """Saklama politikası: pasif ilanın telefonu phone_days, satıcı adı/hesabı (seller_handle) handle_days, ilan metni text_days
+        sonra silinir. Fiyat/yıl/km gibi emsal alanları kalır (değerleme bozulmaz). Süre, ilanın son görülmesinden sayılır.
+        handle_days (150) emsal penceresinden (120 gün) uzundur: temizlik havuzdaki satıcı sayımını bozmaz.
+        Dönen: (telefon, satıcı adı, metin) sayıları."""
         phones = self.conn.execute(
             """UPDATE listings SET seller_phone=NULL
                WHERE NOT is_active AND seller_phone IS NOT NULL AND last_seen_at < NOW() - make_interval(days => %s)""",
             (phone_days,),
+        ).rowcount
+        handles = self.conn.execute(
+            """UPDATE listings SET seller_handle=NULL
+               WHERE NOT is_active AND seller_handle IS NOT NULL AND last_seen_at < NOW() - make_interval(days => %s)""",
+            (handle_days,),
         ).rowcount
         texts = self.conn.execute(
             """UPDATE listings SET raw_text=NULL
                WHERE NOT is_active AND raw_text IS NOT NULL AND last_seen_at < NOW() - make_interval(days => %s)""",
             (text_days,),
         ).rowcount
-        return phones, texts
+        return phones, handles, texts
 
     def dedupe_candidates(self, days: int = 120, new_hours: int | None = None) -> list[dict]:
         """Mükerrer taraması için ilanlar. `new_hours` verilirse yalnız son 'new_hours' saatte yeni ilan görülen (marka, model, yıl)

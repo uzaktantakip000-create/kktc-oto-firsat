@@ -121,9 +121,9 @@ def run(repo: Repository) -> None:
     except Exception as e:  # mükerrer işaretleme hatası değerlendirmeyi engellemesin
         print("mükerrer işaretleme başarısız:", type(e).__name__, redact(str(e))[:150])
     try:
-        phones, texts = repo.purge_personal_data()  # saklama politikası: pasif ilanda telefon 90 gün, metin 180 gün
-        if phones or texts:
-            print(f"saklama temizliği: telefon={phones} metin={texts}")
+        phones, handles, texts = repo.purge_personal_data()  # saklama politikası: pasif ilanda telefon 90, satıcı adı 150, metin 180 gün
+        if phones or handles or texts:
+            print(f"saklama temizliği: telefon={phones} satıcı_adı={handles} metin={texts}")
     except Exception as e:
         print("saklama temizliği başarısız:", type(e).__name__, redact(str(e))[:150])
     settings = load_settings(repo)  # kullanıcının Telegram'dan verdiği kararlar
