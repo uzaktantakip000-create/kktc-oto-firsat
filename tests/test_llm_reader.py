@@ -23,7 +23,7 @@ class FakeRepo:
     def set_state(self, k, v):
         self.state[k] = v
 
-    def downgrade_evaluation(self, listing_id, flags):
+    def downgrade_evaluation(self, listing_id, flags, evaluation_id=None):
         self.downgraded.append((listing_id, flags))
 
     def known_item_ids(self, source_id):

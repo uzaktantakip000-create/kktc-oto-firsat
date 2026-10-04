@@ -17,7 +17,7 @@ class FakeRepo:
         self.pool_calls.append(keys)  # keys: [(brand_norm, model_norm), ...] ya da None (tüm havuz)
         return [r for r in self._pool if keys is None or (r["brand_norm"], r["model_norm"]) in keys]
 
-    def unevaluated_active(self, recheck_days=3, recent_hours=None):
+    def unevaluated_active(self, recheck_days=3, recent_hours=None, rules_version=None):
         self.recent_args.append(recent_hours)
         return self._listings
 

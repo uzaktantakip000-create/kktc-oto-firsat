@@ -185,18 +185,82 @@ def test_pending_strong_skips_listings_already_sent_as_green_or_orange_but_not_d
     assert ids == {only_digest, fresh}  # 🟠 gönderilmiş ilan 🟢 olarak yeniden gelmez; yalnız özet kaydı olan gelir
 
 
-def test_reset_evaluations_skips_alerted_inactive_and_old_ones(db):
+def add_versioned_eval(conn, listing_id, evaluated_at, version, tier="yok"):
+    conn.execute("INSERT INTO evaluations (listing_id, evaluated_at, comparables_n, confidence, tier, rules_version, saticilar_n, evidence, nedenler, "
+                 "red_flags, market_median_gbp, profit_pct) VALUES (%s,%s,8,'orta',%s,%s,5,'{\"yontem\": \"A\"}', ARRAY['km_yuksek'], ARRAY['km_yuksek'], 9000, 40)",
+                 (listing_id, evaluated_at, tier, version))
+
+
+def test_unevaluated_active_rules_version_branch_only_picks_notification_candidates(db):
+    """Adım 5b dilim 2: sürüm dalı (yalnız tam tur): son satırı başka sürümlü VE bildirime aday (taze / fiyatı yeni değişmiş / taze 🟢-🟠) ilanlar;
+    NULL sürüm dahil (IS DISTINCT FROM); bildirimi olan ilan da dahil (kısmen gönderilmiş 🟢 kaybolmasın); eski ilan dahil DEĞİL (döngü yok)."""
     c, sid = db.conn, add_source(db.conn)
-    plain = add_listing(c, sid, "plain")
-    alerted = add_listing(c, sid, "alerted")
-    inactive = add_listing(c, sid, "inactive", is_active=False)
-    old = add_listing(c, sid, "old")
-    for lid in (plain, alerted, inactive):
-        add_eval(c, lid, ago(days=1))
-    add_eval(c, old, ago(days=20))
+    fresh_old_ver = add_listing(c, sid, "fresh_old")  # taze, eski sürüm
+    add_versioned_eval(c, fresh_old_ver, ago(hours=2), "eski")
+    fresh_null = add_listing(c, sid, "fresh_null")  # taze, sürümsüz satır (NULL)
+    add_eval(c, fresh_null, ago(hours=2))
+    fresh_current = add_listing(c, sid, "fresh_cur")  # taze, güncel sürüm: dahil değil
+    add_versioned_eval(c, fresh_current, ago(hours=2), "yeni")
+    old_listing = add_listing(c, sid, "old", first_seen_at=ago(days=10))  # eski ilan, eski sürüm, 🟡: dahil değil (bildirim üretemez)
+    add_versioned_eval(c, old_listing, ago(hours=2), "eski")
+    repriced = add_listing(c, sid, "repriced", first_seen_at=ago(days=10))  # eski ilan ama son 48 saatte fiyatı değişmiş
+    add_versioned_eval(c, repriced, ago(hours=30), "eski")
+    c.execute("INSERT INTO listing_history (listing_id, field, old_value, new_value, changed_at) VALUES (%s,'price_gbp','6000','5000', now() - interval '3 hours')", (repriced,))
+    old_green = add_listing(c, sid, "old_green", first_seen_at=ago(days=10))  # eski ilan ama son satırı 🟢 ve 36 saatten yeni
+    add_versioned_eval(c, old_green, ago(hours=5), "eski", tier="guclu")
+    alerted = add_listing(c, sid, "alerted")  # taze, eski sürüm, bildirimi VAR (kısmen gönderilmiş): dahil
+    add_versioned_eval(c, alerted, ago(hours=3), "eski", tier="guclu")
     db.save_alert(alerted, "c1", "guclu", 1, evaluation_id=None, price_gbp=None)
-    assert db.reset_evaluations(7) == 1  # yalnız bildirimsiz, aktif, son 7 günün değerlendirmesi
-    assert c.execute("SELECT count(*) AS n FROM evaluations").fetchone()["n"] == 3
+    assert items(db.unevaluated_active(rules_version="yeni")) == {"fresh_old", "fresh_null", "repriced", "old_green", "alerted"}
+    assert items(db.unevaluated_active(recent_hours=3, rules_version="yeni")) == set()  # hızlı tur sürüm dalına bakmaz
+    assert db.count_stale_rules("yeni") == 6  # bilgi sayacı: fresh_old, fresh_null, old, repriced, old_green, alerted
+    assert db.conn.execute("SELECT count(*) AS n FROM evaluations").fetchone()["n"] == 7  # HİÇBİR satır silinmedi
+
+
+def test_downgrade_evaluation_inserts_a_copy_and_never_changes_the_original(db):
+    """Adım 5b dilim 2: düşürme UPDATE değil EKLEME: doğrulanan satırın kopyası (tüm sütunlar), tier 🟡, nedenler eklenir, 1 µs sonra."""
+    c, sid = db.conn, add_source(db.conn)
+    lid = add_listing(c, sid, "a")
+    add_versioned_eval(c, lid, ago(hours=1), "yeni", tier="guclu")
+    orig = c.execute("SELECT * FROM evaluations").fetchone()
+    db.downgrade_evaluation(lid, ["okuma_fiyat", "llm_okudu"], evaluation_id=orig["id"])
+    rows = c.execute("SELECT * FROM evaluations ORDER BY evaluated_at").fetchall()
+    assert len(rows) == 2
+    old, new = rows
+    assert old == orig  # eski satır DEĞİŞMEDİ
+    assert new["id"] != old["id"] and new["tier"] == "pazarlik" and new["listing_id"] == lid
+    assert (new["evaluated_at"] - old["evaluated_at"]).total_seconds() == pytest.approx(1e-6, abs=1e-7)
+    assert new["red_flags"] == ["km_yuksek", "okuma_fiyat", "llm_okudu"] and new["nedenler"] == ["km_yuksek", "okuma_fiyat", "llm_okudu"]
+    for col in ("rules_version", "saticilar_n", "comparables_n", "market_median_gbp", "profit_pct", "confidence"):
+        assert new[col] == old[col], col  # kopya tüm sütunları taşır
+    assert new["evidence"]["yontem"] == "A" and "dusuruldu_an" in new["evidence"]
+    # evaluation_id verilmezse ilanın son satırı kopyalanır; boş neden listesi nedenler'e dokunmaz
+    db.downgrade_evaluation(lid, [])
+    last = c.execute("SELECT * FROM evaluations ORDER BY evaluated_at DESC LIMIT 1").fetchone()
+    assert last["tier"] == "pazarlik" and last["nedenler"] == new["nedenler"] and c.execute("SELECT count(*) AS n FROM evaluations").fetchone()["n"] == 3
+    # başka ilanın değerlendirme kimliği bu ilan için kopyalanamaz
+    other = add_listing(c, sid, "b")
+    add_versioned_eval(c, other, ago(hours=1), "yeni")
+    other_eval = c.execute("SELECT id FROM evaluations WHERE listing_id=%s", (other,)).fetchone()["id"]
+    before = c.execute("SELECT count(*) AS n FROM evaluations").fetchone()["n"]
+    db.downgrade_evaluation(lid, ["x"], evaluation_id=other_eval)
+    assert c.execute("SELECT count(*) AS n FROM evaluations").fetchone()["n"] == before  # eşleşmedi: kopya yok
+
+
+def test_pending_strong_rules_version_filter_is_applied_to_the_latest_row_only(db):
+    """Opus K2b: süzgeç DISTINCT ON'un dışında. Daha yeni bir 🟡 satırı varken eski 🟢 satırı (hatta güncel sürümlü) gönderilemez; eski sürümün son 🟢'si de."""
+    c, sid = db.conn, add_source(db.conn)
+    c.execute("UPDATE sources SET alert_level='yesil' WHERE id=%s", (sid,))
+    c.execute("INSERT INTO subscribers (chat_id, status) VALUES ('c1','onayli')")
+    current = add_listing(c, sid, "current")
+    add_versioned_eval(c, current, ago(hours=2), "yeni", tier="guclu")
+    old_ver = add_listing(c, sid, "old_ver")
+    add_versioned_eval(c, old_ver, ago(hours=2), "eski", tier="guclu")
+    downgraded = add_listing(c, sid, "downgraded")
+    add_versioned_eval(c, downgraded, ago(hours=2), "yeni", tier="guclu")
+    db.downgrade_evaluation(downgraded, ["llm_okudu"])  # en son satır artık 🟡
+    assert items(db.pending_strong(36, "guclu", rules_version="yeni")) == {"current"}
+    assert items(db.pending_strong(36, "guclu")) == {"current", "old_ver"}  # süzgeçsiz çağrı eskisi gibi (🟡 son satırlı olan yine yok)
 
 
 def test_migration_019_only_adds_nullable_columns_and_changes_nothing_else(db):

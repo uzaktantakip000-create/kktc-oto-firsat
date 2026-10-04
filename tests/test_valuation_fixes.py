@@ -166,10 +166,10 @@ def test_lock_expires_in_16_minutes():
     assert conn.calls[0][1] == ("lock:evaluate", 16)
 
 
-# --- 7. kural sürümü ---
+# --- 7. kural sürümü (Adım 5b dilim 2: ekleme-yalnız; hiçbir şey silinmez) ---
 class VRepo:
     def __init__(self, state=None):
-        self.state, self.reset_days = state or {}, []
+        self.state, self.stale_asked = state or {}, []
 
     def get_state(self, k, default=None):
         return self.state.get(k, default)
@@ -177,22 +177,22 @@ class VRepo:
     def set_state(self, k, v):
         self.state[k] = v
 
-    def reset_evaluations(self, days):
-        self.reset_days.append(days)
+    def count_stale_rules(self, version):
+        self.stale_asked.append(version)
         return 5
 
 
-def test_rules_version_change_resets_once():
-    repo = VRepo({"rules_version": "eski"})
-    assert cron_evaluate.apply_rules_version(repo) == 5 and repo.reset_days == [7]
+def test_rules_version_change_forces_a_full_round_without_deleting_anything():
+    repo = VRepo({"rules_version": "2026-01-01"})
+    assert cron_evaluate.apply_rules_version(repo) == 5 and repo.stale_asked == [RULES_VERSION]
     assert repo.state["rules_version"] == RULES_VERSION == "2026-10-04f"
-    assert repo.state["eval:full"] == ""  # silinen değerlendirmeler saatlik tam turu beklemez: sonraki tur TAM tur olur
-    assert cron_evaluate.apply_rules_version(repo) == 0 and repo.reset_days == [7]  # aynı sürüm: silme yok
+    assert repo.state["eval:full"] == ""  # sürüm dalı yalnız TAM turda çalışır: sonraki tur TAM tur olur
+    assert cron_evaluate.apply_rules_version(repo) == 0 and repo.stale_asked == [RULES_VERSION]  # aynı sürüm: iş yok
     assert cron_evaluate.apply_rules_version(VRepo()) == 5  # hiç yazılmamışsa da bir kez
 
 
-def test_reset_evaluations_never_touches_alerted_or_inactive():
-    conn = Conn()
-    assert repo_with(conn).reset_evaluations(7) == 3
-    sql, params = conn.calls[0]
-    assert "NOT EXISTS (SELECT 1 FROM alerts" in sql and "l.is_active" in sql and params == (7,)
+def test_rules_version_is_only_ever_written_forward():
+    """Yayın anında hâlâ çalışan eski kod, yeni sürümü geri yazmasın (iki kod sırayla birbirinin işini bozmasın)."""
+    repo = VRepo({"rules_version": "2099-01-01"})  # daha yeni sürümü yazmış başka bir (yeni) çalışma
+    assert cron_evaluate.apply_rules_version(repo) == 0
+    assert repo.state == {"rules_version": "2099-01-01"} and repo.stale_asked == []

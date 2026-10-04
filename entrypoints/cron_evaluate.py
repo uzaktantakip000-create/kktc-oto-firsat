@@ -50,13 +50,16 @@ def main() -> None:
 
 
 def apply_rules_version(repo: Repository) -> int:
-    """Kural sürümü bot_state'tekinden farklıysa bildirimsiz yeni değerlendirmeleri sil (hemen yeni kurallarla yenilenir), sürümü yaz."""
-    if repo.get_state("rules_version") == RULES_VERSION:
+    """Kural sürümü bot_state'tekinden YENİYSE sürümü yazar ve bir sonraki turu TAM tur yapar: son değerlendirmesi başka sürümle yapılmış
+    bildirime aday ilanlar yeniden değerlendirilir (`unevaluated_active(rules_version=...)`). Hiçbir şey SİLİNMEZ (değerlendirmeler
+    ekleme-yalnız); eski sürüm satırları kalır ama `pending_strong` onları göndermez. Yalnız İLERİ yazar: yayın anında hâlâ çalışan eski kod
+    sürümü geri almasın. Dönen: son değerlendirmesi başka sürümle yapılmış aktif ilan sayısı (bilgi)."""
+    stored = repo.get_state("rules_version")
+    if stored is not None and stored >= RULES_VERSION:  # aynı ya da daha yeni (sürüm adları tarih+harf: sözlük sırası = zaman sırası)
         return 0
-    n = repo.reset_evaluations(7)
+    n = repo.count_stale_rules(RULES_VERSION)
     repo.set_state("rules_version", RULES_VERSION)
-    if n:
-        repo.set_state(EVAL_FULL_KEY, "")  # silinen değerlendirmeler saatlik tam turu beklemesin: hemen yenilensin
+    repo.set_state(EVAL_FULL_KEY, "")  # sürüm dalı yalnız tam turda: saatlik turu beklemesin, hemen yenilensin
     return n
 
 
@@ -112,7 +115,7 @@ def run(repo: Repository) -> None:
     try:
         n = apply_rules_version(repo)
         if n:
-            print(f"kural sürümü {RULES_VERSION}: {n} değerlendirme yenilenecek")
+            print(f"kural sürümü {RULES_VERSION}: son değerlendirmesi eski sürümle yapılmış {n} aktif ilan (bildirime aday olanlar yenilenecek)")
     except Exception as e:  # sürüm işi değerlendirmeyi engellemesin
         print("kural sürümü uygulanamadı:", type(e).__name__, redact(str(e))[:150])
     try:

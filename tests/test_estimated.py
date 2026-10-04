@@ -196,7 +196,7 @@ def test_pending_alerts_builds_estimated(monkeypatch):
              model_norm="vitz", first_seen_at=now, posted_at=None)
 
     class R:
-        def pending_strong(self, hours, tier):
+        def pending_strong(self, hours, tier, rules_version=None):
             assert tier == "tahmini"
             return [r]
 

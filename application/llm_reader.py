@@ -91,7 +91,7 @@ def listing_fields(read: LlmRead | None) -> dict | None:
 
 
 def _drop(repo: Repository, ev: Evaluated, flags: list[str], verdict: str) -> None:
-    repo.downgrade_evaluation(ev.listing["id"], flags)
+    repo.downgrade_evaluation(ev.listing["id"], flags, evaluation_id=ev.listing.get("evaluation_id"))
     repo.set_state(_verify_key(ev), verdict)
 
 
@@ -130,7 +130,7 @@ def verify_candidates(repo: Repository, reader: LlmReader | None, evs: list[Eval
             kept.append(ev)
             continue
         if cached == "bad" and est:
-            repo.downgrade_evaluation(ev.listing["id"], ["llm_okudu"] if llm_priced else [])  # önceki karar: yine 🟡
+            repo.downgrade_evaluation(ev.listing["id"], ["llm_okudu"] if llm_priced else [], evaluation_id=ev.listing.get("evaluation_id"))  # önceki karar: yine 🟡
             continue
         read = reader.read(ev.listing.get("raw_text") or "")
         if read is None:

@@ -116,7 +116,7 @@ def evaluate_new(repo: Repository, settings: Settings | None = None, book=_LOAD,
     s = settings or Settings()
     if book is _LOAD:
         book = load_book(repo) if s.estimated_alerts else None
-    listings = repo.unevaluated_active(recent_hours=QUICK_NEW_HOURS) if quick else repo.unevaluated_active()
+    listings = repo.unevaluated_active(recent_hours=QUICK_NEW_HOURS) if quick else repo.unevaluated_active(rules_version=RULES_VERSION)
     candidates = [l for l in listings if is_car_brand(l.get("brand_norm"))]  # motosiklet/tekne/karavan/ticari: bu sistem otomobil içindir
     if not candidates:
         return []
@@ -147,7 +147,7 @@ def pending_alerts(repo: Repository, hours: int = 36, tier: Tier = Tier.STRONG, 
     """Gönderilmesi gereken fırsatlar (varsayılan 🟢; tier=Tier.ESTIMATED ile 🟠): yeni değerlendirilenler + daha önce
     gönderilemeyenler (hata, hız sınırı, yeni abone). `book` verilirse mesaja "📘 Değer tablosu" satırı için satır eklenir."""
     out = []
-    for r in repo.pending_strong(hours, tier.value):
+    for r in repo.pending_strong(hours, tier.value, rules_version=RULES_VERSION):
         text = (r["raw_text"] or "") + " " + (r["model"] or "")
         med = r["market_median_gbp"]
         market = Market(r["comparables_n"], med, r["market_low_gbp"] or med, r["market_high_gbp"] or med,

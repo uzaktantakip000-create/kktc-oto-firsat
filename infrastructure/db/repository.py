@@ -160,28 +160,49 @@ class Repository:
             args,
         ).fetchall()
 
-    def unevaluated_active(self, recheck_days: int = 3, recent_hours: int | None = None) -> list[dict]:
+    def unevaluated_active(self, recheck_days: int = 3, recent_hours: int | None = None, rules_version: str | None = None) -> list[dict]:
         """Değerlendirilecek aktif ilanlar: hiç değerlendirilmemiş, fiyatı değişmiş ya da değerlendirmesi 'recheck_days'
         günden eski (piyasa/emsal havuzu değişmiş olabilir). Mükerrer ilanlar atlanır.
         `recent_hours` verilirse HIZLI tur: yalnız son 'recent_hours' saatte görülüp hiç değerlendirilmemiş ya da fiyatı değişmiş
-        ilanlar (eski "emsal yok" birikimi ve 'recheck' dalı tam turda, saatte bir bakılır)."""
+        ilanlar (eski "emsal yok" birikimi, 'recheck' ve kural sürümü dalları tam turda, saatte bir bakılır).
+        `rules_version` verilirse (yalnız TAM tur): son değerlendirmesi BAŞKA kural sürümüyle yapılmış (NULL dahil: IS DISTINCT FROM) ve
+        bildirime ADAY ilanlar da yeniden değerlendirilir: ilk görülmesi ≤48 saat, ≤48 saatte fiyatı değişmiş ya da son satırı 🟢/🟠 ≤36 saat.
+        (Eski ilanın yeniden değerlendirmesi bildirim üretemez: tazelik kapısı; kalanı zaten 3 günlük yeniden bakışla yenilenir.)
+        Bildirimi olan ilan DA dahildir: kısmen gönderilmiş 🟢 yeni abone için kaybolmasın (tekrar gönderimi alerts engeller)."""
         stale_sql, args = "OR last_ev.at < NOW() - make_interval(days => %s)", [recheck_days]
         new_sql = "last_ev.at IS NULL"
+        version_sql = ""
         if recent_hours is not None:
             stale_sql, args = "", [recent_hours]
             new_sql = "(last_ev.at IS NULL AND l.first_seen_at > NOW() - make_interval(hours => %s))"
+        elif rules_version is not None:
+            version_sql = """OR (last_ev.at IS NOT NULL AND last_ev.rv IS DISTINCT FROM %s
+                          AND (l.first_seen_at > NOW() - interval '48 hours'
+                               OR EXISTS (SELECT 1 FROM listing_history h2 WHERE h2.listing_id=l.id AND h2.field='price_gbp'
+                                          AND h2.changed_at > NOW() - interval '48 hours')
+                               OR (last_ev.tier IN ('guclu','tahmini') AND last_ev.at > NOW() - interval '36 hours')))"""
+            args.append(rules_version)
         return self.conn.execute(
             f"""SELECT l.*, l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform
                FROM listings l JOIN sources s ON s.id=l.source_id
-               LEFT JOIN LATERAL (SELECT MAX(evaluated_at) AS at FROM evaluations e WHERE e.listing_id=l.id) last_ev ON TRUE
+               LEFT JOIN LATERAL (SELECT evaluated_at AS at, rules_version AS rv, tier FROM evaluations e WHERE e.listing_id=l.id
+                                  ORDER BY evaluated_at DESC LIMIT 1) last_ev ON TRUE
                WHERE l.is_active AND l.duplicate_of IS NULL AND l.price_gbp IS NOT NULL AND l.brand_norm IS NOT NULL
                  AND l.karantina_nedeni IS NULL
                  AND ({new_sql}
                       {stale_sql}
                       OR EXISTS (SELECT 1 FROM listing_history h WHERE h.listing_id=l.id AND h.field='price_gbp'
-                                 AND h.changed_at > last_ev.at))""",
+                                 AND h.changed_at > last_ev.at)
+                      {version_sql})""",
             args,
         ).fetchall()
+
+    def count_stale_rules(self, rules_version: str) -> int:
+        """Bilgi amaçlı: son değerlendirmesi başka kural sürümüyle yapılmış aktif ilan sayısı (silme/yazma YOK)."""
+        return self.conn.execute(
+            """SELECT count(*) AS n FROM listings l
+               JOIN LATERAL (SELECT rules_version AS rv FROM evaluations e WHERE e.listing_id=l.id ORDER BY evaluated_at DESC LIMIT 1) last_ev ON TRUE
+               WHERE l.is_active AND last_ev.rv IS DISTINCT FROM %s""", (rules_version,)).fetchone()["n"]
 
     def expire_unverifiable(self, days: int = 30) -> int:
         """Satıldı/silindi bilgisi izlenemeyen kaynaklarda (Instagram, kktcarabam) eski ilanı pasifleştirir."""
@@ -356,17 +377,39 @@ class Repository:
             (row["brand_norm"], row["model_norm"], days)).fetchone()["n"]
         return row["brand_norm"], row["model_norm"], n
 
-    def downgrade_evaluation(self, listing_id, flags: list[str]) -> None:
-        """Son değerlendirmeyi 🟢'den 🟡'ye düşürür ve nedenleri red_flags'e ekler (bağımsız okuma uyuşmadı)."""
+    def _evaluation_columns(self) -> list[str]:
+        """evaluations tablosunun sütunları (ileride eklenen bir sütun düşürme kopyasında sessizce kaybolmasın); süreç başına bir kez."""
+        cols = getattr(self, "_eval_cols", None)
+        if cols is None:
+            rows = self.conn.execute("SELECT column_name FROM information_schema.columns WHERE table_schema='public' "
+                                     "AND table_name='evaluations' ORDER BY ordinal_position").fetchall()
+            cols = self._eval_cols = [r["column_name"] for r in rows]
+        return cols
+
+    def downgrade_evaluation(self, listing_id, flags: list[str], evaluation_id=None) -> None:
+        """🟢/🟠'yi 🟡'ye düşürür (bağımsız okuma uyuşmadı). EKLEME-YALNIZ: doğrulanan satırın (evaluation_id; verilmezse ilanın son satırı)
+        KOPYASI eklenir: tier='pazarlik', nedenler red_flags/nedenler'e eklenir, düşürme anı kanıta yazılır, evaluated_at kaynak satırın
+        1 µs sonrasıdır (en yeni satır olsun; eşitlikte sıralama belirsiz kalmasın). Eski satır DEĞİŞMEZ."""
+        keep = [c for c in self._evaluation_columns() if c not in ("id", "evaluated_at", "tier", "red_flags", "nedenler", "evidence")]
+        cols = ", ".join(keep)
+        by_id = evaluation_id is not None
+        src = "e.id = %s AND e.listing_id = %s" if by_id else "e.id = (SELECT id FROM evaluations WHERE listing_id = %s ORDER BY evaluated_at DESC LIMIT 1)"
+        src_args = [evaluation_id, listing_id] if by_id else [listing_id]
         self.conn.execute(
-            """UPDATE evaluations SET tier='pazarlik', red_flags = COALESCE(red_flags, '{}') || %s::text[]
-               WHERE id = (SELECT id FROM evaluations WHERE listing_id=%s ORDER BY evaluated_at DESC LIMIT 1)""",
-            (flags, listing_id),
+            f"""INSERT INTO evaluations ({cols}, evaluated_at, tier, red_flags, nedenler, evidence)
+                SELECT {cols}, e.evaluated_at + interval '1 microsecond', 'pazarlik', COALESCE(e.red_flags, '{{}}') || %s::text[],
+                       CASE WHEN cardinality(%s::text[]) > 0 THEN COALESCE(e.nedenler, '{{}}') || %s::text[] ELSE e.nedenler END,
+                       COALESCE(e.evidence, '{{}}'::jsonb) || jsonb_build_object('dusuruldu_an', clock_timestamp()::text)
+                FROM evaluations e WHERE {src}""",
+            [flags, flags, flags, *src_args],
         )
 
-    def pending_strong(self, hours: int = 36, tier: str = "guclu") -> list[dict]:
+    def pending_strong(self, hours: int = 36, tier: str = "guclu", rules_version: str | None = None) -> list[dict]:
         """Son 'hours' saatte 'tier' (varsayılan 🟢 'guclu'; 🟠 için 'tahmini') değerlendirilmiş, ama onaylı abonelerden
-        en az birine henüz gitmemiş ilanlar."""
+        en az birine henüz gitmemiş ilanlar. `rules_version` verilirse yalnız O sürümle yapılmış EN SON satırlar (eski sürümün 🟢'si gitmez;
+        süzgeç DISTINCT ON alt sorgusunun DIŞINDA: daha yeni bir 🟡 satırı varken eski 🟢 satırı seçilmesin)."""
+        rv_sql = " AND e.rules_version = %s" if rules_version is not None else ""
+        rv_args = (rules_version,) if rules_version is not None else ()
         return self.conn.execute(
             """SELECT l.*, l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform, s.created_at AS source_created_at,
                       e.id AS evaluation_id, e.comparables_n, e.market_median_gbp::float8 AS market_median_gbp,
@@ -379,11 +422,12 @@ class Repository:
                           AS price_changed_at
                FROM (SELECT DISTINCT ON (listing_id) * FROM evaluations ORDER BY listing_id, evaluated_at DESC) e
                JOIN listings l ON l.id = e.listing_id JOIN sources s ON s.id = l.source_id
-               WHERE e.tier = %s AND s.alert_level = 'yesil' AND l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL AND e.evaluated_at > NOW() - make_interval(hours => %s)
+               WHERE e.tier = %s AND s.alert_level = 'yesil' AND l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL AND e.evaluated_at > NOW() - make_interval(hours => %s)"""
+            + rv_sql + """
                  AND EXISTS (SELECT 1 FROM subscribers sub WHERE sub.status = 'onayli' AND NOT EXISTS (
                        SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.chat_id = sub.chat_id AND a.tier = ANY(%s)))
                ORDER BY e.profit_pct DESC""",
-            (tier, hours, _tiers_blocking(tier)),
+            (tier, hours, *rv_args, _tiers_blocking(tier)),
         ).fetchall()
 
     def first_seen_since(self, days: int) -> list[dict]:
@@ -587,15 +631,6 @@ class Repository:
             (f"lock:{name}", minutes),
         ).fetchone()
         return row["value"] if row else None
-
-    def reset_evaluations(self, days: int = 7) -> int:
-        """Kural sürümü değişince: son 'days' günün değerlendirmelerini, aktif ve HİÇ bildirimi olmayan ilanlar için siler
-        (yeniden değerlendirilsin). Bildirimi (alerts) olan ilana dokunulmaz. Dönen: silinen satır sayısı."""
-        cur = self.conn.execute(
-            """DELETE FROM evaluations e USING listings l
-               WHERE l.id = e.listing_id AND l.is_active AND e.evaluated_at > NOW() - make_interval(days => %s)
-                 AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = e.listing_id)""", (days,))
-        return cur.rowcount
 
     def release_lock(self, name: str, token: str) -> None:
         self.conn.execute(
