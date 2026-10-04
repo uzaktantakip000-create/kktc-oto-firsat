@@ -258,8 +258,8 @@ class Repository:
         if data.get("is_active") is False:
             self.conn.execute(
                 "UPDATE listings SET is_active=FALSE, urgency_signals=%s, last_seen_at=NOW(), inactive_at=COALESCE(inactive_at, NOW()), "
-                "inactive_reason=COALESCE(inactive_reason, %s) WHERE id=%s",
-                (data.get("urgency_signals"), inactive_reason(data.get("urgency_signals")), listing_id),
+                "inactive_reason=COALESCE(inactive_reason, %s), sold_at=COALESCE(sold_at, %s) WHERE id=%s",
+                (data.get("urgency_signals"), inactive_reason(data.get("urgency_signals")), data.get("sold_at"), listing_id),
             )
             return "pasif"
         if data.get("engine_l") is not None:  # motor hacmi sonradan öğrenilebilir (yeni alan)

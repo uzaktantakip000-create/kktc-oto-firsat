@@ -41,7 +41,7 @@ def test_apply_refresh_records_inactive_time_and_reason_without_overwriting():
     r.apply_refresh("L1", {"price_amount": 1, "currency": "GBP", "price_gbp": 1}, {"is_active": False, "urgency_signals": ["arsiv"]})
     sql, params = r.conn.calls[0]
     assert "inactive_at=COALESCE(inactive_at, NOW())" in sql and "inactive_reason=COALESCE(inactive_reason, %s)" in sql
-    assert params == (["arsiv"], "belirsiz", "L1")
+    assert params == (["arsiv"], "belirsiz", None, "L1")
 
 
 def test_every_deactivation_path_records_a_reason_and_only_the_owner_or_the_page_can_say_sold():
@@ -217,3 +217,30 @@ def test_list_collectors_mark_known_listings_seen_in_the_list_as_alive(monkeypat
     r = FeedRepo()
     kka.collect_kktcarabam(r, {"id": "k1", "name": "KKTCarabam"})
     assert r.alive == [("k1", ["a"])]  # yalnız listede görülen BİLİNEN ilan; "b" listede yok → canlı sayılmaz
+
+
+# --- sold_at: KKTCar "Arşive alınma tarihi" (Adım 6b kısım 1) ---
+
+def test_sold_page_reports_its_real_archive_time_but_bulk_event_and_expired_pages_do_not():
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    html = (Path(__file__).parent / "fixtures" / "kktcar_detail_sold.html").read_text(encoding="utf-8")
+    assert site.archived_at(html) == datetime(2026, 10, 1, 1, 49, 17, 707659, tzinfo=timezone.utc)
+    assert site.parse_detail(html)["sold_at"] == datetime(2026, 10, 1, 1, 49, 17, 707659, tzinfo=timezone.utc)
+    bulk = html.replace("2026-10-01T01:49:17.707659+00:00", "2026-09-22T19:08:16.000000+00:00")  # toplu arşivleme anı: gerçek satış tarihi değil
+    assert site.archived_at(bulk) is None and "sold_at" not in site.parse_detail(bulk)
+    assert site.archived_at(html.replace("2026-10-01T01:49:17.707659+00:00", "bozuk")) is None and site.archived_at("<html></html>") is None
+    expired = html.replace("Satıldı | KKTCar", "İlan arşivi | KKTCar").replace("Bu araç satıldı.", "Bu ilan artık aktif değil.")
+    parsed = site.parse_detail(expired)
+    assert parsed is not None and parsed["urgency_signals"][0] == "arsiv" and "sold_at" not in parsed  # süre dolumu satıldı demek değil
+
+
+def test_apply_refresh_stores_the_reported_sold_time_without_overwriting():
+    from datetime import datetime, timezone
+
+    r = repo()
+    at = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    r.apply_refresh("L1", {"price_amount": 1, "currency": "GBP", "price_gbp": 1}, {"is_active": False, "urgency_signals": ["satildi"], "sold_at": at})
+    sql, params = r.conn.calls[0]
+    assert "sold_at=COALESCE(sold_at, %s)" in sql and params == (["satildi"], "satildi", at, "L1")

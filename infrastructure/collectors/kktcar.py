@@ -54,6 +54,25 @@ def _pairs(lines: list[str]) -> dict[str, str]:
     return out
 
 
+# 22 Eylül 2026'da KKTCar ~1.040 ilanı TEK SEFERDE arşivledi (aynı an: 19:08:16 UTC): bu tarih gerçek satış tarihi DEĞİLDİR, yazılmaz.
+BULK_ARCHIVE_FROM = datetime(2026, 9, 22, 19, 0, tzinfo=timezone.utc)
+BULK_ARCHIVE_TO = datetime(2026, 9, 22, 19, 30, tzinfo=timezone.utc)
+_ARCHIVED_AT = re.compile(r"Arşive alınma tarihi.{0,400}?<time[^>]*dateTime=\"([^\"]+)\"", re.S | re.I)
+
+
+def archived_at(html: str) -> datetime | None:
+    """Satılmış ilan sayfasındaki "Arşive alınma tarihi" (ilan sahibi "satıldı" işaretledi). Toplu arşivleme anı ya da çözülemeyen tarih → None."""
+    m = _ARCHIVED_AT.search(html)
+    if not m:
+        return None
+    try:
+        dt = datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    dt = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return None if BULK_ARCHIVE_FROM <= dt <= BULK_ARCHIVE_TO else dt
+
+
 def _parse_sold(title: str, lines: list[str], marker: str, signal: str) -> dict | None:
     """Satılmış ilan arşivi: 'Son ilan fiyatı' gerçekleşen satış fiyatı DEĞİLDİR (sayfa da böyle diyor)."""
     if marker not in lines:
@@ -112,7 +131,10 @@ def parse_detail(html: str) -> dict | None:
     title = (tree.css_first("title").text() if tree.css_first("title") else "").strip()
     lines = [l.strip() for l in tree.body.text(separator="\n").splitlines() if l.strip()]
     if "Satıldı" in title:
-        return _parse_sold(title, lines, "Bu araç satıldı.", "satildi")
+        sold = _parse_sold(title, lines, "Bu araç satıldı.", "satildi")
+        if sold is not None and (at := archived_at(html)) is not None:
+            sold["sold_at"] = at  # kaynağın bildirdiği satış (arşive alınma) zamanı; "arsiv" (süre dolumu) sayfalarında YAZILMAZ: satıldığı kesin değil
+        return sold
     if "İlan arşivi" in title:  # süresi dolmuş/güncelliği doğrulanamayan ilan: satıldığı kesin değil
         return _parse_sold(title, lines, "Bu ilan artık aktif değil.", "arsiv")
     f = _pairs(lines)

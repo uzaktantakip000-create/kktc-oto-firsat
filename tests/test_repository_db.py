@@ -367,3 +367,20 @@ def test_last_alive_at_is_written_only_when_the_source_really_showed_the_listing
     assert db.mark_alive(web, ["b", "closed", "nope"]) == 1  # b aktif ve listede; closed pasif; nope yok
     assert lifecycle(c, b)["last_alive_at"] is not None and lifecycle(c, closed)["last_alive_at"] is None and lifecycle(c, stray)["last_alive_at"] is None
     assert db.mark_alive(web, []) == 0
+
+
+def test_sold_at_is_stored_once_from_the_page_report_and_born_sold_listings_keep_it(db):
+    """Adım 6b kısım 1: kaynağın bildirdiği satış zamanı sold_at'e yazılır (ilk değer korunur); pasif doğan satılmış ilan da taşır."""
+    c, web = db.conn, add_source(db.conn, "W", "web")
+    old = {"price_amount": 6000, "currency": "GBP", "price_gbp": 6000}
+    lid = add_listing(c, web, "a")
+    first, later = ago(days=3), ago(days=1)
+    db.apply_refresh(lid, old, {"is_active": False, "urgency_signals": ["satildi"], "sold_at": first})
+    db.apply_refresh(lid, old, {"is_active": False, "urgency_signals": ["satildi"], "sold_at": later})
+    assert c.execute("SELECT sold_at FROM listings WHERE id=%s", (lid,)).fetchone()["sold_at"] == first
+    other = add_listing(c, web, "b")
+    db.apply_refresh(other, old, {"is_active": False, "urgency_signals": ["arsiv"]})  # süre dolumu: sold_at yok
+    assert c.execute("SELECT sold_at FROM listings WHERE id=%s", (other,)).fetchone()["sold_at"] is None
+    db.upsert_listing(web, "born", {"brand_norm": "Toyota", "model_norm": "vitz", "is_active": False, "urgency_signals": ["satildi"],
+                                    "inactive_reason": "satildi", "sold_at": later})
+    assert c.execute("SELECT sold_at FROM listings WHERE source_item_id='born'").fetchone()["sold_at"] == later
