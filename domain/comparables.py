@@ -82,10 +82,39 @@ def _is_comparable(target: dict, row: dict, year_span: int, widen_km: bool, now:
     return True
 
 
+KKTCAR_HANDLE_PREFIX = "kktcar:"
+
+
 def seller_key(row: dict, fallback=None) -> str:
-    """Aynı satıcıyı tanımak için telefon; telefon yoksa ilan kendi başına bir satıcı sayılır.
+    """Aynı satıcıyı tanımak için: telefon → KKTCar satıcı kimliği ("kktcar:" önekli) → ilan kendi başına bir satıcı sayılır.
+    Önek şart: KibrisArabaAl yazar adları ve Instagram hesap adları da seller_handle'a yazılıyor, onlar tek başına satıcı anahtarı OLMAZ.
     TEK tanım: find_market, değer tablosu (price_book) ve altın dosya aynı fonksiyonu kullanır (satıcı sayısı her yerde aynı olsun)."""
+    handle = row.get("seller_handle")
+    if not row.get("seller_phone") and isinstance(handle, str) and handle.startswith(KKTCAR_HANDLE_PREFIX) and len(handle) > len(KKTCAR_HANDLE_PREFIX):
+        return handle
     return row.get("seller_phone") or f"id:{row.get('id', fallback)}"
+
+
+def _cap_per_seller(rows: list[dict], target: dict, cap: int, today: date) -> list[dict]:
+    """Bir satıcı (galeri) piyasayı tek başına belirlemesin: aynı satıcının en fazla `cap` emsali kalır, hedefe yıl+km'ce en yakın olanlar.
+    Sınır aykırı değer atılmadan ÖNCE uygulanır. Kimliksiz satıcılar (her ilan ayrı satıcı sayılır) etkilenmez. cap<=0: kapalı."""
+    if cap <= 0:
+        return rows
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        groups.setdefault(seller_key(r), []).append(r)
+    if all(len(g) <= cap for g in groups.values()):
+        return rows
+    tk = effective_km(target, today)
+
+    def closeness(r: dict) -> tuple:
+        d = abs((r["year"] or 0) - (target["year"] or 0))
+        rk = effective_km(r, today)
+        d += abs(rk - tk) / 30_000 if tk and rk else 1.0  # km bilinmiyorsa kesin yakın sayılmaz (nearest_comparables ile aynı ölçü)
+        return (d, str(r["id"]))  # eşitlikte kimlik: sonuç havuz sırasından bağımsız
+
+    keep = {r["id"] for g in groups.values() for r in sorted(g, key=closeness)[:cap]}
+    return [r for r in rows if r["id"] in keep]
 
 
 def _drop_outliers(prices: list[float], band: float = 0.5) -> list[float]:
@@ -108,7 +137,8 @@ def find_market(target: dict, pool: list[dict], settings: Settings | None = None
     gbp_first = target.get("currency") != "TRY" and any(r.get("currency") == "TRY" for r in pool)
     for span, widen in ((1, False), (2, True)):
         for gbp_only in ((True, False) if gbp_first else (False,)):
-            rows = [r for r in pool if _is_comparable(target, r, span, widen, now, s, gbp_only)]
+            rows = _cap_per_seller([r for r in pool if _is_comparable(target, r, span, widen, now, s, gbp_only)],
+                                   target, s.max_comparables_per_seller, now.date())
             if len(rows) >= s.min_comparables_alert:
                 prices = _drop_outliers(sorted(r["price_gbp"] for r in rows), s.small_pool_band)
                 if len(prices) < s.min_comparables_alert or (gbp_only and len(prices) < s.gbp_only_min_comparables):

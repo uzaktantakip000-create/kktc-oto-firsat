@@ -187,3 +187,57 @@ def test_seller_key_is_the_single_definition_used_by_the_price_book():
     for r in (row(1, 6000, seller_phone="905"), row(2, 6000), {"seller_phone": None}):
         assert price_book._skey(r, 7) == seller_key(r, 7)
     assert seller_key(row(3, 6000)) == "id:3" and seller_key({"seller_phone": None}, 9) == "id:9"
+
+
+# --- Adım 7 (2): KKTCar satıcı kimliği seller_key'e girer; bir satıcıdan en fazla 2 emsal (hedefe yıl+km'ce en yakınlar) ---
+
+def test_seller_key_order_phone_then_kktcar_handle_then_listing_id():
+    assert seller_key(row(1, 6000, seller_phone="905", seller_handle="kktcar:abc")) == "905"
+    assert seller_key(row(2, 6000, seller_handle="kktcar:abc")) == "kktcar:abc"
+    assert seller_key(row(3, 6000, seller_handle="Ahmet Galeri")) == "id:3"  # KibrisArabaAl yazar adı / Instagram hesabı satıcı anahtarı OLMAZ
+    assert seller_key(row(4, 6000, seller_handle="kktcar:")) == "id:4"  # boş kimlik anahtar sayılmaz
+
+
+def test_one_seller_contributes_at_most_two_comparables_the_closest_ones():
+    gallery = [row(f"gal{i}", 9000 + i, seller_phone="999", year=2015 - (i % 3), km=80_000 + i * 2_000) for i in range(6)]
+    others = [row(f"o{i}", 6000 + i * 100, seller_phone=f"90{i}") for i in range(6)]
+    m = find_market(TARGET, gallery + others, now=NOW)
+    gal_used = [i for i in m.comparable_ids if str(i).startswith("gal")]
+    assert len(gal_used) == 2 and m.n == 8 and m.sellers_n == 7
+    assert set(gal_used) == {"gal0", "gal3"}  # (yıl 2015, km 80.000) ve (2015, 86.000): hedefe (2015, 80.000) en yakın ikisi
+
+
+def test_kktcar_handle_sellers_are_capped_but_unidentified_rows_are_not():
+    capped = [row(f"k{i}", 6400, seller_handle="kktcar:g1") for i in range(5)]
+    loose = [row(f"u{i}", 6000 + i * 100) for i in range(8)]  # kimliksiz: her biri ayrı satıcı, sınır uygulanmaz
+    m = find_market(TARGET, capped + loose, now=NOW)
+    assert m.n == 10 and sum(1 for i in m.comparable_ids if str(i).startswith("k")) == 2
+
+
+def test_cap_applies_before_outlier_removal_and_zero_disables_it():
+    from domain.settings import Settings
+    gallery = [row(f"gal{i}", 12_000, seller_phone="999") for i in range(5)]
+    others = [row(f"o{i}", 6000 + i * 100, seller_phone=f"90{i}") for i in range(7)]
+    capped = find_market(TARGET, gallery + others, now=NOW)
+    assert capped.n == 9 and sum(1 for i in capped.comparable_ids if str(i).startswith("gal")) == 2
+    off = find_market(TARGET, gallery + others, Settings(max_comparables_per_seller=0), NOW)
+    assert off.n == 12 and off.median_gbp > capped.median_gbp  # sınırsız: galerinin 5 ilanı medyanı yukarı çekiyor
+
+
+def test_market_needs_distinct_sellers_after_the_cap():
+    pool = [row(f"a{i}", 7000, seller_phone="901") for i in range(5)] + [row(f"b{i}", 7100, seller_phone="902") for i in range(5)]
+    assert find_market(TARGET, pool, now=NOW) is None  # 10 ilan ama iki satıcı: sınırdan sonra 4 emsal, 2 satıcı < 3
+
+
+def test_cap_choice_does_not_depend_on_pool_order_property():
+    rnd = random.Random(11)
+    for _ in range(200):
+        pool = [row(f"r{i}", rnd.randint(5000, 9000), year=rnd.randint(2013, 2017), km=rnd.randint(20_000, 140_000),
+                    seller_phone=f"90{rnd.randint(1, 4)}") for i in range(rnd.randint(6, 20))]
+        a = find_market(TARGET, pool, now=NOW)
+        shuffled = pool[:]
+        rnd.shuffle(shuffled)
+        b = find_market(TARGET, shuffled, now=NOW)
+        assert (a is None) == (b is None)
+        if a is not None:
+            assert set(a.comparable_ids) == set(b.comparable_ids) and a.median_gbp == b.median_gbp

@@ -5,6 +5,8 @@ Sahip kararı (04.10.2026): km eksik/şüpheli tek başına engel değil (kâr �
 'kontrol' olan g17/g18/g19/g21/g48'in olması gereken etiketi `owner_override` ile 'yesil'dir. Bu testler (1) dosyanın bütünlüğünü ve gizliliğini, (2) bugünkü sistemin 'yok olmalı' vakalarda 🟢 üretmediğini, (3) bugünkü
 eksiklerin (olması gereken 🟠'ların henüz gelmemesi) yalnızca AZALABİLECEĞİNİ (ratchet) doğrular. AlertPolicy v2 (İş 6) ve model
 adı tablosu (İş 8) bu dosyaya karşı ölçülür.
+NOT (04.10.2026, Adım 7b): satıcı başına en fazla 2 emsal kuralı gelince Honda Fit havuzunda (bir satıcının 5 ilanı var) g40/g49'un `stats` kaydı
+yeniden alındı (n 10→9, medyan £14.750→£14.500); etiketler/`expected` DEĞİŞMEDİ (g49 hâlâ 🟢: n=9 ≥ 8, fiyat medyandan %29 ucuz).
 NOT: havuz satırları `currency` taşımaz → TL emsal kuralı (Adım 6c) bu dosyada görünmez; birim testleri tests/test_comparables.py'dadır."""
 import json
 import re

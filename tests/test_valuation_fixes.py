@@ -185,7 +185,7 @@ class VRepo:
 def test_rules_version_change_resets_once():
     repo = VRepo({"rules_version": "eski"})
     assert cron_evaluate.apply_rules_version(repo) == 5 and repo.reset_days == [7]
-    assert repo.state["rules_version"] == RULES_VERSION == "2026-10-04b"
+    assert repo.state["rules_version"] == RULES_VERSION == "2026-10-04c"
     assert repo.state["eval:full"] == ""  # silinen değerlendirmeler saatlik tam turu beklemez: sonraki tur TAM tur olur
     assert cron_evaluate.apply_rules_version(repo) == 0 and repo.reset_days == [7]  # aynı sürüm: silme yok
     assert cron_evaluate.apply_rules_version(VRepo()) == 5  # hiç yazılmamışsa da bir kez

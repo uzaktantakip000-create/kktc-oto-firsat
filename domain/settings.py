@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-RULES_VERSION = "2026-10-04b"  # değerleme kuralları değişince artır: son 7 günün (bildirimsiz) değerlendirmeleri yeniden yapılır
+RULES_VERSION = "2026-10-04c"  # değerleme kuralları değişince artır: son 7 günün (bildirimsiz) değerlendirmeleri yeniden yapılır
 
 
 class Settings(BaseModel):
@@ -22,6 +22,7 @@ class Settings(BaseModel):
     engine_tolerance_l: float = 0.3  # iki ilanın motor hacmi (litre) bundan fazla farklıysa emsal sayılmaz
     active_max_age_days: int = 60  # aktif ama 60 günden uzun süredir yayında duran ilan satılamamıştır: emsal sayılmaz
     min_distinct_sellers: int = 3  # emsaller en az bu kadar farklı satıcıdan (telefon) gelmeli; tek galerinin fiyatı piyasa olmaz
+    max_comparables_per_seller: int = 2  # bir satıcının (telefon ya da KKTCar satıcı kimliği) piyasaya katacağı en fazla emsal; 0 = sınırsız
     social_max_age_hours: int = 48  # Instagram/Facebook gönderisi bundan eskiyse anlık 🟢 gitmez (satılmış olabilir)
     low_confidence_can_alert: bool = False  # 3-7 emsalli ilan 🟢 olmaz (en fazla 🟡): küçük havuzlarda sahte fırsat çok çıkıyor
     # --- kullanıcı kararları (Telegram komutlarıyla değişir, application/settings_store.py) ---
