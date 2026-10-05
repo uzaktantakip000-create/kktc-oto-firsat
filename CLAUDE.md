@@ -1,6 +1,6 @@
 # CLAUDE.md — KKTC Oto Fırsat Sistemi
 
-Bu repo, KKTC'deki araç ilanlarını (Instagram, Facebook, Telegram, ilan siteleri) tarayıp alışın en az %20'si kadar kâr bırakacak araçları Telegram'dan bildiren sistemdir.
+Bu repo, KKTC'deki araç ilan sitelerini (KKTCar, KibrisArabaAl, KKTCarabam, Mezunum) tarayıp alışın en az %20'si kadar kâr bırakacak araçları Telegram'dan bildiren sistemdir. Instagram/Facebook okuması KAPALI (sahibin kararı, 02.10.2026).
 
 ## Önce oku
 - `docs/KKTC_OTO_SISTEM_SPEC.md` — ana plan (v0.2): kaynaklar, akış, teknoloji, DB şeması, kod yapısı, yol haritası
@@ -10,9 +10,9 @@ Bu repo, KKTC'deki araç ilanlarını (Instagram, Facebook, Telegram, ilan sitel
 
 ## Değişmez kurallar
 - Mimari: Clean Architecture monolit — `domain/` (dış bağımlılık yok) · `application/` · `infrastructure/` · `entrypoints/`. Plugin sistemi, mikroservis, event bus YOK.
-- Python 3.12, Pydantic v2, httpx + selectolax (web), Apify (Instagram/Facebook), Supabase Postgres, Telegram Bot API (httpx), GitHub Actions cron (Railway ücretsiz planda kurulamadı, bırakıldı).
-- LLM: Claude Haiku 4.5 ilan okuma (önce kural tabanlı parser, olmazsa Haiku), Claude Sonnet 5.5 sadece fırsat adaylarının son kontrolü.
-- kibrisaraba.com, galerimplus.com, illakiburada.com: sahibin kararıyla (02.10.2026) yalnızca herkese açık ilan sayfaları, nazik hızda okunur; giriş/CAPTCHA çözme yok.
+- Python 3.12, Pydantic v2, httpx + selectolax (web), Scrapling (engelli siteler), Supabase Postgres, Telegram Bot API (httpx), GitHub Actions (tick.yml cron-job.org ile 15 dk'da bir; collect-browser.yml 2 saatte bir; ci.yml test + yayın kapısı). Apify yalnız sosyal medya açılırsa (Railway ücretsiz planda kurulamadı, bırakıldı).
+- LLM: OpenRouter üzerinden GLM (okuyucu; önce kural tabanlı parser, olmazsa LLM). LLM yalnız okur/doğrular, ASLA 🟢 üretmez.
+- kibrisaraba.com, galerimplus.com, illakiburada.com: sahibin kararıyla (02.10.2026) yalnızca herkese açık ilan sayfaları, nazik hızda okunur; giriş/CAPTCHA çözme yok. Bugün taranan: KKTCar, KibrisArabaAl, KKTCarabam, Mezunum; kibrisaraba/illakiburada erişilemiyor, galerimplus Cloudflare engelli.
 - Sistem öneri verir; otomatik mesaj, teklif veya satın alma YOK.
 - API anahtarları sadece ortam değişkenlerinden okunur; koda veya repoya yazılmaz. `.env` gitignore'da.
 
