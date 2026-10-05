@@ -183,9 +183,10 @@ def _burst_summary(repo: Repository, token: str, fresh: list[Evaluated], subs: l
 
 
 def _record_alert(repo: Repository, listing_id, chat_id: str, tier: str, msg_id, *, evaluation_id, price_gbp) -> None:
-    """Mesaj Telegram'a GİTTİ: kaydını yaz. Yazılamazsa (bağlantı kopması, eksik sütun gibi) bir kez daha dene; yine olmazsa `bot_state`'e
-    yedek iz bırak (`alert_exists` bunu da sayar) ve sesli log yaz. Aksi halde ilanın kaydı olmadığı için her turda (15 dk) aynı mesaj
-    yeniden giderdi. Hata yukarı fırlatılmaz: o turun diğer ilanları ve yan işleri çalışsın."""
+    """Mesaj Telegram'a GİTTİ: kaydını yaz. Yazılamazsa bir kez daha dene; yine olmazsa `bot_state`'e yedek iz bırak (`alert_exists` ve
+    `pending_strong` bunu da sayar), logla ve sahibe 24 saatte en çok 1 uyarı yaz. Aksi halde ilanın kaydı olmadığı için her turda (15 dk)
+    aynı mesaj yeniden giderdi. Kapsam: yalnız `alerts` tablosuna özgü sorunlar (eksik sütun, kısıt hatası). Veritabanı bağlantısı tümden
+    koptuysa yedek iz de yazılamaz (sonraki tur mesajı bir kez daha yollayabilir: kabul edilen sınır). Hata yukarı fırlatılmaz."""
     err: Exception | None = None
     for _ in range(2):
         try:
@@ -198,6 +199,13 @@ def _record_alert(repo: Repository, listing_id, chat_id: str, tier: str, msg_id,
         repo.set_state(unsaved_alert_key(listing_id, chat_id), str(msg_id))
     except Exception as e:  # veritabanı tümden yoksa tur zaten hata verir; burada ikinci kez fırlatmanın faydası yok
         print(f"UYARI: yedek iz de yazılamadı: {type(e).__name__} {redact(str(e))[:150]}")
+        return
+    try:
+        from application.health import notify_owner  # health notify'ı içe aktarır: döngüyü kırmak için burada
+        notify_owner(repo, "alert_unsaved", "⚠️ Bir fırsat mesajı gitti ama kaydı veritabanına yazılamadı (aynı mesaj tekrar gitmesin diye "
+                     "yedek iz bırakıldı). /son ve raporlar bu mesajı görmeyebilir; sisteme bakılmalı.", repeat_hours=24)
+    except Exception:
+        pass
 
 
 def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes: dict | None = None,

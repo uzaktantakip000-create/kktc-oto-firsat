@@ -122,6 +122,21 @@ def test_release_orphan_duplicates_frees_only_active_copies_of_inactive_original
     assert rows["copy_of_dead_active"] is None and rows["copy_of_dead_inactive"] == dead and rows["copy_of_live"] == live
 
 
+def test_pending_strong_skips_a_listing_whose_alert_was_sent_but_not_recorded_for_that_subscriber(db):
+    """Gönderilmiş ama `alerts` kaydı yazılamamış 🟢 (bot_state yedek izi) sonraki turlarda aday olmaz; izi olmayan başka abone için aday kalır."""
+    from infrastructure.db.repository import unsaved_alert_key
+    c, sid = db.conn, add_source(db.conn)
+    c.execute("INSERT INTO subscribers (chat_id, status) VALUES ('c1', 'onayli')")
+    traced, plain = add_listing(c, sid, "traced"), add_listing(c, sid, "plain")
+    for lid in (traced, plain):
+        c.execute("INSERT INTO evaluations (listing_id, comparables_n, market_median_gbp, exit_price_gbp, profit_gbp, profit_pct, confidence, tier, evaluated_at) "
+                  "VALUES (%s, 9, 8000, 7600, 1600, 26.7, 'orta', 'guclu', NOW())", (lid,))
+    db.set_state(unsaved_alert_key(traced, "c1"), "42")
+    assert {r["id"] for r in db.pending_strong(36, "guclu")} == {plain}
+    c.execute("INSERT INTO subscribers (chat_id, status) VALUES ('c2', 'onayli')")  # yeni abone: iz yalnız c1 içindi
+    assert {r["id"] for r in db.pending_strong(36, "guclu")} == {plain, traced}
+
+
 def test_deactivate_missing_only_closes_active_listings_absent_from_the_sitemap(db):
     c, sid = db.conn, add_source(db.conn)
     for i in (1, 2, 3):

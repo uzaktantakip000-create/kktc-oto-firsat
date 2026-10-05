@@ -21,9 +21,12 @@ def _tiers_blocking(tier: str) -> list[str]:
     return SENT_ONCE_TIERS if tier in SENT_ONCE_TIERS else [tier]
 
 
+UNSAVED_ALERT_PREFIX = "sent:unsaved:"  # 'alert:' öneki sahip-uyarı zaman damgaları için (alert_recent) ayrılmış: karışmasın
+
+
 def unsaved_alert_key(listing_id, chat_id: str) -> str:
     """Telegram'a GİTMİŞ ama `alerts` kaydı yazılamamış 🟢/🟠 bildirimin yedek izi (bot_state anahtarı; bkz. notify._record_alert)."""
-    return f"alert:unsaved:{listing_id}:{chat_id}"
+    return f"{UNSAVED_ALERT_PREFIX}{listing_id}:{chat_id}"
 
 
 class Repository:
@@ -429,10 +432,11 @@ class Repository:
                JOIN listings l ON l.id = e.listing_id JOIN sources s ON s.id = l.source_id
                WHERE e.tier = %s AND s.alert_level = 'yesil' AND l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL AND e.evaluated_at > NOW() - make_interval(hours => %s)"""
             + rv_sql + """
-                 AND EXISTS (SELECT 1 FROM subscribers sub WHERE sub.status = 'onayli' AND NOT EXISTS (
-                       SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.chat_id = sub.chat_id AND a.tier = ANY(%s)))
+                 AND EXISTS (SELECT 1 FROM subscribers sub WHERE sub.status = 'onayli'
+                       AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.chat_id = sub.chat_id AND a.tier = ANY(%s))
+                       AND NOT EXISTS (SELECT 1 FROM bot_state u WHERE u.key = %s || l.id::text || ':' || sub.chat_id))  -- gitmiş ama kaydı yazılamamış
                ORDER BY e.profit_pct DESC""",
-            (tier, hours, *rv_args, _tiers_blocking(tier)),
+            (tier, hours, *rv_args, _tiers_blocking(tier), UNSAVED_ALERT_PREFIX),
         ).fetchall()
 
     def first_seen_since(self, days: int) -> list[dict]:
