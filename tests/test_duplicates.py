@@ -252,6 +252,13 @@ def test_twin_of_a_kaa_copy_links_to_its_canonical_without_a_chain():
     assert mark_duplicates(repo) == 0
 
 
+def test_twin_pass_never_links_a_listing_to_itself_when_kaa_copy_already_points_at_the_kktcarabam_listing():
+    # KKTCarabam artık ilan sayfasından km alıyor: `same_car` (km + fiyat) onu önce görüldüğü için KAA ikizinin KANONİĞİ yapabilir (KAA kopya).
+    # İkiz geçişi bu çifti yine bulur: kanonik = KKTCarabam ilanının kendisi. Eskiden set_duplicate(kendi, kendi) yazılır, ikisi de kaybolurdu.
+    repo = FakeRepo([], twins=[ad("arabam", "kktcarabam", 120), ad("kaa", "kibrisarabaal", 0, duplicate_of="arabam")])
+    assert mark_duplicates(repo) == 0 and repo.dups == {}
+
+
 def test_twin_pass_never_pairs_two_listings_of_the_same_site():
     repo = FakeRepo([], twins=[ad("a1", "kktcarabam"), ad("a2", "kktcarabam", 10)])
     assert mark_duplicates(repo) == 0

@@ -171,6 +171,23 @@ def test_mark_duplicates_links_kktcarabam_twin_to_kaa_on_real_db_and_quick_equal
     assert mark_duplicates(db) == 0  # ve pasif KAA ilanına yeniden bağlanmaz
 
 
+def test_kktcarabam_with_km_seen_first_makes_the_kaa_twin_its_copy_and_never_links_itself(db):
+    """KKTCarabam ilanı artık ilan sayfasından km taşıyor: aynı araç iki sitede de km'li, KKTCarabam ÖNCE görülmüş. `same_car` KAA ilanını
+    KKTCarabam'ın kopyası yapar; kaynaklar arası ikiz geçişi aynı çifti yeniden bulur ve eskiden KKTCarabam ilanını KENDİNE bağlıyordu
+    (duplicate_of = kendi kimliği: ikisi de değerlendirme dışı, araç kaybolurdu). Şimdi tam olarak bir ilan görünür kalır."""
+    from application.dedupe import mark_duplicates
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", "https://www.kktcarabam.com/kategori/ikinci-el-araclar")
+    kaa = add_site(c, "KibrisArabaAl", "https://kibrisarabaal.com/")
+    bmw = dict(brand_norm="BMW", model_norm="3", year=2007, price_gbp=5400, price_amount=5400, currency="GBP", km=145_000)
+    a = add_listing(c, arabam, "a_bmw", **bmw, location="girne", first_seen_at=ago(hours=2))
+    k = add_listing(c, kaa, "k_bmw", **(bmw | {"seller_phone": "905330000001"}), first_seen_at=ago(minutes=30))
+    assert mark_duplicates(db) == 1
+    dup = {r["id"]: r["duplicate_of"] for r in c.execute("SELECT id, duplicate_of FROM listings").fetchall()}
+    assert dup == {a: None, k: a}  # KKTCarabam kanonik ve görünür; KAA kopya; kimse kendine bağlı değil
+    assert mark_duplicates(db) == 0 and {r["id"] for r in db.unevaluated_active()} == {a}
+
+
 def test_release_orphan_duplicates_frees_only_active_copies_of_inactive_originals(db):
     c, sid = db.conn, add_source(db.conn)
     dead = add_listing(c, sid, "dead", is_active=False)

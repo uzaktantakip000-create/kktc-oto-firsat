@@ -34,7 +34,7 @@ def mark_duplicates(repo: Repository, quick: bool = False, now: datetime | None 
 
 
 def mark_cross_source_twins(repo: Repository, quick: bool = False) -> int:
-    """KKTCarabam ilanı (km, telefon, motor, satıcı adı yok) KibrisArabaAl'daki ikizinin (`cross_source_twin`) kopyası olur. Yön HER ZAMAN
+    """KKTCarabam ilanı (telefon, motor yok; km ve satıcı adı yalnız ilan sayfası okunabildiyse var) KibrisArabaAl'daki ikizinin (`cross_source_twin`) kopyası olur. Yön HER ZAMAN
     KKTCarabam → KibrisArabaAl (ilk görülen değil): km/telefonlu ilan görünür kalır, km'siz ilan emsale girmez ve 🟢 üretmez.
     KAA ilanı zaten başka bir ilanın kopyasıysa (aynı aracın eski ilanı) KKTCarabam ilanı o kanoniğe bağlanır: zincir kurulmaz, aynı
     aracın iki KAA ilanı da "iki aday" sayılmaz. İki yönde TEK eşleşme şart: KKTCarabam ilanının tek KAA aracı olmalı ve o KAA aracının
@@ -55,6 +55,8 @@ def mark_cross_source_twins(repo: Repository, quick: bool = False) -> int:
     marked = 0
     for (a_id, canon), active in matches.items():
         a = lean[a_id]
+        if canon == a_id:  # KKTCarabam ilanı artık km taşıyor: `same_car` onu KAA ikizinin KANONİĞİ yapmış olabilir (daha önce görüldüğü için);
+            continue  # bu çift zaten bağlı (KAA kopya). Kendine bağ kurulursa (duplicate_of = kendi kimliği) ikisi de değerlendirilmez
         if per_lean[a_id] == 1 and per_rich[canon] == 1 and not a["duplicate_of"] and (active or not a["is_active"]):
             repo.set_duplicate(a_id, canon)
             marked += 1
