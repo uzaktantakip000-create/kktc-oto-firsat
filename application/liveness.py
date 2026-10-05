@@ -37,6 +37,7 @@ def _recheck_kktcar(repo: Repository, todo: list[Evaluated], client) -> set:
                 r = client.get(l["url"], timeout=30)
                 if r.status_code in (404, 410):  # ilan kaldırılmış: bu tur gönderme (pasifleştirmeyi sitemap eşitlemesi yapar)
                     drop.add(l["id"])
+                    kktcar.polite_sleep()  # nazik hız: atlanan ilan da siteye istek attı
                     continue
                 data = kktcar.parse_detail(r.text) if r.status_code == 200 else None
                 if data:

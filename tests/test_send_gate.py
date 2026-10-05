@@ -207,7 +207,7 @@ GOLDEN_GREEN_TRACE = [
     # canlılık: yalnız taze VE emsali yeten KKTCar ilanları (g2 bayat, g3 az emsal: sayfası hiç açılmadı)
     ("site.new_client",),
     ("site.get", kk("g1")), ("repo.apply_refresh", "g1", OLD, READ), ("site.sleep",),
-    ("site.get", kk("g4")),  # 404: atlanır (eski davranış: bu dalda bekleme yok)
+    ("site.get", kk("g4")), ("site.sleep",),  # 404: atlanır; nazik hız bu dalda da bekler
     ("site.get", kk("g5")), ("repo.apply_refresh", "g5", OLD, READ), ("site.sleep",),
     ("site.close",),
     # yapay zekâ: canlılıktan geçenlerden yalnız sosyal medya / serbest metin olanlar okunur (g1 site ilanı: okunmaz)
@@ -257,7 +257,7 @@ def test_llm_not_configured_passes_through_and_orange_path_after_the_floor(monke
         ("pending_alerts", "tahmini", True),
         ("site.new_client",),
         ("site.get", kk("o1")), ("repo.apply_refresh", "o1", OLD, READ), ("site.sleep",),
-        ("site.get", kk("o3")),
+        ("site.get", kk("o3")), ("site.sleep",),  # 404: nazik hız bu dalda da bekler
         ("site.close",),
         ("llm.from_env",),
         ("repo.downgrade_evaluation", "o2", ["llm_okudu"], "ev-o2"), ("repo.set_state", "verify:o2:t5000.0", "bad"),
