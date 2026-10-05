@@ -113,7 +113,7 @@ SETTINGS = {
 ```
 Tüm liste (🟠 eğrisi, değer tablosu, km ve motor toleransı dahil) `domain/settings.py` içindedir; bu blok özetidir.
 
-## 9. GÜNCEL KURALLAR (RULES_VERSION "2026-10-04f", 05.10.2026 itibarıyla)
+## 9. GÜNCEL KURALLAR (RULES_VERSION "2026-10-05", 05.10.2026 itibarıyla)
 Tek karar noktası: `domain/decision.py::decide()` (otomatik tarama, "ilanı bota ilet" kontrolü `application/ad_check.py` ve altın test aynı kuralı kullanır).
 🟢 FIRSAT şartları (hepsi):
 - ≥8 doğrudan emsal (yöntem A), satıcı başına en fazla 2 emsal sayılır (ilanın yıl+km'ce en yakın ikisi), en az 2 farklı satıcı; ilk geçerli piyasa 8'den azsa yıl aralığı ±1 → ±2 genişler (£-yalnız önce); medyan/alt çeyrek/km medyanı dar ve geniş piyasanın KÜÇÜĞÜ.
@@ -121,8 +121,9 @@ Tek karar noktası: `domain/decision.py::decide()` (otomatik tarama, "ilanı bot
 - TL fiyatlı ilan en fazla 🟡; TL emsal yalnız £-yalnız piyasa <8 ise karışır (`gbp_only_min_comparables` 8).
 - Fiyat medyanın %50'sinden ucuzsa (`fiyat_asiri_dusuk`, her emsal sayısında kayda geçer) bozuk veri sayılır: 🟢 yok.
 - km yoksa/şüpheliyse (sahip kararı 04.10): engel DEĞİL, mesajda uyarı; kâr şartı %20 aynı. Düşük km kuralı: ≥10 yaşında araçta 15.000 km altı yazan km yok sayılır (`effective_km`).
+- km 'bin' eksik istisnası (sahip onayı 05.10): ≥2 yaşında araçta ham km 1-999 yazıyorsa ("214" = 214.000) ve ×1000 okunursa km emsal km medyanının 1,3 katından ve +10.000 km'den fazlaysa (`km_yuksek` ile aynı koşul) eksik `km_bin_eksik_yuksek` eklenir: 🟢 en fazla 🟡. ×1000 okuması açıkça olumsuz değilse hiçbir şey değişmez (km bilinmiyor, engel yok; yukarıdaki sahip kuralı). `effective_km` değişmedi; 🟠 yolu km'yi zaten zorunlu ister, etkilenmez.
 - Engel kelimeler: pert/ağır hasar, airbag, vuruk/su basmış, hasarlı/kazalı, motor/şanzıman sorunlu, "as is"/parça araç/çıkma motor/yürümüyor, kira/taksit/peşinat, gümrüksüz/evraksız/haciz/icralık/mahkeme, **kredi devri/senet** ("senet yok" olumsuzlaması hariç) → bildirim yok.
-- Diğer 🟢 kapıları (en fazla 🟡'ye düşürür; `domain/data_gate.py`, `domain/decision.py`): fiyat benzer araçların en ucuz çeyreğinde değil (`ucuz_ceyrek_degil`), ilanın km'si emsal medyanının 1,3 katından ve +10.000 km'den fazla (`km_yuksek`), para birimi tahmin, model yok/belirsiz, yapay zekâ okuması (`llm_okudu`), "TR/yabancı plaka", değer tablosu bu modelde "şüpheli" (`deger_supheli`), TL fiyat.
+- Diğer 🟢 kapıları (en fazla 🟡'ye düşürür; `domain/data_gate.py`, `domain/decision.py`): fiyat benzer araçların en ucuz çeyreğinde değil (`ucuz_ceyrek_degil`), ilanın km'si emsal medyanının 1,3 katından ve +10.000 km'den fazla (`km_yuksek`; km 'bin' eksik yazılmışsa ×1000 okumasıyla `km_bin_eksik_yuksek`), para birimi tahmin, model yok/belirsiz, yapay zekâ okuması (`llm_okudu`), "TR/yabancı plaka", değer tablosu bu modelde "şüpheli" (`deger_supheli`), TL fiyat.
 - Kullanıcı kararları (`application/settings_store.py`): istenmeyen marka, bütçe üstü, kara listedeki satıcı → bildirim yok; 3 kez "pas" denen model → en fazla 🟡 (yeni mesajlarda "Pas" düğmesi olmadığından pratikte nadir).
 - Karışık model anahtarı (`model_ambiguity.MIXED_KEYS`): Mazda cx, Honda cr, VW t, Mercedes benz, Land Rover rover, Ford transit → 🟢/🟠 yok; ayrıca Toyota yaris/corolla'da "Cross" yazan ya da 2020+ ilan (`CROSS_KEYS`). Model anahtarı doldurması (v4 planı 1.1) 05.10.2026 13:08 UTC'de YAPILDI (380 ilan). Liste SİLİNMEDİ (karar: spec §24.4 K2 ve §24.6): doldurmadan sonra bu anahtarlarda ilan kalmadı, ama ileride yalnız "CX"/"Benz" yazan ilan gelirse koruma sürsün.
 - Gönderim koşulları (karar değil): ilan "taze" (ilk görülme ≤36 sa ya da son 36 saatte fiyat değişimi; yayın tarihi biliniyorsa en fazla 4 günlük), gönderimden hemen önce canlılık kontrolü (yalnız KKTCar ve KibrisArabaAl), sosyal medya ya da serbest metinden okunan ilanlarda (ve her 🟠'da) yapay zekâ ikinci okuması (bölüm 6).

@@ -1,5 +1,5 @@
 """Eksik/şüpheli veriyle 🟢 verilmesini engelleyen kural (en fazla 🟡)."""
-from datetime import datetime
+from datetime import date, datetime
 
 from domain.comparables import Market, effective_km
 from domain.llm_read import MISMATCH_LABELS
@@ -16,6 +16,7 @@ GAP_LABELS = {
     "model_yok": "model okunamadı",
     "model_belirsiz": "model karışık havuzda (ör. CX-3/CX-5, Yaris/Yaris Cross): fiyat kıyası güvenilmez",
     "km_yuksek": "km emsallerden çok yüksek",
+    "km_bin_eksik_yuksek": "km çok düşük yazıyor (bin eksik olabilir): ×1000 okunursa emsallerden çok yüksek",
     "ucuz_ceyrek_degil": "fiyat benzer araçların en ucuz çeyreğinde değil",
     "emsal_yili_yeni": "benzer araçların model yılı bu araçtan daha YENİ ağırlıklı (yeni model pahalı): fiyat kıyası güvenilmez",
     "plaka_uyari": "TR/yabancı plaka yazıyor",
@@ -30,6 +31,18 @@ GAP_LABELS.update(MISMATCH_LABELS)
 def km_unknown(listing: dict, now: datetime | None = None) -> bool:
     """km yok ya da şüpheli (eski araçta <1000 km). Sahip kararı (04.10.2026): tek başına fırsatı ENGELLEMEZ; mesajda uyarı olur."""
     return not effective_km(listing, now.date() if now else None)
+
+
+def km_thousand_missing_high(listing: dict, market: Market, s: Settings, today: date | None = None) -> bool:
+    """İlandaki km 1-999 ve araç ≥2 yaşında (tam olarak `effective_km`ın "bilinmiyor" saydığı <1000 km durumu) ve ×1000 okunursa km emsal
+    medyanından AÇIKÇA yüksek mi (`km_yuksek` ile aynı koşul: ×1000 > medyan·km_high_ratio ve fark ≥ km_high_margin)? Örnek: 2014 Demio "214 km"
+    (büyük ihtimalle 214.000), emsal medyanı 129.000. Sahip kuralı (04.10: yanlış km tek başına engel değil) bozulmaz: ×1000 okuması açıkça
+    olumsuz DEĞİLSE ilan eskisi gibi ele alınır (km bilinmiyor, engel yok). `effective_km`a dokunulmaz."""
+    km = listing.get("km")
+    if km is None or not 0 < km < 1000 or effective_km(listing, today) is not None:
+        return False  # km yok / 1-999 değil / yeni araçta (effective_km km'yi makul sayar): kural işlemez
+    med = market.median_km
+    return bool(med) and km * 1000 > med * s.km_high_ratio and km * 1000 - med >= s.km_high_margin
 
 
 def data_gaps(listing: dict, market: Market, settings: Settings | None = None, now: datetime | None = None) -> list[str]:
@@ -49,6 +62,8 @@ def data_gaps(listing: dict, market: Market, settings: Settings | None = None, n
     km, med = effective_km(listing, today), market.median_km
     if km and med and km > med * s.km_high_ratio and km - med >= s.km_high_margin:
         gaps.append("km_yuksek")
+    if km_thousand_missing_high(listing, market, s, today):
+        gaps.append("km_bin_eksik_yuksek")  # "214 km" ≈ 214.000 ve emsallerden çok yüksek: km_yuksek gibi 🟢'yi 🟡'ya düşürür (bkz. DEGER_MOTORU §9)
     return gaps
 
 

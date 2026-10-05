@@ -102,9 +102,13 @@ def test_zero_or_suspicious_km_counts_as_unknown_and_warns():
     repo = FakeRepo([car("t", 5000, km=0)], POOL)
     (ev,) = evaluate_new(repo)
     assert ev.profit.tier is Tier.STRONG and KM_UNKNOWN_WARNING in ev.warnings
-    repo = FakeRepo([car("t", 5000, km=215)], POOL)  # eski araçta 215 km: "215 bin" yazılmış olabilir
+    high_km_pool = [car(f"p{i}", 8000 + i * 200, km=200_000) for i in range(8)]  # emsal km medyanı 200.000: 215 km'nin ×1000 okuması (215.000) olumsuz DEĞİL
+    repo = FakeRepo([car("t", 5000, km=215)], high_km_pool)  # eski araçta 215 km: "215 bin" yazılmış olabilir
     (ev,) = evaluate_new(repo)
-    assert ev.profit.tier is Tier.STRONG and KM_UNKNOWN_WARNING in ev.warnings
+    assert ev.profit.tier is Tier.STRONG and KM_UNKNOWN_WARNING in ev.warnings and "km_bin_eksik_yuksek" not in repo.saved[0][1]["red_flags"]
+    repo = FakeRepo([car("t", 5000, km=215)], POOL)  # emsal medyanı 80.000: ×1000 (215.000) açıkça yüksek -> 🟡 (05.10 kuralı, tests/test_km_thousand.py)
+    (ev,) = evaluate_new(repo)
+    assert ev.profit.tier is Tier.NEGOTIABLE and "km_bin_eksik_yuksek" in repo.saved[0][1]["red_flags"]
     repo = FakeRepo([car("t", 7000, km=None)], POOL)  # kâr <%20: 🟡; "bu yüzden 🟢 değil" (km_yok) yazılmaz ama km uyarısı görünür
     (ev,) = evaluate_new(repo)
     assert ev.profit.tier is Tier.NEGOTIABLE and "km_yok" not in repo.saved[0][1]["red_flags"] and KM_UNKNOWN_WARNING in ev.warnings
