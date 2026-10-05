@@ -6,7 +6,7 @@ on:
 concurrency: collect-browser
 jobs:
   collect:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # sabit: ubuntu-latest 19.10.2026'dan itibaren Ubuntu 26'ya geçiyor (Python/tarayıcı kurulumu bozulmasın)
     timeout-minutes: 25
     env:
       PYTHONUNBUFFERED: "1"

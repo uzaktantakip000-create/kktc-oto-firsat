@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: false  # çalışan tur bitsin, bekleyen en fazla bir tur kuyrukta kalır
 jobs:
   tick:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # sabit: ubuntu-latest 19.10.2026'dan itibaren Ubuntu 26'ya geçiyor (Python/tarayıcı kurulumu bozulmasın)
     timeout-minutes: 20  # tur kendi 13 dk bütçesini tutar (entrypoints/tick.py); sınır yalnızca güvenlik ağı
     env:
       PYTHONUNBUFFERED: "1"  # iptal edilen turda log kaybolmasın

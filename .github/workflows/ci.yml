@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false   # sırayla çalışsın: live hep ileri gider
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # sabit: ubuntu-latest 19.10.2026'dan itibaren Ubuntu 26'ya geçiyor (Python/tarayıcı kurulumu bozulmasın)
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -40,7 +40,7 @@ jobs:
   bildir:
     needs: [test, db-test]
     if: failure()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # sabit: ubuntu-latest 19.10.2026'dan itibaren Ubuntu 26'ya geçiyor (Python/tarayıcı kurulumu bozulmasın)
     timeout-minutes: 3
     steps:
       - name: Sahibine haber ver
@@ -60,7 +60,7 @@ jobs:
   # ilerleme hem `test` hem bu işe bağlıdır; SQL ağırlıklı değişiklikler gerçek veritabanında denenmeden canlıya çıkmaz.
   # Testler yalnız TEST_DATABASE_URL'i (yerel, adında "test" geçen) kullanır.
   db-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # sabit: ubuntu-latest 19.10.2026'dan itibaren Ubuntu 26'ya geçiyor (Python/tarayıcı kurulumu bozulmasın)
     timeout-minutes: 10
     services:
       postgres:
@@ -92,7 +92,7 @@ jobs:
   yayin:
     needs: [test, db-test]
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # sabit: ubuntu-latest 19.10.2026'dan itibaren Ubuntu 26'ya geçiyor (Python/tarayıcı kurulumu bozulmasın)
     timeout-minutes: 3
     permissions:
       contents: write   # yalnızca `live` dalını ilerletmek için (bu iş pip kurmaz, yalnız git push yapar)
