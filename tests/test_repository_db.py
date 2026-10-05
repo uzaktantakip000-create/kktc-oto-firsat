@@ -281,6 +281,28 @@ def test_pending_strong_skips_listings_already_sent_as_green_or_orange_but_not_d
     assert ids == {only_digest, fresh}  # 🟠 gönderilmiş ilan 🟢 olarak yeniden gelmez; yalnız özet kaydı olan gelir
 
 
+def test_the_same_car_is_not_sent_twice_when_its_copy_was_already_sent(db):
+    """05.10 Mazda Demio 2014 £4.500: km'siz KKTCarabam ilanı önce 🟢 gitti, 18 dk sonra KibrisArabaAl ikizi de gitti. Kaynaklar arası ikizde
+    kopya önce gelen ilan olabilir (kopya = KKTCarabam): kopyası bu sohbete gitmiş ilan, o sohbet için gitmiş sayılır (alert_exists,
+    pending_strong); haftalık rapor da onu 'bildirilmemiş' ya da 'yakın kaçan' diye göstermez. Kopyası gitmemiş ilan etkilenmez."""
+    c, sid = db.conn, add_source(db.conn)
+    for chat in ("c1", "c2"):
+        c.execute("INSERT INTO subscribers (chat_id, status) VALUES (%s, 'onayli')", (chat,))
+    rich, other = add_listing(c, sid, "kaa_twin"), add_listing(c, sid, "other")
+    lean = add_listing(c, sid, "kktcarabam", km=None, duplicate_of=rich)
+    for lid in (rich, other):
+        add_report_eval(c, lid, "guclu", pct=30)
+    db.save_alert(lean, "c1", "guclu", 1, evaluation_id=None, price_gbp=None)  # kopya YALNIZ c1'e gitti
+    assert db.alert_exists(rich, "c1", "guclu") and db.alert_exists(rich, "c1", "tahmini")
+    assert not db.alert_exists(rich, "c2", "guclu") and not db.alert_exists(other, "c1", "guclu")
+    assert {r["id"] for r in db.pending_strong(36, "guclu")} == {rich, other}  # c2 için hâlâ aday
+    db.save_alert(lean, "c2", "guclu", 2, evaluation_id=None, price_gbp=None)
+    assert {r["id"] for r in db.pending_strong(36, "guclu")} == {other}  # iki sohbete de gitti: aynı araç yeniden gelmez
+    assert item_names(c, db.unnotified_strong("v1", days=14)) == ["other"]
+    c.execute("UPDATE evaluations SET tier='pazarlik', profit_pct=18")
+    assert item_names(c, db.near_misses("v1", days=7, limit=10)) == ["other"]
+
+
 def add_versioned_eval(conn, listing_id, evaluated_at, version, tier="yok"):
     conn.execute("INSERT INTO evaluations (listing_id, evaluated_at, comparables_n, confidence, tier, rules_version, saticilar_n, evidence, nedenler, "
                  "red_flags, market_median_gbp, profit_pct) VALUES (%s,%s,8,'orta',%s,%s,5,'{\"yontem\": \"A\"}', ARRAY['km_yuksek'], ARRAY['km_yuksek'], 9000, 40)",

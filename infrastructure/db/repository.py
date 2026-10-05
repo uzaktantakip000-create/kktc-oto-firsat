@@ -23,6 +23,14 @@ def _tiers_blocking(tier: str) -> list[str]:
 
 UNSAVED_ALERT_PREFIX = "sent:unsaved:"  # 'alert:' öneki sahip-uyarı zaman damgaları için (alert_recent) ayrılmış: karışmasın
 
+
+def _alerted_sql(lid: str, chat: str | None = None) -> str:
+    """"Bu araç bildirildi mi?" SQL koşulu (tek %s: seviye listesi). İlanın kendisi YA DA kopyalarından biri (duplicate_of = bu ilan) bildirildiyse
+    "gitti" sayılır: kaynaklar arası ikizde (application/dedupe.py) kopya, önce görülüp gönderilmiş km'siz KKTCarabam ilanı olabilir; sonradan
+    gelen KibrisArabaAl ikizi aynı aracı ikinci kez göndermesin (05.10: Mazda Demio 2014 £4.500 iki siteden 18 dk arayla iki kez gitti)."""
+    return (f"EXISTS (SELECT 1 FROM alerts a JOIN listings d ON d.id = a.listing_id WHERE (d.id = {lid} OR d.duplicate_of = {lid})"
+            + (f" AND a.chat_id = {chat}" if chat else "") + " AND a.tier = ANY(%s))")
+
 # Abonenin (sahip olmayan) düğme oyu otomatik davranışı yönlendirmez (emsal, öğrenme kapısı, 🟠/kaynak koruması, 'pas' sayısı):
 # yalnız sahibin oyu ve sahibi belli olmayan kayıt (note boş: denetim, eski satır) sayılır. Oy satırı 'feedback f' takma adıyla okunmalı.
 OWNER_VOTE_SQL = "NOT EXISTS (SELECT 1 FROM subscribers voter WHERE NOT voter.is_owner AND f.note = 'chat:' || voter.chat_id)"
@@ -490,7 +498,7 @@ class Repository:
                WHERE e.tier = %s AND s.alert_level = 'yesil' AND l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL AND e.evaluated_at > NOW() - make_interval(hours => %s)"""
             + rv_sql + """
                  AND EXISTS (SELECT 1 FROM subscribers sub WHERE sub.status = 'onayli'
-                       AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.chat_id = sub.chat_id AND a.tier = ANY(%s))
+                       AND NOT """ + _alerted_sql("l.id", "sub.chat_id") + """  -- ilan ya da kopyası bu sohbete gitmişse aynı araç yeniden gitmez
                        AND NOT EXISTS (SELECT 1 FROM bot_state u WHERE u.key = %s || l.id::text || ':' || sub.chat_id))  -- gitmiş ama kaydı yazılamamış
                ORDER BY e.profit_pct DESC""",
             (tier, hours, *rv_args, _tiers_blocking(tier), UNSAVED_ALERT_PREFIX),
@@ -678,7 +686,7 @@ class Repository:
                JOIN listings l ON l.id = e.listing_id JOIN sources s ON s.id = l.source_id
                WHERE e.tier = 'guclu' AND e.rules_version = %s AND e.evaluated_at > NOW() - make_interval(days => %s)
                  AND s.alert_level = 'yesil' AND l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL
-                 AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.tier = ANY(%s))
+                 AND NOT """ + _alerted_sql("l.id") + """  -- ilan ya da kopyası (aynı araç) bildirildiyse "bildirilmemiş" değil
                  AND NOT EXISTS (SELECT 1 FROM bot_state u WHERE starts_with(u.key, %s || l.id::text || ':'))
                ORDER BY e.profit_pct DESC LIMIT %s""",
             (rules_version, days, SENT_ONCE_TIERS, UNSAVED_ALERT_PREFIX, limit)).fetchall()
@@ -699,7 +707,7 @@ class Repository:
                  AND (l.first_seen_at > NOW() - make_interval(days => %s)
                       OR EXISTS (SELECT 1 FROM listing_history h WHERE h.listing_id = l.id AND h.field = 'price_gbp'
                                  AND h.changed_at > NOW() - make_interval(days => %s)))
-                 AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.tier = ANY(%s))
+                 AND NOT """ + _alerted_sql("l.id") + """
                ORDER BY e.profit_pct DESC LIMIT %s""",
             (rules_version, min_comparables, list(skip_reasons), days, days, SENT_ONCE_TIERS, limit)).fetchall()
 
@@ -774,11 +782,11 @@ class Repository:
         return self.conn.execute("SELECT * FROM subscribers WHERE status='onayli'").fetchall()
 
     def alert_exists(self, listing_id, chat_id: str, tier: str) -> bool:
-        """Bu ilan bu sohbete bu seviyede (🟢/🟠 için: ikisinden biriyle) daha önce gitti mi?
+        """Bu ilan (ya da kopyalarından biri: aynı araç, `_alerted_sql`) bu sohbete bu seviyede (🟢/🟠 için: ikisinden biriyle) daha önce gitti mi?
         🟢/🟠'de kaydı yazılamayan ama gönderilmiş bildirimin yedek izi (`bot_state`) de sayılır: aksi halde her turda yeniden giderdi."""
         if self.conn.execute(
-            "SELECT 1 FROM alerts WHERE listing_id=%s AND chat_id=%s AND tier = ANY(%s)", (listing_id, chat_id, _tiers_blocking(tier))
-        ).fetchone() is not None:
+            "SELECT " + _alerted_sql("%s", "%s") + " AS hit", (listing_id, listing_id, chat_id, _tiers_blocking(tier))
+        ).fetchone()["hit"]:
             return True
         return tier in SENT_ONCE_TIERS and self.get_state(unsaved_alert_key(listing_id, chat_id)) is not None
 
