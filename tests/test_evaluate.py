@@ -11,14 +11,15 @@ from domain.profit import Tier
 class FakeRepo:
     def __init__(self, listings, pool):
         self._listings, self._pool, self.saved = listings, pool, []
-        self.pool_calls, self.recent_args = [], []
+        self.pool_calls, self.recent_args, self.uneval_args = [], [], []
 
     def market_pool(self, days, keys=None):
         self.pool_calls.append(keys)  # keys: [(brand_norm, model_norm), ...] ya da None (tüm havuz)
         return [r for r in self._pool if keys is None or (r["brand_norm"], r["model_norm"]) in keys]
 
-    def unevaluated_active(self, recheck_days=3, recent_hours=None, rules_version=None):
+    def unevaluated_active(self, recheck_days=3, recent_hours=None, rules_version=None, unevaluated_hours=None):
         self.recent_args.append(recent_hours)
+        self.uneval_args.append((recent_hours, rules_version, unevaluated_hours))
         return self._listings
 
     def save_evaluation(self, listing_id, ev):
@@ -101,9 +102,13 @@ def test_zero_or_suspicious_km_counts_as_unknown_and_warns():
     repo = FakeRepo([car("t", 5000, km=0)], POOL)
     (ev,) = evaluate_new(repo)
     assert ev.profit.tier is Tier.STRONG and KM_UNKNOWN_WARNING in ev.warnings
-    repo = FakeRepo([car("t", 5000, km=215)], POOL)  # eski araçta 215 km: "215 bin" yazılmış olabilir
+    high_km_pool = [car(f"p{i}", 8000 + i * 200, km=200_000) for i in range(8)]  # emsal km medyanı 200.000: 215 km'nin ×1000 okuması (215.000) olumsuz DEĞİL
+    repo = FakeRepo([car("t", 5000, km=215)], high_km_pool)  # eski araçta 215 km: "215 bin" yazılmış olabilir
     (ev,) = evaluate_new(repo)
-    assert ev.profit.tier is Tier.STRONG and KM_UNKNOWN_WARNING in ev.warnings
+    assert ev.profit.tier is Tier.STRONG and KM_UNKNOWN_WARNING in ev.warnings and "km_bin_eksik_yuksek" not in repo.saved[0][1]["red_flags"]
+    repo = FakeRepo([car("t", 5000, km=215)], POOL)  # emsal medyanı 80.000: ×1000 (215.000) açıkça yüksek -> 🟡 (05.10 kuralı, tests/test_km_thousand.py)
+    (ev,) = evaluate_new(repo)
+    assert ev.profit.tier is Tier.NEGOTIABLE and "km_bin_eksik_yuksek" in repo.saved[0][1]["red_flags"]
     repo = FakeRepo([car("t", 7000, km=None)], POOL)  # kâr <%20: 🟡; "bu yüzden 🟢 değil" (km_yok) yazılmaz ama km uyarısı görünür
     (ev,) = evaluate_new(repo)
     assert ev.profit.tier is Tier.NEGOTIABLE and "km_yok" not in repo.saved[0][1]["red_flags"] and KM_UNKNOWN_WARNING in ev.warnings
@@ -182,6 +187,45 @@ def test_quick_round_asks_only_for_recent_listings_and_full_round_for_everything
     evaluate_new(repo, quick=True)
     evaluate_new(repo)
     assert repo.recent_args == [3, None]
+
+
+def test_hourly_full_round_leaves_the_old_unevaluated_backlog_to_the_daily_round():
+    """Adım 2h devamı: tam turda backlog=False ise hiç değerlendirilmemiş ilanlardan yalnız son 72 saatte görülen/fiyatı değişenler istenir;
+    backlog=True (varsayılan, cron'da günde bir) bugünkü tam turun aynısı; hızlı tur değişmedi."""
+    from application.evaluate import BACKLOG_AFTER_HOURS
+    from domain.settings import RULES_VERSION
+
+    repo = FakeRepo([car("t", 5000)], POOL)
+    evaluate_new(repo, quick=True)
+    evaluate_new(repo, quick=True, backlog=False)
+    evaluate_new(repo, backlog=False)
+    evaluate_new(repo)
+    assert repo.uneval_args == [(3, None, None), (3, None, None), (None, RULES_VERSION, BACKLOG_AFTER_HOURS), (None, RULES_VERSION, None)]
+    assert BACKLOG_AFTER_HOURS == 72
+
+
+def test_backlog_window_covers_every_listing_that_can_still_alert():
+    """Saatlik turun 72 saatlik penceresi tazelik kuralını (notify.is_fresh: ilk görülme ya da fiyat değişikliği ≤36 saat, yayın ≤4 gün,
+    sosyal ≤48 saat) tamamen kapsar: is_fresh True olan HER ilanın ilk görülmesi ya da son fiyat değişikliği pencere içindedir (SQL: '>' NOW()-72h).
+    Tazelik kuralı bir gün gevşetilir de pencereyi aşarsa bu test kırılır (saatlik turda olmayan ilan bildirim kaçırmasın)."""
+    import inspect
+
+    from application.evaluate import BACKLOG_AFTER_HOURS
+    from application.notify import is_fresh
+
+    assert BACKLOG_AFTER_HOURS >= 2 * inspect.signature(is_fresh).parameters["fresh_hours"].default  # en az iki kat güvenlik payı
+    ages = [0, 1, 12, 35, 36, 37, 47, 48, 49, 71, 72, 73, 96, 200, 2000]
+    checked = 0
+    for fs in ages:
+        for pc in [None, *ages]:
+            for posted in [None, *ages]:
+                for platform in ("web", "instagram", "facebook"):
+                    fresh = is_fresh(NOW - timedelta(hours=fs), None if posted is None else NOW - timedelta(hours=posted), now=NOW,
+                                     price_changed_at=None if pc is None else NOW - timedelta(hours=pc), platform=platform)
+                    if fresh:
+                        checked += 1
+                        assert fs < BACKLOG_AFTER_HOURS or (pc is not None and pc < BACKLOG_AFTER_HOURS), (fs, pc, posted, platform)
+    assert checked > 100
 
 
 def test_pool_is_limited_to_the_models_being_evaluated_without_changing_results():

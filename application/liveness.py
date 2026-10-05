@@ -16,6 +16,11 @@ def _is_kaa(listing: dict) -> bool:
     return "kibrisarabaal.com" in (listing.get("url") or "")
 
 
+def can_check(listing: dict) -> bool:
+    """Bu ilan gönderimden önce yeniden okunabiliyor mu (satıldı/kalktı/fiyat değişti)? Yalnız KKTCar ve KibrisArabaAl."""
+    return _is_kktcar(listing) or _is_kaa(listing)
+
+
 def _old(l: dict) -> dict:
     return {"price_amount": float(l["price_amount"]) if l.get("price_amount") is not None else None,
             "currency": l.get("currency"), "price_gbp": float(l["price_gbp"])}
@@ -32,6 +37,7 @@ def _recheck_kktcar(repo: Repository, todo: list[Evaluated], client) -> set:
                 r = client.get(l["url"], timeout=30)
                 if r.status_code in (404, 410):  # ilan kaldırılmış: bu tur gönderme (pasifleştirmeyi sitemap eşitlemesi yapar)
                     drop.add(l["id"])
+                    kktcar.polite_sleep()  # nazik hız: atlanan ilan da siteye istek attı
                     continue
                 data = kktcar.parse_detail(r.text) if r.status_code == 200 else None
                 if data:

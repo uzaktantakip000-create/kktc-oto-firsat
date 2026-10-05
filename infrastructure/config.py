@@ -29,3 +29,9 @@ def redact(text: str) -> str:
         if value and len(value) >= 8 and any(w in name for w in _SECRET_WORDS):
             text = text.replace(value, "***")
     return text
+
+
+def mask_chat(chat_id) -> str:
+    """Herkese açık log'a sohbet kimliği tam yazılmaz: yalnız son 3 hane ("chat …123"); turlar arası ayırt etmeye yeter."""
+    s = str(chat_id)
+    return f"chat …{s[-3:]}" if len(s) > 3 else "chat …"

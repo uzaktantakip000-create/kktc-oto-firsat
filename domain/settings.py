@@ -1,6 +1,6 @@
 from pydantic import BaseModel, model_validator
 
-RULES_VERSION = "2026-10-04f"  # değerleme kuralları değişince artır (günde en çok bir kez): sonraki TAM turda bildirime aday ilanlar yeni kurallarla yeniden değerlendirilir (EKLEME-YALNIZ: eski satır silinmez), kalanı 3 günlük yeniden bakışla yenilenir
+RULES_VERSION = "2026-10-05"  # değerleme kuralları değişince artır (günde en çok bir kez): sonraki TAM turda bildirime aday ilanlar yeni kurallarla yeniden değerlendirilir (EKLEME-YALNIZ: eski satır silinmez), kalanı 3 günlük yeniden bakışla yenilenir
 
 
 class Settings(BaseModel):

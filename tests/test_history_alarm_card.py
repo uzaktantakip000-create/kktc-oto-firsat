@@ -1,14 +1,12 @@
-"""/son komutu, anlık kaynak alarmı ve haftalık karne (sahte repo, ağ yok)."""
-import json
+"""/son komutu ve anlık kaynak alarmı (sahte repo, ağ yok). Haftalık rapor: tests/test_weekly_report.py."""
 from datetime import datetime, timezone
 
-from application import health, history_cmd, report, source_alarm
+from application import health, history_cmd, source_alarm
 
 
 class FakeRepo:
-    def __init__(self, state=None, sources=None, opps=None, sent=None, fb=None, marks=None, names=None):
+    def __init__(self, state=None, sources=None, opps=None):
         self.state, self.sources, self.opps = state or {}, sources or [], opps or []
-        self.sent, self.fb, self.marks, self.names = sent or {}, fb or {}, marks or {}, names or []
         self.marked = []
 
     # bot_state
@@ -34,18 +32,6 @@ class FakeRepo:
     def recent_opportunities(self, limit=10):
         return self.opps[:limit]
 
-    def week_alert_counts(self, days=7):
-        return self.sent
-
-    def week_feedback_counts(self, days=7):
-        return self.fb
-
-    def alert_marks_since(self, prefix, days=7):
-        return self.marks.get(prefix, [])
-
-    def source_names(self, ids):
-        return self.names
-
 
 def opp(tier="guclu", fb=None, price=9000.0, median=15800.0, hour=11):
     return dict(id="L", url="https://x.example/ilan/1", year=2017, brand="Mercedes", model="A180", price_gbp=price,
@@ -60,7 +46,7 @@ def test_son_empty():
 def test_son_lines_feedback_and_url():
     text = history_cmd.last_opportunities(FakeRepo(opps=[opp(fb="satilmis"), opp("tahmini", price=7000.0, median=None, hour=9)]))
     first, second = text.split("\n\n")[1:]
-    assert first.startswith("🟢 02.10 14:20 · 2017 Mercedes A180 · £9.000 · %43 ucuz · ✅ satılmış dedin")  # UTC+3
+    assert first.startswith("🟢 02.10 14:20 · 2017 Mercedes A180 · £9.000 · %43 ucuz · ✅ satılmış dedin")  # KKTC yaz saati (UTC+3; kış: tests/test_kktc_time.py)
     assert first.endswith("\nhttps://x.example/ilan/1")
     assert second.startswith("🟠 02.10 12:20 · 2017 Mercedes A180 · £7.000 · ❔ düğmeye basılmadı")  # medyan yoksa % yazılmaz
 
@@ -167,31 +153,3 @@ def test_error_text_redacted_in_state(monkeypatch):
     repo = FakeRepo()
     source_alarm.track_collect(repo, "A", "hata sekret-deger-12345 ile")
     assert "sekret" not in repo.state["failmsg:A"]
-
-
-# --- haftalık karne ---
-def test_karne_full():
-    repo = FakeRepo(state={"pb:stats": json.dumps({"rows": 1094, "settled": 900, "suspect": 6, "error": 0.12}),
-                           "cfg:est_min_discount_to_lower": "0.75", "cfg:muted_models": "fiat|egea,kia|rio"},
-                    sent={"guclu": 5, "tahmini": 3}, fb={"pas": 2, "satilmis": 1, "yanlis_fiyat": 1},
-                    marks={"est_off:": ["fiat|egea"], "est_tighten": [""], "guard:": ["S1"]}, names=["KibrisCars"])
-    text = "\n".join(report.karne_lines(repo))
-    assert "5 tane 🟢 ve 3 tane 🟠" in text
-    assert "Düğmeye bastığın: 4 (pas 2" in text and "zaten satılmış 1" in text and "yanlış fiyat 1" in text
-    assert "fiat egea" in text and "%75'i" in text and "KibrisCars" in text and "model sayısı (toplam): 2" in text
-    assert "1094 model-yıl satırı var, 900 tanesi sağlam, isabet %88" in text
-    assert report.NUDGE not in text
-
-
-def test_karne_nudge_when_no_feedback():
-    text = "\n".join(report.karne_lines(FakeRepo(sent={"guclu": 2})))
-    assert report.NUDGE in text and "bir şey değiştirmedim" in text and "Değer tablo" not in text
-
-
-def test_karne_quiet_week_has_no_nudge():
-    assert report.NUDGE not in "\n".join(report.karne_lines(FakeRepo()))
-
-
-def test_karne_bad_book_stats_ignored():
-    assert report._book_line(FakeRepo(state={"pb:stats": "bozuk"})) is None
-    assert report._book_line(FakeRepo(state={"pb:stats": "{}"})) is None

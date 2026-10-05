@@ -10,7 +10,8 @@ from domain.normalize import is_car_brand
 from domain.quality import REASONS, find_quarantine
 from infrastructure.db.repository import Repository
 
-NIGHT_HOURS_UTC = range(0, 4)  # KKTC 03:00–07:00
+# Bilerek UTC: bu iş için yalnız "gece, günde bir, sabah nabzından önce" yeter. UTC 00:00–04:00 = KKTC yazın 03:00–07:00, kışın 02:00–06:00.
+NIGHT_HOURS_UTC = range(0, 4)
 
 
 def run_maintenance(repo: Repository, now: datetime | None = None, force: bool = False) -> dict | None:

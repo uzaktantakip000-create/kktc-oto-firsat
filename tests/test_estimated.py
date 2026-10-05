@@ -13,6 +13,7 @@ from domain.llm_read import compare, parse_llm_read
 from domain.price_book import BookRow, Estimate, PriceBook
 from domain.profit import Confidence, ProfitResult, Tier
 from domain.settings import Settings
+from infrastructure.db.repository import unsaved_alert_key
 from tests.test_evaluate import POOL, car
 from tests.test_llm_reader import GOOD, TEXT, FakeRepo as LlmRepo, reader
 from tests.test_notify import FakeRepo as NotifyRepo, ev as notify_ev, patch_api
@@ -180,6 +181,35 @@ def test_burst_brake_sends_one_summary_and_marks_all(monkeypatch):
     sent.clear()
     notify.send_alerts(repo, "t", evs, tier=Tier.ESTIMATED, s=S)
     assert sent == []
+
+
+def test_burst_summary_record_failure_is_retried_then_traced_and_the_summary_is_not_resent(monkeypatch, capsys):
+    """Arıza freni özeti GİTTİ ama `alerts` kaydı yazılamadı: tek tek mesajlardaki yol (notify._record_alert) burada da geçerli. Geçici hata:
+    bir kez yeniden denenir, kayıt düşer. Kalıcı hata (örn. eksik sütun): tur çökmez, her ilan için `bot_state`'e yedek iz kalır, sahibe
+    uyarı düşer ve sonraki turda AYNI özet tekrar gitmez (eskiden save_alert hatası turu düşürüyor, özet her 15 dakikada yeniden gidiyordu)."""
+    sent, owner = [], []
+
+    def fake(token, method, **kw):
+        sent.append(kw["chat_id"])
+        return {"message_id": 7}
+
+    monkeypatch.setattr(notify, "api", fake)
+    monkeypatch.setattr(health, "notify_owner", lambda repo, key, text, repeat_hours=12: owner.append(key) or True)
+    evs = [est_ev(i, price=5000 + i) for i in range(S.est_burst_limit + 1)]
+    repo = NotifyRepo(["a"])
+    repo.save_failures = 1  # geçici: yalnız ilk deneme patlar
+    assert notify.send_alerts(repo, "t", evs, tier=Tier.ESTIMATED, s=S) == len(evs)
+    assert sent == ["a"] and len(repo.alerts) == len(evs) and repo.state == {}
+    sent.clear()
+    owner.clear()
+    repo = NotifyRepo(["a"])
+    repo.save_failures = 10**6  # kalıcı: her kayıt denemesi patlar
+    assert notify.send_alerts(repo, "t", evs, tier=Tier.ESTIMATED, s=S) == len(evs)
+    assert sent == ["a"] and repo.alerts == set()
+    assert all(unsaved_alert_key(e.listing["id"], "a") in repo.state for e in evs)
+    assert "bildirim gitti ama kaydı yazılamadı" in capsys.readouterr().out
+    assert "alert_unsaved" in owner and "est_burst" in owner
+    assert notify.send_alerts(repo, "t", evs, tier=Tier.ESTIMATED, s=S) == 0 and sent == ["a"]  # özet tekrar gitmedi
 
 
 def test_exactly_at_limit_sends_individually(monkeypatch):

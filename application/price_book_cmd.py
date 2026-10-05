@@ -5,6 +5,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from difflib import get_close_matches
 
+from domain.model_year import max_model_year
 from domain.normalize import fold
 from domain.price import parse_price
 from domain.price_book import STATUS_SETTLED, STATUS_SUSPECT, BookRow, PriceBook
@@ -18,6 +19,8 @@ MATCH_CUTOFF = 0.75
 YEAR_RE = re.compile(r"^(19[89]\d|20[0-3]\d)$")
 METHOD_TEXT = {"A": "benzer ilanlar", "B": "değer eğrisi", "C": "marka eğrisi (yaklaşık)"}
 SALE_LIMITS = (300, 250_000)  # GBP
+DECISION_GAP_NOTE = 0.10  # değer tablosu ile bildirim hesabı (piyasa ortası) bundan çok ayrışırsa tek satır neden yazılır
+TABLE_HEAD = "📘 Değer tablosu (her gece hesaplanır):"
 HELP_FIYAT = "Hangi aracı kastettiğini anlayamadım (tabloda bu model yok olabilir).\nÖrnek: /fiyat corolla 2014   ya da   /fiyat toyota corolla 2014"
 HELP_SATTI = ("Okuyamadım. Şöyle yaz: /satti corolla 2014 120000km 7200\n"
               "(km yazmasan da olur; fiyat £ varsayılır, 7200 TL / 5000$ / 4000€ de yazabilirsin)")
@@ -90,6 +93,39 @@ def _nearest_listings(repo: Repository, brand: str, model: str, year: int, ref_k
     return sorted(rows, key=dist)[:k]
 
 
+def _decision_lines(repo: Repository, brand: str, model: str, year: int, row: BookRow | None) -> list[str]:
+    """Şu an ilandaki bu model-yıl araçların SON kararındaki piyasa ortası (bildirim mesajı aynı kayıttan okur; kural/eşik değişmez).
+    Her ilanın piyasası ayrıdır (vites/motor/km, ilan kendi emsali olmaz): tablodan %10'dan çok ayrışan satıra fark yazılır, altına
+    tek satır neden. İlanda araç yoksa ya da kayıt okunamazsa boş (tablo cevabı yine gider)."""
+    try:
+        decs = repo.current_decisions(brand, model, year)
+    except Exception as e:  # ek bilgi: okunamazsa /fiyat tablo cevabını yine versin
+        print("karar kaydı okunamadı (/fiyat):", type(e).__name__, str(e)[:120])
+        return []
+    if not decs:
+        return []
+    total = decs[0]["total"]
+    more = f"; {len(decs)}'ü aşağıda" if total > len(decs) else ""
+    lines = [f"📊 Bildirim hesabı (şu an ilanda {total} tane {year} {_title(brand, model)} var{more}):"]
+    flagged = False
+    for d in decs:
+        km = f"{_num(d['km'])} km" if d.get("km") else "km yok"
+        med = d["market_median_gbp"]
+        if d["method"] == "B":  # 🟠 yolu: tablonun eğrisinden tahmin, "piyasa ortası" değil
+            lines.append(f"• {_money(d['price_gbp'])} · {km} → tablo eğrisi ~{_money(med)} (az emsal)")
+            continue
+        gap = med / row.value_gbp - 1 if row is not None and row.value_gbp > 0 else 0.0
+        pct = round(abs(gap) * 100)  # karar, sahibin gördüğü yuvarlanmış yüzdeyle verilir ("%10" hiç işaretlenmez)
+        mark = f" · tablodan %{pct} {'yüksek' if gap > 0 else 'düşük'}" if pct > DECISION_GAP_NOTE * 100 else ""
+        flagged = flagged or bool(mark)
+        lines.append(f"• {_money(d['price_gbp'])} · {km} → piyasa ortası {_money(med)} ({d['comparables_n']} emsal){mark}")
+    if flagged:
+        to = f"aynı yıla ve {round(row.ref_km / 1000)} bin km'ye" if row.ref_km else "aynı yıla"
+        lines.append(f"ℹ️ Fark nedeni: 📘 tablo bütün sürümleri ve TL ilanları sayar, hepsini {to} çevirir; 📊 yalnız o ilana benzeyenlere "
+                     "(aynı vites/yakıt/motor, yakın km) bakar, emsal azsa ±2 yıla açılıp iki hesaptan düşüğünü alır. Fırsatı 📊 belirler.")
+    return lines
+
+
 def fiyat_reply(repo: Repository, args: str) -> str:
     tokens = fold(args or "").split()
     year = next((int(t) for t in tokens if YEAR_RE.match(t)), None)
@@ -113,11 +149,14 @@ def fiyat_reply(repo: Repository, args: str) -> str:
     if not years:
         return f"{_title(brand, model)} için tabloda satır yok."
     out = [note + "\n".join(_row_text(by_year[y]) for y in years)]
+    if year is not None:  # yıl sorulunca iki ayrı rakam çıkabilir: hangisinin tablo olduğu yazılır
+        out.insert(0, TABLE_HEAD)
     if year is not None and year in by_year:  # istenen yılın varyant satırları (180/200, 1.2/1.4 gibi)
         var = sorted((k[2], r) for k, r in variants.items() if k[3] == year)
         if var:
             out.append("   Varyant: " + " · ".join(f"{v} {_money(r.value_gbp)} ({r.n} ilan)" for v, r in var))
     if year is not None:
+        out += _decision_lines(repo, brand, model, year, by_year.get(year))
         near = _nearest_listings(repo, brand, model, year, by_year[years[0] if year not in by_year else year].ref_km)
         if near:
             out.append("En yakın 3 ilan:")
@@ -140,7 +179,7 @@ def _parse_sale(text: str, this_year: int) -> dict | None:
             return None
         low = low[:m.start()] + " " + low[m.end():]
     tokens = low.split()
-    year = next((int(t) for t in tokens if re.fullmatch(r"\d{4}", t) and 1980 <= int(t) <= this_year + 1), None)
+    year = next((int(t) for t in tokens if re.fullmatch(r"\d{4}", t) and 1980 <= int(t) <= max_model_year(this_year)), None)
     if year is None:
         return None
     tokens.remove(str(year))

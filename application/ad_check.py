@@ -3,7 +3,7 @@ taranan ilanlarla AYNI kurallarla değerlendirilir (domain.decision.decide). Hi�
 Telegram dışına gönderilmez (yapay zekâ okuması hariç; telefon/e-posta maskelenir)."""
 from datetime import datetime, timezone
 
-from application.evaluate import confidence_label, load_book
+from application.evaluate import confidence_label, load_book, pool_keys
 from application.llm_reader import LlmReader, listing_fields
 from domain.caption_parser import ParsedCaption
 from domain.comparables import nearest_comparables
@@ -128,7 +128,9 @@ def analyze_text(repo: Repository, text: str, reader: LlmReader | None, s: Setti
     listing["id"] = "iletilen"
     if not s.min_plausible_price_gbp <= listing["price_gbp"] <= s.max_plausible_price_gbp:
         return f"🤔 Fiyat mantıksız görünüyor ({_fmt_money(listing['price_gbp'])}); eksik/fazla rakam olabilir. Fiyatı kontrol edip tekrar gönder."
-    pool = [r for r in repo.market_pool(days=s.comparable_window_days + 30) if is_car_brand(r.get("brand_norm"))]
+    # Havuz yalnız bu ilanın (marka, model) çifti için okunur (taranan ilanla aynı yardımcı: evaluate.pool_keys): emsal ve ikiz
+    # (same_car) zaten aynı marka+model ister, cevap tüm havuzla aynıdır; her kontrolde tüm havuzu okumak çıkış kotasını harcıyordu.
+    pool = [r for r in repo.market_pool(days=s.comparable_window_days + 30, keys=pool_keys([listing])) if is_car_brand(r.get("brand_norm"))]
     # İletilen ilan sistemin taradığı bir ilan olabilir: veritabanındaki ikizi kendi emsali sayılmaz (taranan ilanın kendisi de
     # kendi emsali olmaz; iki yol aynı cevabı versin).
     twins = frozenset(r["id"] for r in pool if same_car(listing, r))

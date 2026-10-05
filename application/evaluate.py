@@ -51,7 +51,7 @@ def load_book(repo) -> PriceBook | None:
     try:
         return PriceBookStore(repo.conn).load_book()
     except Exception as e:  # tablo hatası değerlendirmeyi engellemesin
-        print("değer tablosu yüklenemedi:", type(e).__name__, str(e)[:120])
+        print("değer tablosu yüklenemedi:", type(e).__name__, redact(str(e))[:120])
         return None
 
 
@@ -103,25 +103,43 @@ def _evaluate_one(repo: Repository, listing: dict, pool: list[dict], s: Settings
 
 
 QUICK_NEW_HOURS = 3  # hızlı tur: son 3 saatte görülüp hiç değerlendirilmemiş (ya da fiyatı değişmiş) ilanlar
+# Saatlik tam turda hiç değerlendirilmemiş ilan yalnız ilk görülmesi ya da son fiyat değişikliği bu kadar yeniyse denenir. Bildirim yalnız
+# ilk görülmesi/fiyat değişikliği ≤36 saat olan ilana gider (notify.is_fresh; 🟡 özeti ≤48 saat): 72 saat iki kat güvenlik payıdır.
+# Daha eski "emsal yok" birikimi (nadir model, emsalsiz; her saat yeniden okunup yine sonuçsuz kalıyordu) günde bir denenir (backlog=True).
+BACKLOG_AFTER_HOURS = 72
+
+
+def pool_keys(listings: list[dict]) -> list[tuple[str, str | None]]:
+    """Emsal havuzundan okunacak (brand_norm, model_norm) çiftleri: yalnız değerlendirilecek ilanlarınki. `find_market` emsalde marka+model
+    EŞİTLİĞİ şart koşar (modeli bilinmeyen ilan yalnız modeli bilinmeyenle; karışık model yaması `model_ambiguous` yalnız ilanın KENDİ
+    anahtarına bakar, kardeş anahtar gerekmez): sonuç tüm havuzla aynıdır, okunan veri (Supabase çıkış kotası) azalır.
+    Taranan ilan (evaluate_new) ve iletilen ilan (ad_check) aynı fonksiyonu kullanır."""
+    return sorted({(l["brand_norm"], l.get("model_norm")) for l in listings}, key=lambda k: (k[0], k[1] or ""))
 
 
 def evaluate_new(repo: Repository, settings: Settings | None = None, book=_LOAD,
-                 failures: list[tuple[str, str]] | None = None, quick: bool = False) -> list[Evaluated]:
+                 failures: list[tuple[str, str]] | None = None, quick: bool = False, backlog: bool = True) -> list[Evaluated]:
     """Henüz değerlendirilmemiş aktif ilanları değerlendirir. Emsali olmayanlar bir sonraki turda tekrar denenir.
     Değer tablosu (book) bir kez yüklenir; verilmezse kendisi yükler, yüklenemezse eski davranış (🟠 yok).
     Her ilan kendi hata sınırındadır: bir ilanın patlaması diğerlerini durdurmaz. Patlayanlar `failures`'a (kısa kimlik, hata türü)
     eklenir. Bağlantı/sunucu hatası yutulmaz. ≥10 ilan denenip yarısından fazlası patlarsa EvaluationFailure fırlar.
-    quick=True: yalnız yeni/fiyatı değişen ilanlar (eski "emsal yok" birikimi ve 3 günlük yeniden bakış saatlik tam turda).
+    quick=True: yalnız yeni/fiyatı değişen ilanlar (3 günlük yeniden bakış ve kural sürümü dalı saatlik tam turda).
+    backlog=False (tam turda): hiç değerlendirilmemiş ilanlardan yalnız ilk görülmesi/fiyat değişikliği ≤BACKLOG_AFTER_HOURS olanlar; eski
+    "emsal yok" birikimi yalnız backlog=True turunda (cron: günde bir). Bildirim üretebilecek her ilan iki türde de alınır.
     Emsal havuzu yalnız değerlendirilecek ilanların (marka, model) çiftleri için okunur (find_market zaten marka+model eşitliği ister)."""
     s = settings or Settings()
     if book is _LOAD:
         book = load_book(repo) if s.estimated_alerts else None
-    listings = repo.unevaluated_active(recent_hours=QUICK_NEW_HOURS) if quick else repo.unevaluated_active(rules_version=RULES_VERSION)
+    if quick:
+        listings = repo.unevaluated_active(recent_hours=QUICK_NEW_HOURS)
+    elif backlog:
+        listings = repo.unevaluated_active(rules_version=RULES_VERSION)
+    else:
+        listings = repo.unevaluated_active(rules_version=RULES_VERSION, unevaluated_hours=BACKLOG_AFTER_HOURS)
     candidates = [l for l in listings if is_car_brand(l.get("brand_norm"))]  # motosiklet/tekne/karavan/ticari: bu sistem otomobil içindir
     if not candidates:
         return []
-    keys = sorted({(l["brand_norm"], l.get("model_norm")) for l in candidates}, key=lambda k: (k[0], k[1] or ""))
-    pool = [r for r in repo.market_pool(days=s.comparable_window_days + 30, keys=keys) if is_car_brand(r.get("brand_norm"))]
+    pool = [r for r in repo.market_pool(days=s.comparable_window_days + 30, keys=pool_keys(candidates)) if is_car_brand(r.get("brand_norm"))]
     results, attempted, failed = [], 0, 0
     for listing in candidates:
         attempted += 1

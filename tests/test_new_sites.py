@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
 import pytest
 
 from application import collect_pazarkibris as cp
@@ -261,6 +262,27 @@ def test_pazarkibris_all_pages_unreadable_raises(monkeypatch):
     monkeypatch.setattr(pazarkibris, "new_client", lambda: C())
     with pytest.raises(RuntimeError, match="okunamadı"):
         cp.collect_pazarkibris(FakeRepo(), {"id": "p", "name": "PazarKibris"}, None, now=NOW)
+
+
+def test_pazarkibris_network_error_still_waits_politely(monkeypatch):
+    """Ağ hatasıyla biten sayfa isteği de siteye gitti: hata dalında da nazik bekleme atlanmamalı."""
+    sleeps = []
+    monkeypatch.setattr(pazarkibris, "polite_sleep", lambda: sleeps.append(1))
+
+    class C:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def get(self, url, params=None):
+            raise httpx.ConnectError("ağ yok")
+
+    monkeypatch.setattr(pazarkibris, "new_client", lambda: C())
+    with pytest.raises(RuntimeError, match="okunamadı"):
+        cp.collect_pazarkibris(FakeRepo(), {"id": "p", "name": "PazarKibris"}, None, now=NOW)
+    assert len(sleeps) == cp.MAX_PAGES
 
 
 # --- siteler arası mükerrer ---

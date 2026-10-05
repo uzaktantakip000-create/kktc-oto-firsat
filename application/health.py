@@ -11,13 +11,15 @@ REPEAT_HOURS = 12  # aynı uyarı en fazla bu aralıkla tekrarlanır
 FX_FALLBACK_ALERT_HOURS = 24  # döviz servisi bu kadar saattir yanıt vermeyip yedek kur kullanılıyorsa sahibe haber
 
 
-def notify_owner(repo: Repository, key: str, text: str, repeat_hours: int = REPEAT_HOURS) -> bool:
-    """Sahibe uyarı yollar; aynı 'key' kısa süre önce gönderildiyse susar. TELEGRAM_* yoksa sessizce atlar."""
+def notify_owner(repo: Repository, key: str, text: str, repeat_hours: int = REPEAT_HOURS, max_chars: int = 3500, **extra) -> bool:
+    """Sahibe uyarı yollar; aynı 'key' kısa süre önce gönderildiyse susar. TELEGRAM_* yoksa sessizce atlar.
+    `max_chars`: güvenlik kesimi (Telegram sınırı 4096; kendi boyunu ölçen rapor daha yüksek verebilir).
+    `extra`: sendMessage'e aynen geçen alanlar (ör. reply_markup düğmeleri, disable_web_page_preview)."""
     token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat or repo.alert_recent(key, repeat_hours):
         return False
     try:
-        api(token, "sendMessage", chat_id=chat, text=redact(text)[:3500])
+        api(token, "sendMessage", chat_id=chat, text=redact(text)[:max_chars], **extra)
     except TelegramError:
         return False
     repo.mark_alerted(key)

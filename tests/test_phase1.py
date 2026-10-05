@@ -68,6 +68,15 @@ def test_removed_page_not_sent_but_server_error_still_sent(monkeypatch):
     assert len(liveness.recheck_before_send(LiveRepo(None), [ev()], client=FakeClient(503))) == 1
 
 
+def test_removed_page_still_waits_politely(monkeypatch):
+    """404/410 ile atlanan ilan da siteye istek attı: her ilan sonrası nazik bekleme (404'te atlanmamalı)."""
+    fake_fetch(monkeypatch, None)
+    sleeps = []
+    monkeypatch.setattr(liveness.kktcar, "polite_sleep", lambda: sleeps.append(1))
+    assert liveness.recheck_before_send(LiveRepo(None), [ev("a"), ev("b")], client=FakeClient(404)) == []
+    assert len(sleeps) == 2
+
+
 def test_unchanged_or_unreadable_listing_still_sent(monkeypatch):
     fake_fetch(monkeypatch, {"price_amount": 5000, "currency": "GBP"})
     assert len(liveness.recheck_before_send(LiveRepo(None), [ev()], client=FakeClient())) == 1

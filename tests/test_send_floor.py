@@ -64,6 +64,9 @@ class Repo:
     def purge_personal_data(self):
         return 0, 0, 0
 
+    def resurfaced_kktcarabam(self, ids):  # tazelik adımı (yeniden çıkmış eski KKTCarabam ilanı): burada hiçbiri
+        return set()
+
 
 def test_cron_evaluate_sends_only_what_passes_the_floor(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")

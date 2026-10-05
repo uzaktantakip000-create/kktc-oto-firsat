@@ -185,8 +185,9 @@ class VRepo:
 def test_rules_version_change_forces_a_full_round_without_deleting_anything():
     repo = VRepo({"rules_version": "2026-01-01"})
     assert cron_evaluate.apply_rules_version(repo) == 5 and repo.stale_asked == [RULES_VERSION]
-    assert repo.state["rules_version"] == RULES_VERSION == "2026-10-04f"
+    assert repo.state["rules_version"] == RULES_VERSION == "2026-10-05"
     assert repo.state["eval:full"] == ""  # sürüm dalı yalnız TAM turda çalışır: sonraki tur TAM tur olur
+    assert repo.state["eval:backlog"] == ""  # eski "emsal yok" birikimi de yeni kurallarla hemen (günlük turu beklemeden) denenir
     assert cron_evaluate.apply_rules_version(repo) == 0 and repo.stale_asked == [RULES_VERSION]  # aynı sürüm: iş yok
     assert cron_evaluate.apply_rules_version(VRepo()) == 5  # hiç yazılmamışsa da bir kez
 

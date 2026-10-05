@@ -4,10 +4,15 @@ from tests.test_evaluate import POOL, car
 
 class Repo:
     def __init__(self, pool=POOL):
-        self.pool, self.state = pool, {}
+        self.pool, self.state, self.keys_asked = pool, {}, []
 
-    def market_pool(self, days):
-        return self.pool
+    def market_pool(self, days, keys=None):
+        """Gerçek Repository.market_pool gibi: `keys` verilirse yalnız bu (marka, model) çiftleri (SQL: concat_ws('|', marka, model||''))."""
+        self.keys_asked.append(keys)
+        if keys is None:
+            return self.pool
+        want = {f"{b}|{m or ''}" for b, m in keys}
+        return [r for r in self.pool if f"{r['brand_norm']}|{r['model_norm'] or ''}" in want]
 
     def blocked_phones(self):
         return []
@@ -186,3 +191,83 @@ def test_owners_personal_settings_do_not_apply_to_a_subscribers_check(monkeypatc
     repo.state["cfg:blocked_brands"] = "Toyota"  # sahip Toyota'yı istemiyor (kişisel tercih)
     assert "🟢 GÜÇLÜ FIRSAT" not in ad_check.handle(repo, AD, None, None)                      # sahibin kontrolünde tercih uygulanır
     assert "🟢 GÜÇLÜ FIRSAT" in ad_check.handle(repo, AD, None, None, subscriber="77")        # abonede standart kurallar
+
+
+# --- veritabanı okuma hacmi: iletilen ilan da yalnız kendi (marka, model) çiftinin havuzunu okur ------------------------
+class FullPoolRepo(Repo):
+    """Eski davranış: anahtar yok sayılır, TÜM havuz döner (karşılaştırma için)."""
+    def market_pool(self, days, keys=None):
+        self.keys_asked.append(keys)
+        return self.pool
+
+
+def _many(prefix, prices, **kw):
+    return [car(f"{prefix}{i}", p, **kw) for i, p in enumerate(prices)]
+
+
+MIXED_POOL = (
+    POOL + [car("twin", 8500)]  # Toyota vitz + iletilen ilanın veritabanındaki ikizi
+    + _many("y", [14000, 14200, 14400, 14600, 14800, 15000, 15200, 15400], model_norm="yaris", model="Yaris", year=2021, km=30_000)  # CROSS_KEYS
+    + _many("c", [12000, 12200, 12400, 12600, 12800, 13000, 13200, 13400], brand_norm="Mazda", model_norm="cx", model="CX")  # MIXED_KEYS
+    + _many("t", [9000, 9200, 9400, 9600, 9800, 10000, 10200, 10400], brand_norm="Ford", model_norm="transit", model="Transit")  # MIXED_KEYS
+    + _many("n", [8000, 8200, 8400, 8600, 8800, 9000, 9200, 9400], model_norm=None, model=None)  # modeli bilinmeyen Toyota
+    + _many("fg", [7000, 7200, 7400, 7600, 7800, 8000, 8200, 8400], brand_norm="Honda", model_norm="fit", model="Fit", currency="GBP")
+    + _many("ft", [6000, 6100, 6200, 6300], brand_norm="Honda", model_norm="fit", model="Fit", currency="TRY")  # TL emsal: yalnız Honda fit'te
+)
+CASES = [  # (marka, model, yıl, km, £ fiyat, para birimi)
+    ("Toyota", "Vitz", 2015, 80_000, 5000, "GBP"),     # 🟢 + en yakın emsaller (havuzda başka anahtarlarda TL ilan var)
+    ("Toyota", "Vitz", 2015, 80_000, 8500, "GBP"),     # ikizi havuzda: kendi emsali sayılmaz
+    ("Toyota", "Vitz", 2015, 80_000, 5000, "TRY"),     # TL ilan
+    ("Toyota", "Yaris", 2021, 30_000, 9000, "GBP"),    # Yaris/Yaris Cross karışık anahtar (CROSS_KEYS)
+    ("Mazda", "CX", 2015, 80_000, 8000, "GBP"),        # CX-3/CX-5/CX-30 karışık anahtar (MIXED_KEYS)
+    ("Ford", "Transit", 2015, 80_000, 6000, "GBP"),    # MIXED_KEYS
+    ("Toyota", None, 2015, 80_000, 5000, "GBP"),       # model bilinmiyor (model_norm None)
+    ("Toyota", "Foobarx", 2015, 80_000, 5000, "GBP"),  # bilinmeyen model: emsal yok
+    ("Honda", "Fit", 2015, 80_000, 4500, "GBP"),       # anahtarın kendisinde TL emsal var
+]
+
+
+def _ad(brand, model, year, km, price, currency):
+    return {"brand": brand, "model": model, "year": year, "km": km, "fuel": None, "transmission": "otomatik", "steering": None,
+            "price_amount": price, "currency": currency, "currency_guess": False, "price_gbp": float(price), "raw_text": "x", "engine_l": None}
+
+
+def test_forwarded_ad_reads_only_its_own_model_pool_and_the_answer_is_identical(monkeypatch):
+    """Çıkış kotası: iletilen ilan tüm emsal havuzunu değil yalnız kendi (marka, model) çiftini okur (evaluate.pool_keys). Cevap ve karar
+    (seviye, piyasa sayıları, emsal kimlikleri, nedenler) tüm havuzla birebir aynı: karışık model (MIXED/CROSS_KEYS), modeli bilinmeyen,
+    bilinmeyen model, TL ilan, ikiz ve 🟠 yolu (değer tablosu) dahil. Farklı olabilecek TEK alan `Market.gbp_only`: yalnız kanıt bayrağıdır
+    (cevapta görünmez; başka anahtardaki TL ilan "önce £-yalnız dene" adımını açar ama sayılar aynı kalır; taranan ilanda da böyledir)."""
+    from dataclasses import replace
+
+    from domain import decision as decision_mod
+    from domain.price_book import Estimate, PriceBook
+    from domain.settings import Settings
+    from infrastructure.db.repository import Repository
+
+    monkeypatch.setattr(ad_check, "gbp_rate", lambda c: 1.0)
+    est = Estimate(value_gbp=10_000, lower_gbp=8_000, method="B", n=30, sellers=12, sigma=0.15)
+    decisions = []
+    real_decide = ad_check.decide
+
+    def spy(listing, pool, s, book=None, **kw):
+        d = real_decide(listing, pool, s, book, **kw)
+        decisions.append(None if d is None else (d.profit, replace(d.market, gbp_only=False), d.blocking, d.warnings, d.gaps, d.method))
+        return d
+
+    monkeypatch.setattr(ad_check, "decide", spy)
+    monkeypatch.setattr(decision_mod, "estimate_from_book", lambda l, b, s, now=None: est)
+    seen_tiers = set()
+    for with_book in (False, True):
+        monkeypatch.setattr(ad_check, "load_book", (lambda repo: PriceBook()) if with_book else (lambda repo: None))
+        for case in CASES:
+            monkeypatch.setattr(ad_check, "read_ad", lambda text, reader, c=case: (_ad(*c), "kural", None))
+            narrow, full = Repo(pool=MIXED_POOL), FullPoolRepo(pool=MIXED_POOL)
+            decisions.clear()
+            got = ad_check.analyze_text(narrow, "x", None, Settings())
+            want = ad_check.analyze_text(full, "x", None, Settings())
+            assert got == want, case
+            assert len(decisions) == 2 and decisions[0] == decisions[1], case
+            seen_tiers.add(None if decisions[0] is None else decisions[0][0].tier.value)
+            keys = Repository.norm_keys(case[0], case[1])
+            assert narrow.keys_asked == [[(keys["brand_norm"], keys["model_norm"])]] and full.keys_asked == narrow.keys_asked, case
+    assert {None, "guclu", "pazarlik", "tahmini"} <= seen_tiers  # vakalar gerçekten farklı yollardan geçti (emsal yok, 🟢, 🟡, 🟠)

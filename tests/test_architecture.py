@@ -107,3 +107,17 @@ def test_decision_primitives_are_not_reached_through_module_attribute_either():
 def test_decision_module_exists_and_uses_every_primitive():
     used = {(m, n) for m, n in imports(ROOT / "domain" / "decision.py")}
     assert DECISION_PRIMITIVES <= used, f"decision.py şunları çağırmıyor: {sorted(DECISION_PRIMITIVES - used)}"
+
+
+def test_every_internal_import_points_to_an_existing_module():
+    """Ölü kod silinince geride sarkan import kalmasın (ör. kullanılmayan infrastructure/telegram/ paketi kaldırıldı)."""
+    missing = []
+    for p in py_files(*SCAN_DIRS, "tests"):
+        for node in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
+            modules = [a.name for a in node.names] if isinstance(node, ast.Import) else [node.module] if isinstance(node, ast.ImportFrom) and node.module else []
+            for module in modules:
+                if module.split(".")[0] in SCAN_DIRS + ("tests",):
+                    path = ROOT / module.replace(".", "/")
+                    if not (path.with_suffix(".py").exists() or (path / "__init__.py").exists()):
+                        missing.append(f"{rel(p)} -> {module}")
+    assert not missing, "Var olmayan iç modül import ediliyor:\n" + "\n".join(sorted(missing))

@@ -110,6 +110,84 @@ def test_dedupe_candidates_quick_returns_complete_groups_only_where_new_listings
     assert found(db.dedupe_candidates()) == {"x_old", "x_new", "y_old1", "y_old2", "z_old", "z_new"}
 
 
+def add_site(conn, name, url):
+    """Gerçek adresli kaynak (KKTCarabam ve KibrisArabaAl tohum migration'larında zaten var: onlar kullanılır)."""
+    row = conn.execute("SELECT id FROM sources WHERE url=%s", (url,)).fetchone()
+    return row["id"] if row else conn.execute("INSERT INTO sources (platform, name, url, status) VALUES ('web',%s,%s,'aktif') RETURNING id",
+                                              (name, url)).fetchone()["id"]
+
+
+def test_twin_candidates_returns_only_cross_site_exact_price_rows_within_the_window(db):
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", "https://www.kktcarabam.com/kategori/ikinci-el-araclar")
+    kaa = add_site(c, "KibrisArabaAl", "https://kibrisarabaal.com/")
+    other = add_site(c, "KKTCar", "https://kktcar.com/")
+    bmw = dict(brand_norm="BMW", model_norm="3", year=2007, price_gbp=5400, price_amount=5400, currency="GBP", km=None)
+    add_listing(c, arabam, "a_bmw", **bmw, location="girne", first_seen_at=ago(minutes=10))
+    add_listing(c, kaa, "k_bmw", **(bmw | {"km": 145_000}), first_seen_at=ago(minutes=26))  # eş
+    add_listing(c, kaa, "k_bmw_late", **bmw, first_seen_at=ago(hours=4))  # 3 saatten uzak: gelmez
+    add_listing(c, kaa, "k_bmw_price", **(bmw | {"price_amount": 5450, "price_gbp": 5450}), first_seen_at=ago(minutes=20))  # tutar farklı
+    add_listing(c, kaa, "k_bmw_try", **(bmw | {"currency": "TRY"}), first_seen_at=ago(minutes=20))  # para birimi farklı
+    add_listing(c, other, "x_bmw", **bmw, first_seen_at=ago(minutes=20))  # başka site: gelmez
+    add_listing(c, arabam, "a_bmw2", **bmw, first_seen_at=ago(minutes=15))  # aynı sitede eşi var ama öbür sitede de var: gelir (rakip)
+    old = dict(brand_norm="Honda", model_norm="fit", year=2012, price_gbp=5450, price_amount=5450, currency="GBP", km=None)
+    add_listing(c, arabam, "a_fit_old", **old, first_seen_at=ago(days=4, hours=1))  # eski grup: yalnız tam turda
+    add_listing(c, kaa, "k_fit_old", **old, first_seen_at=ago(days=4))
+    add_listing(c, arabam, "a_nomodel", **(bmw | {"model_norm": None}), first_seen_at=ago(minutes=10))  # model bilinmiyor: gelmez
+    add_listing(c, kaa, "k_nomodel", **(bmw | {"model_norm": None}), first_seen_at=ago(minutes=10))
+    names = {r["id"]: r["source_item_id"] for r in c.execute("SELECT id, source_item_id FROM listings").fetchall()}
+
+    def found(rows):
+        return {(names[r["id"]], r["site"]) for r in rows}
+
+    full = db.twin_candidates(window_hours=3)
+    assert found(full) == {("a_bmw", "kktcarabam"), ("k_bmw", "kibrisarabaal"), ("a_bmw2", "kktcarabam"),
+                           ("a_fit_old", "kktcarabam"), ("k_fit_old", "kibrisarabaal")}
+    assert found(db.twin_candidates(window_hours=3, new_hours=3)) == {("a_bmw", "kktcarabam"), ("k_bmw", "kibrisarabaal"),
+                                                                       ("a_bmw2", "kktcarabam")}
+    r = next(r for r in full if names[r["id"]] == "a_bmw")
+    assert r["price_amount"] == 5400.0 and r["currency"] == "GBP" and r["location"] == "girne" and r["is_active"] and r["duplicate_of"] is None
+
+
+def test_mark_duplicates_links_kktcarabam_twin_to_kaa_on_real_db_and_quick_equals_full(db):
+    from application.dedupe import mark_duplicates
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", "https://www.kktcarabam.com/kategori/ikinci-el-araclar")
+    kaa = add_site(c, "KibrisArabaAl", "https://kibrisarabaal.com/")
+    bmw = dict(brand_norm="BMW", model_norm="3", year=2007, price_gbp=5400, price_amount=5400, currency="GBP", km=None, seller_phone=None)
+    a = add_listing(c, arabam, "a_bmw", **bmw, location="girne", first_seen_at=ago(hours=2))  # KKTCarabam ÖNCE görülmüş
+    k = add_listing(c, kaa, "k_bmw", **(bmw | {"km": 145_000, "seller_phone": "905330000001"}), first_seen_at=ago(minutes=30))
+    fit = dict(brand_norm="Honda", model_norm="fit", year=2012, price_gbp=5450, price_amount=5450, currency="GBP", km=None, seller_phone=None)
+    a_amb = add_listing(c, arabam, "a_fit", **fit, first_seen_at=ago(minutes=40))  # iki KAA adayı: bağ yok
+    add_listing(c, kaa, "k_fit1", **(fit | {"km": 200_000, "seller_phone": "905330000002"}), first_seen_at=ago(minutes=30))
+    add_listing(c, kaa, "k_fit2", **(fit | {"km": 90_000, "seller_phone": "905330000003"}), first_seen_at=ago(minutes=50))
+    assert mark_duplicates(db, quick=True) == 1
+    dup = {r["id"]: r["duplicate_of"] for r in c.execute("SELECT id, duplicate_of FROM listings").fetchall()}
+    assert dup[a] == k and dup[k] is None and dup[a_amb] is None
+    assert mark_duplicates(db) == 0  # tam tur aynı sonucu verir (yeni bağ yok)
+    assert db.unevaluated_active() and a not in {r["id"] for r in db.unevaluated_active()}  # kopya değerlendirilmez
+    c.execute("UPDATE listings SET is_active=FALSE WHERE id=%s", (k,))  # KAA ilanı satıldı/kalktı
+    assert db.release_orphan_duplicates() == 1  # mevcut kural: aktif kopya serbest kalır
+    assert mark_duplicates(db) == 0  # ve pasif KAA ilanına yeniden bağlanmaz
+
+
+def test_kktcarabam_with_km_seen_first_makes_the_kaa_twin_its_copy_and_never_links_itself(db):
+    """KKTCarabam ilanı artık ilan sayfasından km taşıyor: aynı araç iki sitede de km'li, KKTCarabam ÖNCE görülmüş. `same_car` KAA ilanını
+    KKTCarabam'ın kopyası yapar; kaynaklar arası ikiz geçişi aynı çifti yeniden bulur ve eskiden KKTCarabam ilanını KENDİNE bağlıyordu
+    (duplicate_of = kendi kimliği: ikisi de değerlendirme dışı, araç kaybolurdu). Şimdi tam olarak bir ilan görünür kalır."""
+    from application.dedupe import mark_duplicates
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", "https://www.kktcarabam.com/kategori/ikinci-el-araclar")
+    kaa = add_site(c, "KibrisArabaAl", "https://kibrisarabaal.com/")
+    bmw = dict(brand_norm="BMW", model_norm="3", year=2007, price_gbp=5400, price_amount=5400, currency="GBP", km=145_000)
+    a = add_listing(c, arabam, "a_bmw", **bmw, location="girne", first_seen_at=ago(hours=2))
+    k = add_listing(c, kaa, "k_bmw", **(bmw | {"seller_phone": "905330000001"}), first_seen_at=ago(minutes=30))
+    assert mark_duplicates(db) == 1
+    dup = {r["id"]: r["duplicate_of"] for r in c.execute("SELECT id, duplicate_of FROM listings").fetchall()}
+    assert dup == {a: None, k: a}  # KKTCarabam kanonik ve görünür; KAA kopya; kimse kendine bağlı değil
+    assert mark_duplicates(db) == 0 and {r["id"] for r in db.unevaluated_active()} == {a}
+
+
 def test_release_orphan_duplicates_frees_only_active_copies_of_inactive_originals(db):
     c, sid = db.conn, add_source(db.conn)
     dead = add_listing(c, sid, "dead", is_active=False)
@@ -220,6 +298,28 @@ def test_pending_strong_skips_listings_already_sent_as_green_or_orange_but_not_d
     assert ids == {only_digest, fresh}  # 🟠 gönderilmiş ilan 🟢 olarak yeniden gelmez; yalnız özet kaydı olan gelir
 
 
+def test_the_same_car_is_not_sent_twice_when_its_copy_was_already_sent(db):
+    """05.10 Mazda Demio 2014 £4.500: km'siz KKTCarabam ilanı önce 🟢 gitti, 18 dk sonra KibrisArabaAl ikizi de gitti. Kaynaklar arası ikizde
+    kopya önce gelen ilan olabilir (kopya = KKTCarabam): kopyası bu sohbete gitmiş ilan, o sohbet için gitmiş sayılır (alert_exists,
+    pending_strong); haftalık rapor da onu 'bildirilmemiş' ya da 'yakın kaçan' diye göstermez. Kopyası gitmemiş ilan etkilenmez."""
+    c, sid = db.conn, add_source(db.conn)
+    for chat in ("c1", "c2"):
+        c.execute("INSERT INTO subscribers (chat_id, status) VALUES (%s, 'onayli')", (chat,))
+    rich, other = add_listing(c, sid, "kaa_twin"), add_listing(c, sid, "other")
+    lean = add_listing(c, sid, "kktcarabam", km=None, duplicate_of=rich)
+    for lid in (rich, other):
+        add_report_eval(c, lid, "guclu", pct=30)
+    db.save_alert(lean, "c1", "guclu", 1, evaluation_id=None, price_gbp=None)  # kopya YALNIZ c1'e gitti
+    assert db.alert_exists(rich, "c1", "guclu") and db.alert_exists(rich, "c1", "tahmini")
+    assert not db.alert_exists(rich, "c2", "guclu") and not db.alert_exists(other, "c1", "guclu")
+    assert {r["id"] for r in db.pending_strong(36, "guclu")} == {rich, other}  # c2 için hâlâ aday
+    db.save_alert(lean, "c2", "guclu", 2, evaluation_id=None, price_gbp=None)
+    assert {r["id"] for r in db.pending_strong(36, "guclu")} == {other}  # iki sohbete de gitti: aynı araç yeniden gelmez
+    assert item_names(c, db.unnotified_strong("v1", days=14)) == ["other"]
+    c.execute("UPDATE evaluations SET tier='pazarlik', profit_pct=18")
+    assert item_names(c, db.near_misses("v1", days=7, limit=10)) == ["other"]
+
+
 def add_versioned_eval(conn, listing_id, evaluated_at, version, tier="yok"):
     conn.execute("INSERT INTO evaluations (listing_id, evaluated_at, comparables_n, confidence, tier, rules_version, saticilar_n, evidence, nedenler, "
                  "red_flags, market_median_gbp, profit_pct) VALUES (%s,%s,8,'orta',%s,%s,5,'{\"yontem\": \"A\"}', ARRAY['km_yuksek'], ARRAY['km_yuksek'], 9000, 40)",
@@ -250,6 +350,58 @@ def test_unevaluated_active_rules_version_branch_only_picks_notification_candida
     assert items(db.unevaluated_active(recent_hours=3, rules_version="yeni")) == {"repriced"}  # hızlı tur sürüm dalına bakmaz (yalnız fiyatı değişen gelir)
     assert db.count_stale_rules("yeni") == 6  # bilgi sayacı: fresh_old, fresh_null, old, repriced, old_green, alerted
     assert db.conn.execute("SELECT count(*) AS n FROM evaluations").fetchone()["n"] == 7  # HİÇBİR satır silinmedi
+
+
+def test_hourly_full_round_skips_only_the_old_unevaluated_backlog_and_keeps_every_alertable_listing(db):
+    """Çıkış kotası (Adım 2h devamı): saatlik tam tur (unevaluated_hours=72) hiç değerlendirilmemiş ESKİ birikimi (ilk görülme VE son fiyat
+    değişikliği >72 saat) okumaz; günlük tur (unevaluated_hours yok) bugünkü tam turla birebir aynıdır. Bildirim üretebilecek (notify.is_fresh)
+    her ilan saatlik turda da vardır; diğer dallar (3 günlük yeniden bakış, değerlendirmeden sonra fiyat değişimi, kural sürümü) değişmez."""
+    from application.evaluate import BACKLOG_AFTER_HOURS
+    from application.notify import is_fresh
+
+    c = db.conn
+    web, ig = add_source(c, "W"), add_source(c, "I", platform="instagram")
+
+    def repriced(lid, hours):
+        c.execute("INSERT INTO listing_history (listing_id, field, old_value, new_value, changed_at) VALUES (%s,'price_gbp','6000','5000',%s)",
+                  (lid, ago(hours=hours)))
+
+    # hiç değerlendirilmemiş (emsalsiz kalmış) ilanlar
+    add_listing(c, web, "new_1h", first_seen_at=ago(hours=1))
+    add_listing(c, web, "new_30h", first_seen_at=ago(hours=30))
+    add_listing(c, web, "new_30h_old_post", first_seen_at=ago(hours=30), posted_at=ago(days=10))  # taze değil ama 72 saat içinde: yine her saat
+    add_listing(c, ig, "ig_30h", first_seen_at=ago(hours=30), posted_at=ago(hours=30))
+    add_listing(c, web, "new_70h", first_seen_at=ago(hours=70))
+    add_listing(c, web, "old_80h", first_seen_at=ago(hours=80))  # birikim: günde bir
+    add_listing(c, web, "old_10d", first_seen_at=ago(days=10))  # birikim: günde bir
+    repriced(add_listing(c, web, "old_repriced_5h", first_seen_at=ago(days=10)), 5)  # eski ilan, fiyatı yeni değişti: TAZE, her saat
+    repriced(add_listing(c, web, "old_repriced_50h", first_seen_at=ago(days=10)), 50)  # 72 saat içinde: her saat
+    old_twice = add_listing(c, web, "old_repriced_100h", first_seen_at=ago(days=10))
+    repriced(old_twice, 200)
+    repriced(old_twice, 100)  # son değişiklik 100 saat önce: birikim
+    # değerlendirilmiş ilanlar: dalları değişmez
+    lid = add_listing(c, web, "stale", first_seen_at=ago(days=9))
+    add_eval(c, lid, ago(days=5))  # 3 günlük yeniden bakış
+    lid = add_listing(c, web, "repriced_after_eval", first_seen_at=ago(days=9))
+    add_eval(c, lid, ago(days=1))
+    repriced(lid, 2)
+    lid = add_listing(c, web, "fresh_old_version")
+    add_versioned_eval(c, lid, ago(hours=2), "eski")  # kural sürümü dalı
+    lid = add_listing(c, web, "done", first_seen_at=ago(days=5))
+    add_eval(c, lid, ago(days=1))  # hiçbir dala girmez
+
+    daily = items(db.unevaluated_active(rules_version="yeni"))  # = bugünkü tam tur
+    hourly = items(db.unevaluated_active(rules_version="yeni", unevaluated_hours=BACKLOG_AFTER_HOURS))
+    assert daily == {"new_1h", "new_30h", "new_30h_old_post", "ig_30h", "new_70h", "old_80h", "old_10d", "old_repriced_5h",
+                     "old_repriced_50h", "old_repriced_100h", "stale", "repriced_after_eval", "fresh_old_version"}
+    assert daily - hourly == {"old_80h", "old_10d", "old_repriced_100h"} and hourly <= daily  # yalnız eski birikim çıktı
+    rows = c.execute("""SELECT l.source_item_id, l.first_seen_at, l.posted_at, s.platform,
+                               (SELECT MAX(h.changed_at) FROM listing_history h WHERE h.listing_id=l.id AND h.field='price_gbp') AS pc
+                        FROM listings l JOIN sources s ON s.id=l.source_id""").fetchall()
+    alertable = {r["source_item_id"] for r in rows if is_fresh(r["first_seen_at"], r["posted_at"], price_changed_at=r["pc"], platform=r["platform"])}
+    assert {"new_1h", "new_30h", "ig_30h", "old_repriced_5h", "repriced_after_eval", "fresh_old_version"} <= alertable  # test gerçekten taze ilan içeriyor
+    assert alertable & daily <= hourly  # bildirim üretebilecek her aday saatlik turda da var
+    assert items(db.unevaluated_active(recent_hours=3, unevaluated_hours=BACKLOG_AFTER_HOURS)) == items(db.unevaluated_active(recent_hours=3))  # hızlı tur aynı
 
 
 def test_downgrade_evaluation_inserts_a_copy_and_never_changes_the_original(db):
@@ -544,8 +696,10 @@ def test_every_automatic_feedback_read_uses_the_owner_vote_filter():
 
     from infrastructure.db.repository import Repository
     for fn in (Repository.market_pool, Repository.feedback_votes, Repository.pas_count, Repository.est_feedback_by_model,
-               Repository.est_feedback_recent, Repository.sources_failing_feedback):
+               Repository.est_feedback_recent, Repository.sources_failing_feedback, Repository.recent_opportunities):
         assert "OWNER_VOTE_SQL" in inspect.getsource(fn), fn.__name__
+    from application import status
+    assert "OWNER_VOTE_SQL" in inspect.getsource(status.build_status)  # /durum "Senin düğme basışların"
 
 
 def test_learning_gate_counts_owner_votes_only(db):
@@ -558,6 +712,37 @@ def test_learning_gate_counts_owner_votes_only(db):
     vote(c, lid, "pas", "chat:o1")
     vote(c, lid, "ilgilendim", None)  # sahibi belli olmayan eski kayıt sahibin sayılır
     assert db.feedback_votes() == 2
+
+
+def test_button_press_flow_keeps_the_subscribers_vote_separate_and_edits_only_the_pressed_message(db, monkeypatch):
+    """Düğme basışı uçtan uca (gerçek veritabanı, `bot_poll._handle_callback`): her kişinin mesajı ayrıdır. Abonenin basışı yalnız KENDİ mesajını
+    düzenler, oyu 'chat:<abone>' notuyla kaydolur ve sahibin sayımlarını (öğrenme kapısı, emsal havuzu) etkilemez; sahibin basışı yalnız
+    sahibin mesajını düzenler ve sayımlara girer. Oy saklama ve sayım yolu bu özellikten ÖNCEKİYLE aynıdır."""
+    from application import bot_poll, notify
+    c, sid = db.conn, add_source(db.conn)
+    owner, sub = "1001", "2002"
+    c.execute("INSERT INTO subscribers (chat_id, name, status, is_owner) VALUES (%s,'sahip','onayli',TRUE), (%s,'abone','onayli',FALSE)", (owner, sub))
+    lid = add_listing(c, sid, "a")
+    calls = []
+    monkeypatch.setattr(bot_poll, "api", lambda token, method, **kw: calls.append((method, kw)) or {})
+    wa = "https://wa.me/905330000021?text=Merhaba"
+
+    def press(sender, message_id, action):
+        message = {"message_id": message_id, "chat": {"id": int(sender)}, "reply_markup": notify.keyboard(lid, wa)}  # her sohbette kendi mesajı
+        bot_poll._handle_callback(db, "t", owner, {"id": "1", "from": {"id": int(sender)}, "data": f"fb:{action}:{lid}", "message": message})
+        return [(e["chat_id"], e["message_id"]) for m, e in calls if m == "editMessageReplyMarkup"]
+
+    def votes():
+        return sorted((r["action"], r["note"]) for r in c.execute("SELECT action, note FROM feedback").fetchall())
+
+    assert press(sub, 22, "yanlis_fiyat") == [(2002, 22)]  # yalnız abonenin mesajı düzenlendi
+    assert votes() == [("yanlis_fiyat", "chat:2002")]
+    assert db.feedback_votes() == 0  # abonenin oyu öğrenme kapısını açmaya saymaz
+    assert {str(r["id"]) for r in db.market_pool(days=120)} == {str(lid)}  # abonenin "yanlış"ı ilanı emsalden düşürmez
+    assert press(owner, 11, "yanlis_fiyat") == [(2002, 22), (1001, 11)]  # sahibin basışı yalnız sahibin mesajını düzenledi (abonenin ikinci kez DEĞİL)
+    assert votes() == [("yanlis_fiyat", "chat:1001"), ("yanlis_fiyat", "chat:2002")]
+    assert db.feedback_votes() == 1  # yalnız sahibin oyu sayılır
+    assert db.market_pool(days=120) == []  # sahibin "yanlış"ı eskisi gibi ilanı emsalden düşürür
 
 
 def test_pas_count_counts_owner_passes_only(db):
@@ -618,3 +803,240 @@ def test_source_guard_counts_owner_wrong_votes_only(db):
     vote(c, lids[2], "yanlis_fiyat", None)  # sahibi belli olmayan eski kayıt sahibin sayılır
     (row,) = db.sources_failing_feedback(10, 3)
     assert row["id"] == sid and row["n"] == 3 and row["bad_n"] == 3
+
+
+def test_owner_screens_show_only_the_owners_taps(db):
+    """/son "…dedin" ve /durum "Senin düğme basışların" sahibin ekranıdır: abonenin basışı orada sahibinmiş gibi görünmez."""
+    from application import status
+    c, sid = db.conn, add_source(db.conn)
+    add_people(c)
+    a, b = add_listing(c, sid, "a"), add_listing(c, sid, "b")
+    for lid in (a, b):
+        db.save_alert(lid, "o1", "guclu", 1, evaluation_id=None, price_gbp=None)
+    vote(c, a, "ilgilendim", "chat:o1")
+    vote(c, a, "yanlis_fiyat", "chat:s1")  # abone sonradan bastı: sahibin cevabı değişmez
+    vote(c, b, "yanlis_fiyat", "chat:s1")
+    got = {r["id"]: r["feedback"] for r in db.recent_opportunities()}
+    assert got == {a: "ilgilendim", b: None}
+    assert "Senin düğme basışların: 1 " in status.build_status(db, datetime.now(timezone.utc))
+
+
+def test_current_decisions_reads_the_latest_evaluation_of_active_listings_for_fiyat(db):
+    """2.6: /fiyat'taki "piyasa ortası" bildirim mesajıyla AYNI kayıttan (son değerlendirmenin market_median_gbp'si) okunur.
+    Yalnız aynı marka-model-yıl, aktif, mükerrer/karantina olmayan ilan; medyansız kayıt (fiyat geçersiz) atlanır; önce 🟢/🟡."""
+    c, sid = db.conn, add_source(db.conn)
+
+    def ev(lid, median, tier="yok", hours=1, method=None):
+        c.execute("INSERT INTO evaluations (listing_id, evaluated_at, comparables_n, market_median_gbp, confidence, tier, method) "
+                  "VALUES (%s, now() - make_interval(hours => %s), 9, %s, 'orta', %s, %s)", (lid, hours, median, tier, method))
+
+    plain = add_listing(c, sid, "plain", model_norm="corolla", year=2014, price_gbp=6000)
+    ev(plain, 7000)
+    green = add_listing(c, sid, "green", model_norm="corolla", year=2014, price_gbp=5000, km=None)
+    ev(green, 9000, "yok", hours=5)
+    ev(green, 8600, "guclu", hours=1)  # son kayıt bu
+    est = add_listing(c, sid, "est", model_norm="corolla", year=2014, price_gbp=4000)
+    ev(est, 9900, "tahmini", method="B")
+    for item, cols in (("inactive", {"is_active": False}), ("dup", {"duplicate_of": plain}), ("quar", {"karantina_nedeni": "test"}),
+                       ("year", {"year": 2015}), ("model", {"model_norm": "yaris"})):
+        ev(add_listing(c, sid, item, **{"model_norm": "corolla", "year": 2014, **cols}), 7500)
+    ev(add_listing(c, sid, "nomedian", model_norm="corolla", year=2014), None)
+    rows = db.current_decisions("Toyota", "corolla", 2014)
+    assert rows[0]["id"] == green and {r["id"] for r in rows} == {green, plain, est}  # 🟢 önce
+    by = {r["id"]: r for r in rows}
+    assert by[green]["market_median_gbp"] == 8600 and by[green]["km"] is None and by[green]["price_gbp"] == 5000
+    assert by[green]["comparables_n"] == 9 and by[green]["total"] == 3
+    assert by[est]["method"] == "B" and by[plain]["method"] == "A"  # NULL yöntem = A (kolon varsayılanı)
+    assert len(db.current_decisions("Toyota", "corolla", 2014, limit=1)) == 1
+
+
+# --- haftalık rapor sorguları (application/report.py; yalnız okur) ---
+def add_report_eval(conn, listing_id, tier, *, version="v1", hours=1, pct=25.0, n=10, nedenler=None):
+    conn.execute("INSERT INTO evaluations (listing_id, evaluated_at, comparables_n, confidence, tier, rules_version, market_median_gbp, "
+                 "profit_gbp, profit_pct, nedenler) VALUES (%s, now() - make_interval(hours => %s), %s, 'orta', %s, %s, 9000, 1500, %s, %s::text[])",
+                 (listing_id, hours, n, tier, version, pct, nedenler))
+
+
+def item_names(conn, rows):
+    names = {r["id"]: r["source_item_id"] for r in conn.execute("SELECT id, source_item_id FROM listings").fetchall()}
+    return [names[r["id"]] for r in rows]
+
+
+def test_unnotified_strong_lists_only_never_sent_current_green_listings_best_first(db):
+    """'Bildirmediğim fırsatlar': son satırı BU sürümle 🟢 (son 14 gün), aktif, kopya/karantina değil, 'yesil' kaynak, hiçbir sohbete 🟢/🟠
+    gitmemiş (yazılamamış gönderimin yedek izi de gitmiş sayılır). 🟡 özet kaydı bildirim sayılmaz."""
+    from infrastructure.db.repository import unsaved_alert_key
+    c, sid = db.conn, add_source(db.conn)
+    shadow = add_source(c, "S")
+    c.execute("UPDATE sources SET alert_level='sari' WHERE id=%s", (shadow,))
+    best, good, digest_only = (add_listing(c, sid, n) for n in ("best", "good", "digest_only"))
+    add_report_eval(c, best, "guclu", pct=40)
+    add_report_eval(c, good, "guclu", pct=25)
+    add_report_eval(c, digest_only, "guclu", pct=22)
+    db.save_alert(digest_only, "c1", "pazarlik", 1, evaluation_id=None, price_gbp=None)
+    sent_green = add_listing(c, sid, "sent_green")
+    add_report_eval(c, sent_green, "guclu", pct=50)
+    db.save_alert(sent_green, "c1", "guclu", 2, evaluation_id=None, price_gbp=None)
+    sent_orange = add_listing(c, sid, "sent_orange")
+    add_report_eval(c, sent_orange, "guclu", pct=50)
+    db.save_alert(sent_orange, "c2", "tahmini", 3, evaluation_id=None, price_gbp=None)
+    traced = add_listing(c, sid, "traced")
+    add_report_eval(c, traced, "guclu", pct=50)
+    db.set_state(unsaved_alert_key(traced, "c1"), "42")
+    old_version = add_listing(c, sid, "old_version")
+    add_report_eval(c, old_version, "guclu", version="v0", pct=50)
+    downgraded = add_listing(c, sid, "downgraded")
+    add_report_eval(c, downgraded, "guclu", hours=2, pct=50)
+    add_report_eval(c, downgraded, "pazarlik", hours=1, pct=50)  # en son satır 🟡
+    stale = add_listing(c, sid, "stale")
+    add_report_eval(c, stale, "guclu", hours=24 * 20, pct=50)  # 14 günden eski değerlendirme
+    for name, cols in (("inactive", {"is_active": False}), ("dup", {"duplicate_of": best}), ("quarantine", {"karantina_nedeni": "test"})):
+        add_report_eval(c, add_listing(c, sid, name, **cols), "guclu", pct=50)
+    add_report_eval(c, add_listing(c, shadow, "shadow_src"), "guclu", pct=50)  # anlık bildirim vermeyen kaynak
+    rows = db.unnotified_strong("v1", days=14)
+    assert item_names(c, rows) == ["best", "good", "digest_only"]
+    assert item_names(c, db.unnotified_strong("v1", days=14, limit=1)) == ["best"]
+    r = rows[0]
+    assert r["method"] == "A" and r["price_changed_at"] is None and r["price_amount"] == 6000 and r["currency"] == "GBP"
+    assert (r["comparables_n"], r["market_median_gbp"], r["profit_pct"], r["source_name"], r["platform"]) == (10, 9000, 40, "T", "web")
+
+
+def test_near_misses_are_this_weeks_well_compared_yellow_listings_that_were_never_sent(db):
+    """Yakın kaçanlar: bu hafta ilk görülen ya da fiyatı değişen, son satırı BU sürümle 🟡, ≥8 emsal, hiç 🟢/🟠 gitmemiş; süzülen nedenler atlanır."""
+    c, sid = db.conn, add_source(db.conn)
+
+    def make(name, tier="pazarlik", first_seen_at=None, **kw):
+        lid = add_listing(c, sid, name, **({"first_seen_at": first_seen_at} if first_seen_at else {}))
+        add_report_eval(c, lid, tier, **kw)
+        return lid
+
+    make("near", pct=18)
+    make("gap", pct=26, nedenler=["km_yuksek"])
+    make("typo", pct=60, nedenler=["fiyat_asiri_dusuk"])
+    make("mixed", pct=50, nedenler=["model_belirsiz", "km_yuksek"])
+    make("few", pct=30, n=5)
+    make("old", pct=19, first_seen_at=ago(days=10))
+    repriced = make("repriced", pct=15, first_seen_at=ago(days=10))
+    c.execute("INSERT INTO listing_history (listing_id, field, old_value, new_value, changed_at) "
+              "VALUES (%s,'price_gbp','6000','5000', now() - interval '1 day')", (repriced,))
+    sent = make("sent", pct=40)
+    db.save_alert(sent, "c1", "guclu", 1, evaluation_id=None, price_gbp=None)
+    make("green", tier="guclu", pct=45)
+    make("other_version", pct=17, version="v0")
+    rows = db.near_misses("v1", days=7, min_comparables=8, skip_reasons=["fiyat_asiri_dusuk", "model_belirsiz"], limit=10)
+    assert item_names(c, rows) == ["gap", "near", "repriced"]
+    assert rows[0]["nedenler"] == ["km_yuksek"] and rows[1]["nedenler"] is None and rows[0]["profit_pct"] == 26
+    assert item_names(c, db.near_misses("v1", skip_reasons=[], limit=2)) == ["typo", "mixed"]  # boş süzgeç + sınır
+
+
+def test_alerted_votes_one_row_per_alerted_listing_newest_first_with_vote_state(db):
+    c, sid = db.conn, add_source(db.conn)
+    a, b, old, digest = (add_listing(c, sid, n) for n in ("a", "b", "old", "digest"))
+    db.save_alert(a, "c1", "guclu", 1, evaluation_id=None, price_gbp=None)
+    db.save_alert(a, "c2", "guclu", 2, evaluation_id=None, price_gbp=None)  # iki aboneye gitti: tek satır
+    db.save_alert(b, "c1", "tahmini", 3, evaluation_id=None, price_gbp=None)
+    db.save_alert(old, "c1", "guclu", 4, evaluation_id=None, price_gbp=None)
+    db.save_alert(digest, "c1", "pazarlik", 5, evaluation_id=None, price_gbp=None)  # özet kaydı: oylanacak bildirim değil
+    c.execute("UPDATE alerts SET sent_at = now() - interval '2 days' WHERE listing_id=%s", (a,))
+    c.execute("UPDATE alerts SET sent_at = now() - interval '1 day' WHERE listing_id=%s", (b,))
+    c.execute("UPDATE alerts SET sent_at = now() - interval '40 days' WHERE listing_id=%s", (old,))
+    c.execute("INSERT INTO feedback (listing_id, action) VALUES (%s,'ilgilendim'), (%s,'audit_dogru')", (a, b))  # denetim oy değildir
+    rows = db.alerted_votes(30)
+    assert [(r["id"], r["tier"], r["voted"]) for r in rows] == [(b, "tahmini", False), (a, "guclu", True)]
+    assert rows[0]["is_active"] is True and len(db.alerted_votes(60)) == 3
+
+
+def test_disappeared_counts_split_by_reason_and_listing_counts(db):
+    """Kaybolan ilanlar: yalnız son 7 günde pasifleşen, kopya olmayan ilanlar nedene göre (boş neden = belirsiz); pasif doğan sayılmaz."""
+    c, sid = db.conn, add_source(db.conn)
+    sold = add_listing(c, sid, "sold", is_active=False, inactive_at=ago(days=1), inactive_reason="satildi")
+    db.save_alert(sold, "c1", "guclu", 1, evaluation_id=None, price_gbp=None)
+    add_listing(c, sid, "unclear", is_active=False, inactive_at=ago(days=2), inactive_reason="belirsiz")
+    add_listing(c, sid, "removed", is_active=False, inactive_at=ago(days=1), inactive_reason="kaldirildi")
+    add_listing(c, sid, "no_reason", is_active=False, inactive_at=ago(days=1))
+    add_listing(c, sid, "last_month", is_active=False, inactive_at=ago(days=10), inactive_reason="satildi")
+    add_listing(c, sid, "born_inactive", is_active=False, inactive_reason="satildi")
+    add_listing(c, sid, "dup", is_active=False, inactive_at=ago(days=1), inactive_reason="belirsiz", duplicate_of=sold)
+    add_listing(c, sid, "live")
+    add_listing(c, sid, "live_old", first_seen_at=ago(days=10))
+    got = {r["reason"]: (r["n"], r["alerted"]) for r in db.disappeared_counts(7)}
+    assert got == {"satildi": (1, 1), "belirsiz": (2, 0), "kaldirildi": (1, 0)}
+    assert dict(db.listing_counts(7)) == {"new_n": 8, "active_n": 2}
+
+
+# --- yeniden çıkmış eski KKTCarabam ilanı (Repository.resurfaced_kktcarabam): sitenin "en yeni" listesine geri ittiği eski ilan ---
+KKA_URL = "https://www.kktcarabam.com/kategori/ikinci-el-araclar"
+
+
+def test_resurfaced_kktcarabam_needs_a_larger_id_first_seen_in_an_earlier_run(db):
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", KKA_URL)
+    seen = add_listing(c, arabam, "264400", first_seen_at=ago(hours=5))  # önceki turda görüldü: büyük numara
+    old = add_listing(c, arabam, "264352", first_seen_at=ago(minutes=1))  # "yeni" görünür ama numarası küçük: yeniden çıkmış
+    new = add_listing(c, arabam, "264410", first_seen_at=ago(minutes=1))  # bilinen her numaradan büyük: gerçekten yeni
+    older = add_listing(c, arabam, "264001", first_seen_at=ago(days=3))  # kendisinden büyük numara sonradan görüldü, ama ÖNCE görülen ilan: yeniden çıkmış değil
+    assert db.resurfaced_kktcarabam([seen, old, new, older]) == {old}
+    assert db.resurfaced_kktcarabam([]) == set()
+    # yeniden çıkmış ilan emsal ve değerlendirme havuzunda KALIR (yalnız anlık bildirim almaz)
+    assert old in {r["id"] for r in db.unevaluated_active()} and old in {r["id"] for r in db.market_pool()}
+
+
+def test_resurfaced_kktcarabam_cards_of_the_same_run_are_not_compared_with_each_other(db):
+    """Aynı turun kartları saniyeler içinde yazılır; birbirinden küçük numaralı olması "daha önceki tur" değildir. Sınır: 10 dakikadan FAZLA önce."""
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", KKA_URL)
+    a = add_listing(c, arabam, "264700", first_seen_at=ago(minutes=3))
+    b = add_listing(c, arabam, "264690", first_seen_at=ago(minutes=2))  # a'dan küçük numara ama a ile AYNI tur
+    assert db.resurfaced_kktcarabam([a, b]) == set()
+    # tam 10 dakika önce: aynı tur sayılır; 10 dakika 1 saniye önce: önceki tur
+    exact = add_listing(c, arabam, "300001", first_seen_at=ago())
+    add_listing(c, arabam, "300500", first_seen_at=ago(minutes=10))
+    assert db.resurfaced_kktcarabam([exact]) == set()
+    late = add_listing(c, arabam, "200001", first_seen_at=ago())
+    add_listing(c, arabam, "200500", first_seen_at=ago(minutes=10, seconds=1))
+    assert db.resurfaced_kktcarabam([exact, late]) == {late}
+
+
+def test_resurfaced_kktcarabam_known_posting_date_decides_and_the_rule_is_not_applied(db):
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", KKA_URL)
+    add_listing(c, arabam, "264400", first_seen_at=ago(hours=5))
+    undated = add_listing(c, arabam, "264352", first_seen_at=ago(minutes=1))
+    dated_old = add_listing(c, arabam, "264351", first_seen_at=ago(minutes=1), posted_at=ago(days=60))  # tarih eski: is_fresh karar verir
+    dated_new = add_listing(c, arabam, "264350", first_seen_at=ago(minutes=1), posted_at=ago(hours=3))  # tarih taze: kural uygulanmaz
+    assert db.resurfaced_kktcarabam([undated, dated_old, dated_new]) == {undated}
+
+
+def test_resurfaced_kktcarabam_only_kktcarabam_listings_count_and_are_affected(db):
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", KKA_URL)
+    kaa = add_site(c, "KibrisArabaAl", "https://kibrisarabaal.com/")
+    kktcar = add_site(c, "KKTCar", "https://kktcar.com/")
+    add_listing(c, kaa, "999999", first_seen_at=ago(hours=5))  # başka sitenin büyük numarası KKTCarabam'ı etkilemez
+    add_listing(c, kktcar, "400000", first_seen_at=ago(hours=5))
+    mine = add_listing(c, arabam, "150001", first_seen_at=ago(minutes=1))
+    other_kktcar = add_listing(c, kktcar, "260000", first_seen_at=ago(minutes=1))  # numarası küçük ama KKTCarabam değil: etkilenmez
+    other_kaa = add_listing(c, kaa, "150002", first_seen_at=ago(minutes=1))
+    assert db.resurfaced_kktcarabam([mine, other_kktcar, other_kaa]) == set()
+    add_listing(c, arabam, "150900", first_seen_at=ago(hours=5))  # artık KKTCarabam'da da daha büyük, daha önce görülmüş numara var
+    assert db.resurfaced_kktcarabam([mine, other_kktcar, other_kaa]) == {mine}
+
+
+def test_resurfaced_kktcarabam_reads_the_leading_digits_and_survives_odd_ids(db):
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", KKA_URL)
+    add_listing(c, arabam, "264400-bmw-3", first_seen_at=ago(hours=5))  # numara = baştaki rakamlar (264400)
+    add_listing(c, arabam, "abc", first_seen_at=ago(hours=5))  # rakamla başlamıyor: karşılaştırmaya girmez, hata vermez
+    suffixed = add_listing(c, arabam, "264352-bmw-3", first_seen_at=ago(minutes=1))
+    bigger = add_listing(c, arabam, "264999-x", first_seen_at=ago(minutes=1))
+    odd = add_listing(c, arabam, "xyz", first_seen_at=ago(minutes=1))
+    assert db.resurfaced_kktcarabam([suffixed, bigger, odd]) == {suffixed}
+
+
+def test_resurfaced_kktcarabam_absurdly_long_ids_do_not_overflow_the_comparison(db):
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", KKA_URL)
+    add_listing(c, arabam, "99999999999999999999", first_seen_at=ago(hours=5))  # 20 hane: yalnız ilk 15 hane okunur, bigint taşmaz
+    small = add_listing(c, arabam, "7", first_seen_at=ago(minutes=1))
+    assert db.resurfaced_kktcarabam([small]) == {small}
+

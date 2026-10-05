@@ -27,24 +27,41 @@ def mask_phones(text: str) -> str:
     return _PHONE.sub("[tel]", text)
 
 
-def ask_json(api_key: str, model: str, prompt: str, timeout: int = 60) -> dict | None:
-    r = httpx.post(
-        URL,
-        headers={"Authorization": f"Bearer {api_key}"},
-        json={"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1},
-        timeout=timeout,
-    )
+CHECK_MAX_TOKENS = 1500  # fırsat notu JSON'u kısa (birkaç yüz token); tavan yalnız uzun/kaçak yanıtın maliyetini sınırlar (görsel okumayla aynı)
+
+
+def ask_json(api_key: str, model: str, prompt: str, timeout: int = 60,
+             max_tokens: int = CHECK_MAX_TOKENS) -> tuple[dict | None, str | None, float]:
+    """Tek kullanıcı mesajı -> JSON. (veri, hata_nedeni, maliyet_usd): okuyucuyla (chat_json) aynı biçim, maliyet aynı günlük deftere
+    yazılsın (application/llm_reader.py). Hata olursa veri None, neden kısa metin (sır içermez)."""
+    try:
+        r = httpx.post(
+            URL,
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": max_tokens},
+            timeout=timeout,
+        )
+    except httpx.HTTPError as e:  # httpx hata metni URL taşıyabilir: yalnız tür adı
+        return None, type(e).__name__, 0.0
     if r.status_code != 200:
-        return None
-    text = r.json()["choices"][0]["message"]["content"] or ""
+        return None, f"http {r.status_code}", 0.0
+    try:
+        body = r.json()
+        text = body["choices"][0]["message"]["content"] or ""
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None, "yanıt biçimi", 0.0
+    usage = body.get("usage")
+    cost = usage.get("cost") if isinstance(usage, dict) else None
+    cost = float(cost) if isinstance(cost, (int, float)) and cost > 0 else CALL_COST_USD
     m = re.search(r"\{.*\}", text, re.S)
     try:
-        return json.loads(m.group()) if m else None
+        return (json.loads(m.group()) if m else None), (None if m else "json yok"), cost
     except json.JSONDecodeError:
-        return None
+        return None, "json bozuk", cost
 
 
-def check_deal(api_key: str, model: str, listing_text: str, market_summary: str) -> dict | None:
+def check_deal(api_key: str, model: str, listing_text: str, market_summary: str) -> tuple[dict | None, str | None, float]:
+    """🟢 için kısa "fırsat notu". (veri, hata_nedeni, maliyet_usd). Günlük bütçe ve (ilan, fiyat) önbelleği: application/llm_reader.deal_notes."""
     return ask_json(api_key, model, CHECK_PROMPT % (mask_phones(listing_text), market_summary))
 
 

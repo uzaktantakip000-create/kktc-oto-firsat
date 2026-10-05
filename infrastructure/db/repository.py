@@ -21,7 +21,18 @@ def _tiers_blocking(tier: str) -> list[str]:
     return SENT_ONCE_TIERS if tier in SENT_ONCE_TIERS else [tier]
 
 
+RESURFACE_RUN_GAP_MINUTES = 10  # "önceki tur" = ilk görülme farkı bundan büyük (KKTCarabam toplayıcısı 2 saatte bir; bir turdaki kartlar saniyeler içinde yazılır)
+_KKA_NUMBER = "substring({a}.source_item_id from '^[0-9]{{1,15}}')::bigint"  # KKTCarabam ilan numarası: baştaki rakamlar (≤15 hane: bigint'e sığar)
+
 UNSAVED_ALERT_PREFIX = "sent:unsaved:"  # 'alert:' öneki sahip-uyarı zaman damgaları için (alert_recent) ayrılmış: karışmasın
+
+
+def _alerted_sql(lid: str, chat: str | None = None) -> str:
+    """"Bu araç bildirildi mi?" SQL koşulu (tek %s: seviye listesi). İlanın kendisi YA DA kopyalarından biri (duplicate_of = bu ilan) bildirildiyse
+    "gitti" sayılır: kaynaklar arası ikizde (application/dedupe.py) kopya, önce görülüp gönderilmiş km'siz KKTCarabam ilanı olabilir; sonradan
+    gelen KibrisArabaAl ikizi aynı aracı ikinci kez göndermesin (05.10: Mazda Demio 2014 £4.500 iki siteden 18 dk arayla iki kez gitti)."""
+    return (f"EXISTS (SELECT 1 FROM alerts a JOIN listings d ON d.id = a.listing_id WHERE (d.id = {lid} OR d.duplicate_of = {lid})"
+            + (f" AND a.chat_id = {chat}" if chat else "") + " AND a.tier = ANY(%s))")
 
 # Abonenin (sahip olmayan) düğme oyu otomatik davranışı yönlendirmez (emsal, öğrenme kapısı, 🟠/kaynak koruması, 'pas' sayısı):
 # yalnız sahibin oyu ve sahibi belli olmayan kayıt (note boş: denetim, eski satır) sayılır. Oy satırı 'feedback f' takma adıyla okunmalı.
@@ -174,11 +185,15 @@ class Repository:
             args,
         ).fetchall()
 
-    def unevaluated_active(self, recheck_days: int = 3, recent_hours: int | None = None, rules_version: str | None = None) -> list[dict]:
+    def unevaluated_active(self, recheck_days: int = 3, recent_hours: int | None = None, rules_version: str | None = None,
+                           unevaluated_hours: int | None = None) -> list[dict]:
         """Değerlendirilecek aktif ilanlar: hiç değerlendirilmemiş, fiyatı değişmiş ya da değerlendirmesi 'recheck_days'
         günden eski (piyasa/emsal havuzu değişmiş olabilir). Mükerrer ilanlar atlanır.
         `recent_hours` verilirse HIZLI tur: yalnız son 'recent_hours' saatte görülüp hiç değerlendirilmemiş ya da fiyatı değişmiş
         ilanlar (eski "emsal yok" birikimi, 'recheck' ve kural sürümü dalları tam turda, saatte bir bakılır).
+        `unevaluated_hours` verilirse (yalnız TAM tur): HİÇ değerlendirilmemiş ilanlardan yalnız ilk görülmesi ya da son fiyat değişikliği
+        son 'unevaluated_hours' saatte olanlar gelir (bildirim üretebilecekler; tazelik kapısı 36 saat). Daha eski "emsal yok" birikimi
+        (nadir model, emsalsiz: her saat yeniden okunup yine sonuçsuz kalıyordu) yalnız `unevaluated_hours=None` çağrısında (günlük tur) gelir.
         `rules_version` verilirse (yalnız TAM tur): son değerlendirmesi BAŞKA kural sürümüyle yapılmış (NULL dahil: IS DISTINCT FROM) ve
         bildirime ADAY ilanlar da yeniden değerlendirilir: ilk görülmesi ≤48 saat, ≤48 saatte fiyatı değişmiş ya da son satırı 🟢/🟠 ≤36 saat.
         (Eski ilanın yeniden değerlendirmesi bildirim üretemez: tazelik kapısı; kalanı zaten 3 günlük yeniden bakışla yenilenir.)
@@ -189,13 +204,19 @@ class Repository:
         if recent_hours is not None:
             stale_sql, args = "", [recent_hours]
             new_sql = "(last_ev.at IS NULL AND l.first_seen_at > NOW() - make_interval(hours => %s))"
-        elif rules_version is not None:
-            version_sql = """OR (last_ev.at IS NOT NULL AND last_ev.rv IS DISTINCT FROM %s
-                          AND (l.first_seen_at > NOW() - interval '48 hours'
-                               OR EXISTS (SELECT 1 FROM listing_history h2 WHERE h2.listing_id=l.id AND h2.field='price_gbp'
-                                          AND h2.changed_at > NOW() - interval '48 hours')
-                               OR (last_ev.tier IN ('guclu','tahmini') AND last_ev.at > NOW() - interval '36 hours')))"""
-            args.append(rules_version)
+        else:
+            if unevaluated_hours is not None:
+                new_sql = """(last_ev.at IS NULL AND (l.first_seen_at > NOW() - make_interval(hours => %s)
+                              OR EXISTS (SELECT 1 FROM listing_history h3 WHERE h3.listing_id=l.id AND h3.field='price_gbp'
+                                         AND h3.changed_at > NOW() - make_interval(hours => %s))))"""
+                args = [unevaluated_hours, unevaluated_hours, *args]  # new_sql'in parametreleri SQL'de stale_sql'inkinden önce gelir
+            if rules_version is not None:
+                version_sql = """OR (last_ev.at IS NOT NULL AND last_ev.rv IS DISTINCT FROM %s
+                              AND (l.first_seen_at > NOW() - interval '48 hours'
+                                   OR EXISTS (SELECT 1 FROM listing_history h2 WHERE h2.listing_id=l.id AND h2.field='price_gbp'
+                                              AND h2.changed_at > NOW() - interval '48 hours')
+                                   OR (last_ev.tier IN ('guclu','tahmini') AND last_ev.at > NOW() - interval '36 hours')))"""
+                args.append(rules_version)
         return self.conn.execute(
             f"""SELECT l.*, l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform
                FROM listings l JOIN sources s ON s.id=l.source_id
@@ -265,6 +286,37 @@ class Repository:
                       first_seen_at, duplicate_of, is_active
                FROM listings WHERE brand_norm IS NOT NULL AND year IS NOT NULL
                  AND first_seen_at > NOW() - make_interval(days => %s)""" + extra,
+            args,
+        ).fetchall()
+
+    def twin_candidates(self, window_hours: int, days: int = 120, new_hours: int | None = None) -> list[dict]:
+        """Kaynaklar arası ikiz taraması (application/dedupe.py) için KKTCarabam ve KibrisArabaAl ilanları: yalnız ÖBÜR sitede aynı
+        marka/model/yıl, birebir aynı tutar+para birimi ve ilk görülmesi ±`window_hours` içinde en az bir ilanı olanlar (eşleşmenin ön
+        koşulu; tekliği bozabilecek her rakip de bu koşulu sağlar, yani gelen küme eşleşme için tamdır). `site`: 'kktcarabam' ya da
+        'kibrisarabaal' (kaynağın adresinden). `new_hours` verilirse (hızlı tur) yalnız son `new_hours` saatte iki siteden birinde yeni ilan
+        görülen (marka, model, yıl) grupları gelir; gruplar tam gelir (dedupe_candidates gibi): eşleştirme sonucu tam taramayla aynıdır."""
+        extra, args = "", [days, window_hours, window_hours]
+        if new_hours is not None:
+            extra = """ AND EXISTS (SELECT 1 FROM t n WHERE n.first_seen_at > NOW() - make_interval(hours => %s)
+                                    AND n.brand_norm = t.brand_norm AND n.model_norm = t.model_norm AND n.year = t.year)"""
+            args.append(new_hours)
+        return self.conn.execute(
+            """WITH t AS (
+                 SELECT l.id, l.brand_norm, l.model_norm, l.year, l.price_amount, l.currency, l.location, l.transmission, l.fuel,
+                        l.first_seen_at, l.duplicate_of, l.is_active,
+                        CASE WHEN s.url LIKE '%%kktcarabam.com%%' THEN 'kktcarabam' ELSE 'kibrisarabaal' END AS site
+                 FROM listings l JOIN sources s ON s.id = l.source_id
+                 WHERE (s.url LIKE '%%kktcarabam.com%%' OR s.url LIKE '%%kibrisarabaal.com%%')
+                   AND l.brand_norm IS NOT NULL AND l.model_norm IS NOT NULL AND l.year IS NOT NULL
+                   AND l.price_amount IS NOT NULL AND l.currency IS NOT NULL
+                   AND l.first_seen_at > NOW() - make_interval(days => %s))
+               SELECT t.id, t.brand_norm, t.model_norm, t.year, t.price_amount::float8 AS price_amount, t.currency, t.location,
+                      t.transmission, t.fuel, t.first_seen_at, t.duplicate_of, t.is_active, t.site
+               FROM t
+               WHERE EXISTS (SELECT 1 FROM t o WHERE o.site <> t.site AND o.brand_norm = t.brand_norm AND o.model_norm = t.model_norm
+                               AND o.year = t.year AND o.price_amount = t.price_amount AND o.currency = t.currency
+                               AND o.first_seen_at BETWEEN t.first_seen_at - make_interval(hours => %s)
+                                                       AND t.first_seen_at + make_interval(hours => %s))""" + extra,
             args,
         ).fetchall()
 
@@ -449,11 +501,30 @@ class Repository:
                WHERE e.tier = %s AND s.alert_level = 'yesil' AND l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL AND e.evaluated_at > NOW() - make_interval(hours => %s)"""
             + rv_sql + """
                  AND EXISTS (SELECT 1 FROM subscribers sub WHERE sub.status = 'onayli'
-                       AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.chat_id = sub.chat_id AND a.tier = ANY(%s))
+                       AND NOT """ + _alerted_sql("l.id", "sub.chat_id") + """  -- ilan ya da kopyası bu sohbete gitmişse aynı araç yeniden gitmez
                        AND NOT EXISTS (SELECT 1 FROM bot_state u WHERE u.key = %s || l.id::text || ':' || sub.chat_id))  -- gitmiş ama kaydı yazılamamış
                ORDER BY e.profit_pct DESC""",
             (tier, hours, *rv_args, _tiers_blocking(tier), UNSAVED_ALERT_PREFIX),
         ).fetchall()
+
+    def resurfaced_kktcarabam(self, listing_ids, gap_minutes: int = RESURFACE_RUN_GAP_MINUTES) -> set:
+        """Yeniden çıkmış eski KKTCarabam ilanları (verilen ilanlar arasından). Site eski ilanı "en yeni" listesine geri itince ilan bizim için
+        "yeni" görünür ama numarası daha önce gördüklerimizden KÜÇÜKTÜR (ilanlar numarayla, oluşturulma sırasıyla açılır). Kural: ilan KKTCarabam'dan
+        (`sources.url`), `posted_at` BOŞ (tarih biliniyorsa tarih karar verir, bu kural uygulanmaz) ve daha ÖNCEKİ bir turda ilk görülmüş
+        (`first_seen_at` bu ilanınkinden `gap_minutes` dakikadan fazla önce: aynı turun kartları birbirine karşılaştırılmaz) bir KKTCarabam ilanının
+        numarası bundan BÜYÜK. Numara = `source_item_id`'nin baştaki rakamları. Karşılaştırma havuzuna her KKTCarabam ilanı girer (pasif,
+        kopya, karantina dahil: numara sitenin sayacını gösterir). Yalnız bu çağrıdaki adaylar için çalışır (gönderim anı); yazma yok."""
+        ids = list(listing_ids)
+        if not ids:
+            return set()
+        return {r["id"] for r in self.conn.execute(
+            """SELECT l.id FROM listings l JOIN sources s ON s.id = l.source_id
+               WHERE l.id = ANY(%s) AND s.url LIKE '%%kktcarabam.com%%' AND l.posted_at IS NULL
+                 AND EXISTS (SELECT 1 FROM listings o JOIN sources os ON os.id = o.source_id
+                             WHERE os.url LIKE '%%kktcarabam.com%%'
+                               AND o.first_seen_at < l.first_seen_at - make_interval(mins => %s)
+                               AND """ + _KKA_NUMBER.format(a="o") + " > " + _KKA_NUMBER.format(a="l") + ")",
+            (ids, gap_minutes)).fetchall()}
 
     def first_seen_since(self, days: int) -> list[dict]:
         """Son 'days' günde ilk görülen (ve görüldüğünde taze sayılacak) ilanlar: 🟠 kuru deneme için, yalnızca okur."""
@@ -565,11 +636,13 @@ class Repository:
         ).fetchall()
 
     def recent_opportunities(self, limit: int = 10) -> list[dict]:
-        """Gönderilmiş son 🟢/🟠 fırsatlar (en yeni önce, ilan başına tek satır) ve sahibin son düğme cevabı (/son komutu)."""
+        """Gönderilmiş son 🟢/🟠 fırsatlar (en yeni önce, ilan başına tek satır) ve SAHİBİN son düğme cevabı (/son komutu; abonenin
+        basışı "…dedin" diye sahibe yazılmasın)."""
         return self.conn.execute(
-            """SELECT l.id, l.url, l.year, l.brand, l.model, l.price_gbp::float8 AS price_gbp, x.tier, x.sent_at,
+            f"""SELECT l.id, l.url, l.year, l.brand, l.model, l.price_gbp::float8 AS price_gbp, x.tier, x.sent_at,
                       e.median::float8 AS median_gbp,
                       (SELECT f.action FROM feedback f WHERE f.listing_id = l.id AND f.action NOT LIKE 'audit_%%'
+                         AND {OWNER_VOTE_SQL}
                        ORDER BY f.created_at DESC LIMIT 1) AS feedback
                FROM (SELECT listing_id, tier, MIN(sent_at) AS sent_at FROM alerts
                      WHERE tier IN ('guclu','tahmini') GROUP BY listing_id, tier) x
@@ -577,6 +650,20 @@ class Repository:
                LEFT JOIN LATERAL (SELECT market_median_gbp AS median FROM evaluations WHERE listing_id = l.id
                                   ORDER BY evaluated_at DESC LIMIT 1) e ON TRUE
                ORDER BY x.sent_at DESC LIMIT %s""", (limit,)).fetchall()
+
+    def current_decisions(self, brand_norm: str, model_norm: str, year: int, limit: int = 3) -> list[dict]:
+        """/fiyat için: bu marka-model-yıldaki şu an ilanda olan araçların SON kararı (bildirim mesajındaki "piyasa ortası" bu kayıttan
+        gelir: evaluations.market_median_gbp). Önce 🟢/🟡, sonra en yeni ilan. `total`: eşleşen ilan sayısı (LIMIT'ten önce)."""
+        return self.conn.execute(
+            """SELECT l.id, l.km, l.price_gbp::float8 AS price_gbp, e.tier, e.comparables_n,
+                      e.market_median_gbp::float8 AS market_median_gbp, COALESCE(to_jsonb(e) ->> 'method', 'A') AS method,
+                      count(*) OVER () AS total
+               FROM listings l
+               JOIN LATERAL (SELECT * FROM evaluations e WHERE e.listing_id = l.id ORDER BY evaluated_at DESC LIMIT 1) e ON TRUE
+               WHERE l.brand_norm = %s AND l.model_norm = %s AND l.year = %s AND l.is_active AND l.duplicate_of IS NULL
+                 AND l.karantina_nedeni IS NULL AND l.price_gbp IS NOT NULL AND e.market_median_gbp IS NOT NULL
+               ORDER BY CASE e.tier WHEN 'guclu' THEN 0 WHEN 'pazarlik' THEN 1 ELSE 2 END, l.first_seen_at DESC
+               LIMIT %s""", (brand_norm, model_norm, year, limit)).fetchall()
 
     def week_alert_counts(self, days: int = 7) -> dict[str, int]:
         """Son 'days' günde gönderilen fırsat sayısı (ilan bazında): {'guclu': n, 'tahmini': n}."""
@@ -591,6 +678,78 @@ class Repository:
             """SELECT action, count(*) AS n FROM feedback
                WHERE action NOT LIKE 'audit_%%' AND created_at > NOW() - make_interval(days => %s) GROUP BY action""", (days,)).fetchall()
         return {r["action"]: r["n"] for r in rows}
+
+    # --- haftalık rapor (application/report.py): yalnız okur ---
+    def alerted_votes(self, days: int = 30) -> list[dict]:
+        """Son 'days' günde 🟢/🟠 bildirimi giden ilanlar (ilan başına tek satır, en yeni önce) ve oylanıp oylanmadığı: denetim dışındaki
+        her düğme cevabı (👍/👎, eski mesajlardaki pas/satılmış/kusurlu) oy sayılır."""
+        return self.conn.execute(
+            """SELECT l.id, l.url, l.year, l.brand, l.model, l.price_gbp::float8 AS price_gbp, l.is_active, x.tier, x.sent_at,
+                      EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = l.id AND f.action NOT LIKE 'audit_%%') AS voted
+               FROM (SELECT listing_id, MIN(tier) AS tier, MIN(sent_at) AS sent_at FROM alerts  -- MIN(tier): ikisi birden varsa guclu
+                     WHERE tier = ANY(%s) AND sent_at > NOW() - make_interval(days => %s) GROUP BY listing_id) x
+               JOIN listings l ON l.id = x.listing_id
+               ORDER BY x.sent_at DESC""",
+            (SENT_ONCE_TIERS, days)).fetchall()
+
+    def unnotified_strong(self, rules_version: str, days: int = 14, limit: int = 50) -> list[dict]:
+        """Bildirilmemiş 🟢'ler: EN SON değerlendirmesi bu kural sürümüyle 🟢 ve son 'days' günde yapılmış, ilan aktif, kopya/karantina değil,
+        kaynağı anlık bildirim veren ('yesil'), hiçbir sohbete 🟢/🟠 gitmemiş (yazılamamış gönderimin yedek izi de sayılır). En iyi kâr önce.
+        Tazelik ve emsal kapısı uygulamada süzülür (application/report.py); canlılık kontrolü için fiyat/kaynak alanları da döner."""
+        return self.conn.execute(
+            """SELECT l.id, l.url, l.source_item_id, l.year, l.brand, l.model, l.km, l.price_amount::float8 AS price_amount, l.currency,
+                      l.price_gbp::float8 AS price_gbp, l.first_seen_at, l.posted_at, s.name AS source_name, s.platform,
+                      e.evaluated_at, e.comparables_n, e.market_median_gbp::float8 AS market_median_gbp,
+                      e.profit_gbp::float8 AS profit_gbp, e.profit_pct::float8 AS profit_pct,
+                      COALESCE(to_jsonb(e) ->> 'method', 'A') AS method,
+                      (SELECT MAX(h.changed_at) FROM listing_history h WHERE h.listing_id = l.id AND h.field = 'price_gbp')
+                          AS price_changed_at
+               FROM (SELECT DISTINCT ON (listing_id) * FROM evaluations ORDER BY listing_id, evaluated_at DESC) e
+               JOIN listings l ON l.id = e.listing_id JOIN sources s ON s.id = l.source_id
+               WHERE e.tier = 'guclu' AND e.rules_version = %s AND e.evaluated_at > NOW() - make_interval(days => %s)
+                 AND s.alert_level = 'yesil' AND l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL
+                 AND NOT """ + _alerted_sql("l.id") + """  -- ilan ya da kopyası (aynı araç) bildirildiyse "bildirilmemiş" değil
+                 AND NOT EXISTS (SELECT 1 FROM bot_state u WHERE starts_with(u.key, %s || l.id::text || ':'))
+               ORDER BY e.profit_pct DESC LIMIT %s""",
+            (rules_version, days, SENT_ONCE_TIERS, UNSAVED_ALERT_PREFIX, limit)).fetchall()
+
+    def near_misses(self, rules_version: str, days: int = 7, min_comparables: int = 8, skip_reasons: list[str] | tuple = (),
+                    limit: int = 5) -> list[dict]:
+        """Yakın kaçanlar (yalnız bilgi): son 'days' günde ilk görülen ya da fiyatı değişen aktif ilanlardan EN SON değerlendirmesi bu kural
+        sürümüyle 🟡 ('pazarlik') ve en az 'min_comparables' emsalli olanlar; kopya/karantina değil, kaynağı 'yesil', hiç 🟢/🟠 gitmemiş.
+        Nedenlerinden biri 'skip_reasons' içinde olan (ör. yazım hatası şüphesi, karışık model) atlanır. En iyi kâr önce."""
+        return self.conn.execute(
+            """SELECT l.id, l.url, l.year, l.brand, l.model, l.price_gbp::float8 AS price_gbp, s.name AS source_name,
+                      e.comparables_n, e.profit_pct::float8 AS profit_pct, e.nedenler
+               FROM (SELECT DISTINCT ON (listing_id) * FROM evaluations ORDER BY listing_id, evaluated_at DESC) e
+               JOIN listings l ON l.id = e.listing_id JOIN sources s ON s.id = l.source_id
+               WHERE e.tier = 'pazarlik' AND e.rules_version = %s AND e.comparables_n >= %s
+                 AND NOT (COALESCE(e.nedenler, '{}') && %s::text[])
+                 AND s.alert_level = 'yesil' AND l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL
+                 AND (l.first_seen_at > NOW() - make_interval(days => %s)
+                      OR EXISTS (SELECT 1 FROM listing_history h WHERE h.listing_id = l.id AND h.field = 'price_gbp'
+                                 AND h.changed_at > NOW() - make_interval(days => %s)))
+                 AND NOT """ + _alerted_sql("l.id") + """
+               ORDER BY e.profit_pct DESC LIMIT %s""",
+            (rules_version, min_comparables, list(skip_reasons), days, days, SENT_ONCE_TIERS, limit)).fetchall()
+
+    def disappeared_counts(self, days: int = 7) -> list[dict]:
+        """Son 'days' günde pasifleşen (kopya olmayan) ilanlar, pasifleşme nedenine göre: [{reason, n, alerted}]. Nedeni boş eski satırlar
+        'belirsiz' sayılır; 'alerted' = bunlardan 🟢/🟠 bildirimi gitmiş olanlar. Pasif doğan ilan (inactive_at boş) sayılmaz."""
+        return self.conn.execute(
+            """SELECT COALESCE(l.inactive_reason, %s) AS reason, count(*) AS n,
+                      count(*) FILTER (WHERE EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.tier = ANY(%s))) AS alerted
+               FROM listings l
+               WHERE NOT l.is_active AND l.duplicate_of IS NULL AND l.inactive_at > NOW() - make_interval(days => %s)
+               GROUP BY 1 ORDER BY 1""",
+            (UNKNOWN, SENT_ONCE_TIERS, days)).fetchall()
+
+    def listing_counts(self, days: int = 7) -> dict:
+        """Son 'days' günde ilk görülen ilan sayısı ve şu an aktif (kopya olmayan) ilan sayısı: {new_n, active_n}."""
+        return self.conn.execute(
+            """SELECT count(*) FILTER (WHERE first_seen_at > NOW() - make_interval(days => %s)) AS new_n,
+                      count(*) FILTER (WHERE is_active AND duplicate_of IS NULL) AS active_n
+               FROM listings""", (days,)).fetchone()
 
     def alert_marks_since(self, prefix: str, days: int = 7) -> list[str]:
         """'alert:<prefix>...' işaretlerinden son 'days' günde atılanların anahtar sonekleri (öğrenme olayları için)."""
@@ -645,11 +804,11 @@ class Repository:
         return self.conn.execute("SELECT * FROM subscribers WHERE status='onayli'").fetchall()
 
     def alert_exists(self, listing_id, chat_id: str, tier: str) -> bool:
-        """Bu ilan bu sohbete bu seviyede (🟢/🟠 için: ikisinden biriyle) daha önce gitti mi?
+        """Bu ilan (ya da kopyalarından biri: aynı araç, `_alerted_sql`) bu sohbete bu seviyede (🟢/🟠 için: ikisinden biriyle) daha önce gitti mi?
         🟢/🟠'de kaydı yazılamayan ama gönderilmiş bildirimin yedek izi (`bot_state`) de sayılır: aksi halde her turda yeniden giderdi."""
         if self.conn.execute(
-            "SELECT 1 FROM alerts WHERE listing_id=%s AND chat_id=%s AND tier = ANY(%s)", (listing_id, chat_id, _tiers_blocking(tier))
-        ).fetchone() is not None:
+            "SELECT " + _alerted_sql("%s", "%s") + " AS hit", (listing_id, listing_id, chat_id, _tiers_blocking(tier))
+        ).fetchone()["hit"]:
             return True
         return tier in SENT_ONCE_TIERS and self.get_state(unsaved_alert_key(listing_id, chat_id)) is not None
 

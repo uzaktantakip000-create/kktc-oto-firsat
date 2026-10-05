@@ -37,6 +37,7 @@ def collect_pazarkibris(repo: Repository, source: dict, reader: LlmReader | None
                 r = client.get(pazarkibris.LIST_URL, params={"locale": "tr", **({"page": page} if page > 1 else {})})
             except httpx.HTTPError:  # geçici ağ hatası
                 stats.failed += 1
+                pazarkibris.polite_sleep()  # nazik hız: hatalı istek sonrası da bekle
                 continue
             items, total_page = pazarkibris.parse_list_page(r.text) if r.status_code == 200 else ([], 0)
             if not items:  # engellenme / şablon değişikliği: tur başarısız sayılır

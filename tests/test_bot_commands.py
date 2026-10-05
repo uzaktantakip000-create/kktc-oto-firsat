@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from application import bot_poll
+from application import bot_poll, notify, report
 
 OWNER = "1"
 FRIEND = "2"
@@ -379,6 +379,206 @@ def test_a_double_tap_stores_one_vote_and_a_second_action_is_a_second_vote(bot):
     assert repo.conn.feedback == [("L1", "ilgilendim", "chat:2")]
     tap("yanlis_fiyat")
     assert len(repo.conn.feedback) == 2
+
+
+# --- oy düğmesi: oy verilince BASILAN mesajın düğmesi "✅ Kaydedildi" olur ----------------------------------------------
+LID = "3f2b8c1e-5a7d-4e9a-8b1c-2d4f6a8c0e12"
+WA = "https://wa.me/905330000021?text=Merhaba"
+WA_ROW = [{"text": "📲 WhatsApp'tan ulaş", "url": WA}]
+
+
+def saved(text, listing=LID):
+    return {"text": text, "callback_data": f"fb:kayitli:{listing}"}
+
+
+class VoteRepo(Repo):
+    def __init__(self, subs=None):
+        super().__init__(subs)
+        self.sold, self.blocked = [], []
+
+    def mark_sold(self, listing_id):
+        self.sold.append(listing_id)
+
+    def block_seller_of(self, listing_id, reason):
+        self.blocked.append(listing_id)
+        return True
+
+
+class Telegram:
+    """bot_poll.api yerine: bütün Telegram çağrılarını yakalar (düğme cevabı `_answer` da buradan geçer); `fail`: yöntem -> fırlatılacak hata."""
+
+    def __init__(self, monkeypatch, fail=None):
+        self.calls, self.fail = [], fail or {}
+        monkeypatch.setattr(bot_poll, "api", self)
+
+    def __call__(self, token, method, **kw):
+        self.calls.append((method, kw))
+        if method in self.fail:
+            raise self.fail[method]
+        return {}
+
+    @property
+    def edits(self):
+        return [kw for m, kw in self.calls if m == "editMessageReplyMarkup"]
+
+    @property
+    def toasts(self):
+        return [kw.get("text") for m, kw in self.calls if m == "answerCallbackQuery"]
+
+
+def old_keyboard(lid=LID, wa=None):
+    """Eski (03.10.2026 öncesi) fırsat mesajı: iki satırda 5 oy düğmesi."""
+    def btn(text, action):
+        return {"text": text, "callback_data": f"fb:{action}:{lid}"}
+    return {"inline_keyboard": ([[{"text": "📲 WhatsApp'tan ulaş", "url": wa}]] if wa else [])
+            + [[btn("İlgileniyorum", "ilgilendim"), btn("Pas", "pas")],
+               [btn("Yanlış fiyat", "yanlis_fiyat"), btn("Zaten satılmış", "satilmis"), btn("Kusurlu/sahte", "kusurlu")]]}
+
+
+def press(repo, sender, action, markup, *, message_id=77, listing=LID, owner=OWNER, chat=None):
+    """`sender` basar; mesaj `chat` (varsayılan: göndericinin kendi sohbeti) içindeki `message_id`'li mesajdır ve `markup` düğmelerini taşır."""
+    message = {"message_id": message_id, "chat": {"id": int(chat or sender)}}
+    if markup is not None:
+        message["reply_markup"] = markup
+    bot_poll._handle_callback(repo, "t", owner, {"id": "9", "from": {"id": int(sender)}, "data": f"fb:{action}:{listing}", "message": message})
+
+
+def control_vote(tg, repo):
+    """Karşı sınama: sahibin oyu düğmeyi gerçekten değiştirir. "Düzenleme yok" sınamalarına eklenir; düzenleme yolu hiç çalışmasa o sınamalar boş geçerdi."""
+    press(repo, OWNER, "ilgilendim", notify.keyboard("KONTROL-ILAN", WA), message_id=1, listing="KONTROL-ILAN")
+    assert [(e["chat_id"], e["message_id"]) for e in tg.edits] == [(int(OWNER), 1)]
+    return ("KONTROL-ILAN", "ilgilendim", f"chat:{OWNER}")
+
+
+@pytest.mark.parametrize("action,label", [("ilgilendim", "✅ Kaydedildi: 👍 İşe yarar"), ("yanlis_fiyat", "✅ Kaydedildi: 👎 Yanlış")])
+def test_owner_vote_is_stored_the_pressed_message_shows_saved_and_the_whatsapp_button_stays(monkeypatch, action, label):
+    tg, repo = Telegram(monkeypatch), VoteRepo()
+    press(repo, OWNER, action, notify.keyboard(LID, WA))
+    assert repo.conn.feedback == [(LID, action, f"chat:{OWNER}")]
+    (edit,) = tg.edits
+    assert (edit["chat_id"], edit["message_id"]) == (int(OWNER), 77)
+    assert edit["reply_markup"] == {"inline_keyboard": [WA_ROW, [saved(label)]]}  # tek düğme; WhatsApp satırı aynen
+    assert tg.toasts == ["Not aldım 👍"]  # eski bildirim yazısı değişmedi
+
+
+def test_a_message_without_a_whatsapp_button_ends_up_with_only_the_saved_button(monkeypatch):
+    tg = Telegram(monkeypatch)
+    press(VoteRepo(), OWNER, "ilgilendim", notify.keyboard(LID))
+    assert tg.edits[0]["reply_markup"] == {"inline_keyboard": [[saved("✅ Kaydedildi: 👍 İşe yarar")]]}
+
+
+@pytest.mark.parametrize("action,name", [("pas", "Pas"), ("satilmis", "Zaten satılmış"), ("kusurlu", "Kusurlu/sahte"),
+                                         ("ilgilendim", "👍 İşe yarar"), ("yanlis_fiyat", "👎 Yanlış")])
+def test_old_messages_with_five_buttons_collapse_to_one_saved_button_named_after_the_vote(monkeypatch, action, name):
+    tg, repo = Telegram(monkeypatch), VoteRepo()
+    press(repo, OWNER, action, old_keyboard(wa=WA))
+    assert tg.edits[0]["reply_markup"] == {"inline_keyboard": [WA_ROW, [saved(f"✅ Kaydedildi: {name}")]]}  # iki satır + 5 düğme -> TEK düğme
+    assert repo.conn.feedback == [(LID, action, f"chat:{OWNER}")]
+    assert (repo.sold, repo.blocked) == ([LID] if action == "satilmis" else [], [])  # eski eylemler aynen: satılmış kapatır; kusurlu 10 oydan önce yalnız kayıt
+
+
+def test_the_monthly_audit_buttons_also_turn_into_saved(monkeypatch):
+    tg = Telegram(monkeypatch)
+    audit = {"inline_keyboard": [[{"text": "✅ Doğru", "callback_data": f"fb:audit_dogru:{LID}"},
+                                  {"text": "❌ Yanlış", "callback_data": f"fb:audit_yanlis:{LID}"}]]}
+    press(VoteRepo(), OWNER, "audit_yanlis", audit)
+    assert tg.edits[0]["reply_markup"] == {"inline_keyboard": [[saved("✅ Kaydedildi: Yanlış")]]}
+
+
+def test_a_weekly_report_keyboard_changes_only_the_pressed_listings_buttons(monkeypatch):
+    """Rapor tek mesajda birçok ilanın düğmesini taşır ve satıra 2 ilan sığdırır: yanındaki ilanın düğmeleri silinmemeli."""
+    ids = [f"00000000-0000-0000-0000-{i:012d}" for i in (1, 2, 3)]
+    markup = report._vote_keyboard([{"id": i} for i in ids])
+    original = [[dict(b) for b in row] for row in markup["inline_keyboard"]]
+    assert [[b["text"] for b in row] for row in original] == [["1 👍", "1 👎", "2 👍", "2 👎"], ["3 👍", "3 👎"]]  # ön koşul: bir satırda iki ilan
+    tg, repo = Telegram(monkeypatch), VoteRepo()
+    press(repo, OWNER, "yanlis_fiyat", markup, listing=ids[1])
+    rows = tg.edits[-1]["reply_markup"]["inline_keyboard"]
+    assert rows == [[original[0][0], original[0][1], saved("2 ✅ 👎", ids[1])], original[1]]  # 1. ve 3. ilan aynen
+    press(repo, OWNER, "ilgilendim", {"inline_keyboard": rows}, listing=ids[2])  # Telegram bir sonraki basışta GÜNCEL düğmeleri yollar
+    rows = tg.edits[-1]["reply_markup"]["inline_keyboard"]
+    assert rows == [[original[0][0], original[0][1], saved("2 ✅ 👎", ids[1])], [saved("3 ✅ 👍", ids[2])]]
+    press(repo, OWNER, "ilgilendim", {"inline_keyboard": rows}, listing=ids[0])
+    assert tg.edits[-1]["reply_markup"]["inline_keyboard"] == [[saved("1 ✅ 👍", ids[0]), saved("2 ✅ 👎", ids[1])], [saved("3 ✅ 👍", ids[2])]]
+    assert repo.conn.feedback == [(ids[1], "yanlis_fiyat", "chat:1"), (ids[2], "ilgilendim", "chat:1"), (ids[0], "ilgilendim", "chat:1")]
+    assert markup["inline_keyboard"] == original  # gelen düğme dizisi yerinde değiştirilmedi
+
+
+@pytest.mark.parametrize("error", [bot_poll.TelegramError("editMessageReplyMarkup", 400, "Bad Request: message is not modified"),
+                                   bot_poll.TelegramError("editMessageReplyMarkup", 400, "Bad Request: message to edit not found"),
+                                   bot_poll.TelegramError("editMessageReplyMarkup", 0, "ConnectError"),
+                                   ValueError("beklenmedik yanıt")])
+def test_a_failing_edit_never_loses_the_vote_or_the_answer_and_logs_one_short_line_without_ids(monkeypatch, capsys, error):
+    owner = "55501234"
+    tg, repo = Telegram(monkeypatch, fail={"editMessageReplyMarkup": error}), VoteRepo()
+    repo.conn.subs[owner] = "onayli"
+    press(repo, owner, "yanlis_fiyat", notify.keyboard(LID, WA), owner=owner)
+    assert repo.conn.feedback == [(LID, "yanlis_fiyat", f"chat:{owner}")] and tg.toasts == ["Not aldım 👍"] and len(tg.edits) == 1
+    out = capsys.readouterr().out
+    assert out.startswith("oy düğmesi güncellenemedi") and out.count("\n") == 1 and owner not in out and LID not in out
+
+
+@pytest.mark.parametrize("markup", [None, {"inline_keyboard": []}, notify.keyboard("BASKA-ILAN", WA),
+                                    {"inline_keyboard": [WA_ROW, [saved("✅ Kaydedildi: 👍 İşe yarar")]]}])  # düğmesiz / başka ilanın / zaten değişmiş
+def test_nothing_to_replace_means_no_edit_but_the_vote_is_still_stored_and_answered(monkeypatch, markup):
+    tg, repo = Telegram(monkeypatch), VoteRepo()
+    control = control_vote(tg, repo)
+    press(repo, OWNER, "ilgilendim", markup)
+    assert repo.conn.feedback == [control, (LID, "ilgilendim", f"chat:{OWNER}")] and len(tg.edits) == 1 and tg.toasts == ["Not aldım 👍"] * 2
+
+
+def test_a_callback_without_a_message_still_stores_and_answers(monkeypatch):
+    tg, repo = Telegram(monkeypatch), VoteRepo()
+    control = control_vote(tg, repo)
+    bot_poll._handle_callback(repo, "t", OWNER, {"id": "9", "from": {"id": int(OWNER)}, "data": f"fb:pas:{LID}"})  # Telegram mesajı yollamadı
+    assert repo.conn.feedback == [control, (LID, "pas", f"chat:{OWNER}")] and len(tg.edits) == 1 and tg.toasts == ["Not aldım 👍"] * 2
+
+
+def test_a_repeat_press_on_a_stale_keyboard_stores_one_vote_but_still_shows_saved(monkeypatch):
+    """Düzenleme ilk basışta düşmüşse (eski mesaj, hız sınırı...) ikinci basış oyu yinelemez, düğmeyi yine düzeltmeyi dener."""
+    tg, repo = Telegram(monkeypatch, fail={"editMessageReplyMarkup": bot_poll.TelegramError("editMessageReplyMarkup", 429, "Too Many Requests")}), VoteRepo()
+    press(repo, OWNER, "ilgilendim", notify.keyboard(LID, WA))
+    tg.fail = {}
+    press(repo, OWNER, "ilgilendim", notify.keyboard(LID, WA))
+    assert repo.conn.feedback == [(LID, "ilgilendim", f"chat:{OWNER}")] and len(tg.edits) == 2
+    assert tg.edits[1]["reply_markup"]["inline_keyboard"][1] == [saved("✅ Kaydedildi: 👍 İşe yarar")]
+
+
+def test_someone_not_approved_stores_nothing_and_no_button_changes(monkeypatch):
+    tg, repo = Telegram(monkeypatch), VoteRepo()
+    control = control_vote(tg, repo)
+    press(repo, "99", "ilgilendim", notify.keyboard(LID, WA))
+    assert repo.conn.feedback == [control] and len(tg.edits) == 1 and tg.toasts == ["Not aldım 👍", None]
+
+
+@pytest.mark.parametrize("sender", [OWNER, FRIEND, "99"])
+def test_pressing_the_saved_button_stores_nothing_and_says_already_saved(monkeypatch, sender):
+    tg, repo = Telegram(monkeypatch), VoteRepo({FRIEND: "onayli"})
+    press(repo, sender, "kayitli", {"inline_keyboard": [WA_ROW, [saved("✅ Kaydedildi: 👍 İşe yarar")]]})
+    assert repo.conn.sql == [] and repo.conn.feedback == [] and (repo.sold, repo.blocked) == ([], [])  # veritabanına hiç dokunulmadı
+    assert tg.edits == [] and tg.toasts == ["Zaten kaydedildi"]
+
+
+def test_saved_button_callback_data_fits_telegrams_64_bytes_for_uuid_listing_ids():
+    import uuid
+    lid = str(uuid.uuid4())
+    assert bot_poll.SAVED_ACTION == "kayitli" and bot_poll.SAVED_ACTION not in bot_poll.FEEDBACK_ACTIONS  # basınca oy olarak yazılmaz
+    for action in (*bot_poll.FEEDBACK_ACTIONS, bot_poll.SAVED_ACTION):
+        assert len(f"fb:{action}:{lid}".encode()) <= 64, action
+    for action in bot_poll.FEEDBACK_ACTIONS:
+        markup = bot_poll._saved_markup(old_keyboard(lid, WA), lid, action)
+        assert all(len(b["callback_data"].encode()) <= 64 for row in markup["inline_keyboard"] for b in row if "callback_data" in b)
+
+
+def test_a_subscribers_press_edits_only_the_subscribers_message_and_stays_a_subscriber_vote(monkeypatch):
+    """Sahip ve abonenin mesajları ayrıdır (her sohbete ayrı mesaj): abonenin basışı yalnız kendi mesajını düzenler, oyu 'chat:<abone>' olarak
+    kaydolur ve sahibin eylemlerini tetiklemez. Sayımların abone oyunu saymaması (OWNER_VOTE_SQL) test_repository_db.py'de gerçek veritabanıyla."""
+    tg, repo = Telegram(monkeypatch), VoteRepo({FRIEND: "onayli"})
+    press(repo, FRIEND, "satilmis", notify.keyboard(LID, WA), message_id=88)  # abonenin kendi kopyası; sahibin kopyası (sohbet 1, mesaj 77) hiç gelmedi
+    assert repo.conn.feedback == [(LID, "satilmis", f"chat:{FRIEND}")] and (repo.sold, repo.blocked) == ([], [])
+    assert [(e["chat_id"], e["message_id"]) for e in tg.edits] == [(int(FRIEND), 88)]  # sahibin sohbetine/mesajına hiçbir çağrı yok
+    assert not any(kw.get("chat_id") in (int(OWNER), OWNER) for m, kw in tg.calls)
+    assert tg.edits[0]["reply_markup"]["inline_keyboard"][1] == [saved("✅ Kaydedildi: Zaten satılmış")]
 
 
 # --- onay/ret: sahibe de haber gider ---------------------------------------------------------------------------------

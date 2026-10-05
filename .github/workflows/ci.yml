@@ -11,7 +11,7 @@ on:
         type: boolean
         default: false
 permissions:
-  contents: write   # yalnızca `live` dalını ilerletmek için
+  contents: read   # varsayılan: yalnız okuma. Yazma izni yalnız `live`'ı ilerleten `yayin` işinde (bağımlılık kuran test işleri dala yazamaz)
 concurrency:
   group: ci
   cancel-in-progress: false   # sırayla çalışsın: live hep ileri gider
@@ -23,6 +23,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0   # tam geçmiş: `live`'a ileri sarma (fast-forward) doğrulanabilsin
+          persist-credentials: false   # erişim jetonu diske (.git/config) yazılmaz: pip ile gelen kod onu okuyamaz
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -78,6 +79,8 @@ jobs:
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/kktc_test
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false   # erişim jetonu diske (.git/config) yazılmaz: pip ile gelen kod onu okuyamaz
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -91,6 +94,8 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 3
+    permissions:
+      contents: write   # yalnızca `live` dalını ilerletmek için (bu iş pip kurmaz, yalnız git push yapar)
     steps:
       - uses: actions/checkout@v4
         with:
