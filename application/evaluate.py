@@ -105,6 +105,14 @@ def _evaluate_one(repo: Repository, listing: dict, pool: list[dict], s: Settings
 QUICK_NEW_HOURS = 3  # hızlı tur: son 3 saatte görülüp hiç değerlendirilmemiş (ya da fiyatı değişmiş) ilanlar
 
 
+def pool_keys(listings: list[dict]) -> list[tuple[str, str | None]]:
+    """Emsal havuzundan okunacak (brand_norm, model_norm) çiftleri: yalnız değerlendirilecek ilanlarınki. `find_market` emsalde marka+model
+    EŞİTLİĞİ şart koşar (modeli bilinmeyen ilan yalnız modeli bilinmeyenle; karışık model yaması `model_ambiguous` yalnız ilanın KENDİ
+    anahtarına bakar, kardeş anahtar gerekmez): sonuç tüm havuzla aynıdır, okunan veri (Supabase çıkış kotası) azalır.
+    Taranan ilan (evaluate_new) ve iletilen ilan (ad_check) aynı fonksiyonu kullanır."""
+    return sorted({(l["brand_norm"], l.get("model_norm")) for l in listings}, key=lambda k: (k[0], k[1] or ""))
+
+
 def evaluate_new(repo: Repository, settings: Settings | None = None, book=_LOAD,
                  failures: list[tuple[str, str]] | None = None, quick: bool = False) -> list[Evaluated]:
     """Henüz değerlendirilmemiş aktif ilanları değerlendirir. Emsali olmayanlar bir sonraki turda tekrar denenir.
@@ -120,8 +128,7 @@ def evaluate_new(repo: Repository, settings: Settings | None = None, book=_LOAD,
     candidates = [l for l in listings if is_car_brand(l.get("brand_norm"))]  # motosiklet/tekne/karavan/ticari: bu sistem otomobil içindir
     if not candidates:
         return []
-    keys = sorted({(l["brand_norm"], l.get("model_norm")) for l in candidates}, key=lambda k: (k[0], k[1] or ""))
-    pool = [r for r in repo.market_pool(days=s.comparable_window_days + 30, keys=keys) if is_car_brand(r.get("brand_norm"))]
+    pool = [r for r in repo.market_pool(days=s.comparable_window_days + 30, keys=pool_keys(candidates)) if is_car_brand(r.get("brand_norm"))]
     results, attempted, failed = [], 0, 0
     for listing in candidates:
         attempted += 1
