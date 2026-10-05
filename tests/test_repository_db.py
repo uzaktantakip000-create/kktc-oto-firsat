@@ -516,3 +516,14 @@ def test_alert_exists_counts_the_fallback_trace_of_an_unsaved_green_or_orange_al
     assert db.alert_exists(lid, "c1", "guclu") and db.alert_exists(lid, "c1", "tahmini")
     assert not db.alert_exists(lid, "c2", "guclu") and not db.alert_exists(lid, "c1", "pazarlik")
 
+
+
+def test_market_pool_drops_listings_the_owner_marked_wrong_but_ignores_a_subscribers_tap(db):
+    """Tek abonenin yanlış basışı herkesin emsalini bozmasın (bot_poll: kararlar yalnızca sahipten sisteme döner). Sahip oyu ya da
+    sahibi belli olmayan kayıt (denetim, eski satır) emsali dışlamaya devam eder."""
+    c, sid = db.conn, add_source(db.conn)
+    c.execute("INSERT INTO subscribers (chat_id, name, status, is_owner) VALUES ('o1','sahip','onayli',TRUE), ('s1','abone','onayli',FALSE)")
+    keep, owner_bad, sub_bad, no_note = (add_listing(c, sid, n) for n in ("keep", "ownerbad", "subbad", "nonote"))
+    for lid, note in ((owner_bad, "chat:o1"), (sub_bad, "chat:s1"), (no_note, None)):
+        c.execute("INSERT INTO feedback (listing_id, action, note) VALUES (%s,'yanlis_fiyat',%s)", (lid, note))
+    assert {str(r["id"]) for r in db.market_pool(days=120)} == {str(keep), str(sub_bad)}

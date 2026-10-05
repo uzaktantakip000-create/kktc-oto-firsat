@@ -1,4 +1,6 @@
 """Bot komutlarını Actions çalışması sırasında getUpdates ile işler (7/24 açık sunucu gerektirmez)."""
+import re
+
 import httpx
 
 from application import ad_check, discovery, history_cmd, llm_reader, price_book_cmd, settings_store, sources_cmd, status
@@ -8,10 +10,48 @@ from infrastructure.db.repository import Repository
 
 FEEDBACK_ACTIONS = ("ilgilendim", "pas", "yanlis_fiyat", "satilmis", "kusurlu", "audit_dogru", "audit_yanlis")
 WELCOME_OWNER = ("Merhaba! Fırsat bildirimleri bu sohbete gelecek. /dur ile durdurabilir, /basla ile açabilirsin.\n"
-                 "Sistemin durumu için /durum, kaynak listesi için /kaynaklar, son gönderilen 10 fırsat için /son.\n"
-                 "Araç değeri için /fiyat corolla 2014, gerçek bir satışı girmek için /satti corolla 2014 120000km 7200, "
-                 "🟠 tahmini fırsat bildirimlerini açıp kapatmak için /tahmini ac ya da /tahmini kapat.\n"
+                 "Tüm komutlar ve örnekler için /yardim. Sol alttaki menü düğmesinden de seçebilirsin.\n"
                  "Bir ilanı (yazı ya da ekran görüntüsü) bana gönderirsen piyasayla karşılaştırıp cevap veririm; cevap en geç ~15 dk içinde gelir.")
+HELP_OWNER = ("📖 Komutlar (cevap en geç ~15 dk içinde gelir)\n\n"
+              "Menüde görünenler:\n"
+              "/durum — sistem çalışıyor mu, son kontrol, kaynaklar\n"
+              "/son — son gönderilen 10 fırsat\n"
+              "/fiyat corolla 2014 — bir aracın piyasa değeri\n"
+              "/satti corolla 2014 120000km 7200 — gerçek bir satışı kaydet (değer tablosunu doğrular)\n"
+              "/ayarlar — eşik, bütçe, istenmeyen markalar\n"
+              "/dur ve /basla — bildirimleri durdur / yeniden aç\n\n"
+              "Menüde görünmeyenler (yazınca çalışır):\n"
+              "/esik 20 — 🟢 için en az % kâr\n"
+              "/butce 20000 — bundan pahalı ilan gelmesin (/butce yok kaldırır)\n"
+              "/istemiyorum fiat — markayı kapat (/istiyorum fiat geri açar)\n"
+              "/kaynaklar — taranan siteler ve durumları\n"
+              "/tahmini ac | kapat — 🟠 ayarı (şu an 🟠 mesajları zaten kapalı)\n\n"
+              "İlan kontrolü: bir ilanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü gönder; piyasayla karşılaştırıp cevap veririm.\n"
+              "Her fırsat mesajındaki 👍 İşe yarar / 👎 Yanlış düğmesine bas: sistemi bu oylarla ölçüyorum.")
+HELP_SUBSCRIBER = ("Bu bot KKTC'deki ikinci el araç ilanlarını tarar; piyasanın belirgin altında kalan fırsatları bu sohbete yazar. "
+                   "Yalnızca öneridir: satıcıyla görüşmek ve karar vermek sana aittir.\n\n"
+                   "/dur — bildirimleri durdur\n/basla — yeniden aç\n\n"
+                   "Mesajlardaki 👍 İşe yarar / 👎 Yanlış düğmesine basarsan sistem gelişir. Cevaplar en geç ~15 dk içinde gelir.")
+OWNER_ONLY_REPLY = "Bu komut yalnız sahip içindir. Senin için /yardim, /dur ve /basla çalışır."
+UNKNOWN_OWNER_REPLY = "Bu komutu tanımıyorum. Komut listesi için /yardim."
+NOT_APPROVED_REPLY = "Bu komut için önce başvurunun onaylanması gerekir. Başvurmak için /start yaz."
+CHATTER_REPLY = ("Bunu bir ilan olarak okuyamadım. İlanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü gönder. "
+                 "Komutlar için /yardim.")
+LINK_REPLY = ("Linkleri açamıyorum. İlanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü gönder. "
+              "Sistemin taradığı sitelerdeki ilanlar zaten kendiliğinden değerlendiriliyor.")
+ERROR_REPLY = "⚠️ Komutun işlenirken bir hata oldu; birazdan tekrar dene. (Hata kaydedildi.)"
+OWNER_COMMANDS = {"/durum", "/son", "/ayarlar", "/esik", "/butce", "/fiyat", "/satti", "/tahmini", "/istemiyorum", "/istiyorum",
+                  "/kaynaklar", "/kaynak_ekle", "/kaynak_seviye", "/kaynak_ac", "/kaynak_kapat"}
+SHARED_COMMANDS = {"/start", "/yardim", "/dur", "/basla"}
+MIN_AD_DIGITS = 6  # gerçek bir ilanda en az yıl (4) + fiyat (3+) rakamı olur; "tamam", "teşekkürler" ilan kontrolüne (kota + yapay zekâ) girmez
+
+
+def _looks_like_ad(raw: str) -> bool:
+    return sum(ch.isdigit() for ch in raw) >= MIN_AD_DIGITS
+
+
+def _is_bare_link(raw: str) -> bool:
+    return raw.lower().startswith(("http://", "https://")) and len(raw.split()) == 1
 
 
 def _answer(token: str, callback_id: str, text: str | None = None) -> None:
@@ -47,15 +87,21 @@ def _download_photo(token: str, photo: list[dict]) -> bytes | None:
 def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None:
     chat_id = str(msg["chat"]["id"])
     name = " ".join(filter(None, [msg["from"].get("first_name"), msg["from"].get("last_name")])) or chat_id
-    text = (msg.get("text") or "").strip().lower()
+    text = re.sub(r"^(/[a-z0-9_]+)@\w+", r"\1", (msg.get("text") or "").strip().lower())  # /son@botadi gruplarda da çalışsın
     raw = (msg.get("text") or msg.get("caption") or "").strip()  # iletilen ilan: küçük harfe çevrilmemiş özgün metin
+    cmd = text.split()[0] if text.startswith("/") else ""
     row = repo.conn.execute("SELECT * FROM subscribers WHERE chat_id=%s", (chat_id,)).fetchone()
+    status_now = row["status"] if row else None
 
-    if text.startswith("/start"):
+    if cmd == "/start":
         if chat_id == owner:
             api(token, "sendMessage", chat_id=chat_id, text=WELCOME_OWNER)
-        elif row and row["status"] == "onayli":
-            api(token, "sendMessage", chat_id=chat_id, text="Zaten onaylısın, fırsatlar bu sohbete gelecek.")
+        elif status_now == "onayli":
+            api(token, "sendMessage", chat_id=chat_id, text="Zaten onaylısın, fırsatlar bu sohbete gelecek. Komutlar için /yardim.")
+        elif status_now == "durduruldu":
+            api(token, "sendMessage", chat_id=chat_id, text="Bildirimlerin durdurulmuş. /basla ile yeniden açabilirsin.")
+        elif status_now == "bekliyor":  # tekrar /start sahibi yeniden rahatsız etmesin
+            api(token, "sendMessage", chat_id=chat_id, text="Başvurun onay bekliyor; onaylanınca haber vereceğim.")
         else:
             repo.conn.execute(
                 "INSERT INTO subscribers (chat_id,name,status) VALUES (%s,%s,'bekliyor') "
@@ -67,6 +113,8 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
                 reply_markup={"inline_keyboard": [[
                     {"text": "✅ Onayla", "callback_data": f"sub:onayli:{chat_id}"},
                     {"text": "⛔ Reddet", "callback_data": f"sub:reddedildi:{chat_id}"}]]})
+    elif cmd == "/yardim":
+        api(token, "sendMessage", chat_id=chat_id, text=HELP_OWNER if chat_id == owner else HELP_SUBSCRIBER, disable_web_page_preview=True)
     elif chat_id == owner and text.startswith("/durum"):
         api(token, "sendMessage", chat_id=chat_id, text=status.build_status(repo), disable_web_page_preview=True)
     elif chat_id == owner and text.split()[:1] == ["/son"]:
@@ -96,20 +144,37 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
         api(token, "sendMessage", chat_id=chat_id, text=sources_cmd.change_status(repo, text[len("/kaynak_ac"):], "deneme"))
     elif chat_id == owner and text.startswith("/kaynak_kapat"):
         api(token, "sendMessage", chat_id=chat_id, text=sources_cmd.change_status(repo, text[len("/kaynak_kapat"):], "pasif"))
-    elif text.split()[:1] == ["/dur"] and row and row["status"] == "onayli":
-        repo.conn.execute("UPDATE subscribers SET status='durduruldu' WHERE chat_id=%s", (chat_id,))
-        api(token, "sendMessage", chat_id=chat_id, text="Bildirimler durduruldu. /basla ile tekrar açabilirsin.")
-    elif text.split()[:1] == ["/basla"] and row and row["status"] == "durduruldu":
-        repo.conn.execute("UPDATE subscribers SET status='onayli' WHERE chat_id=%s", (chat_id,))
-        api(token, "sendMessage", chat_id=chat_id, text="Bildirimler açıldı.")
+    elif cmd == "/dur":
+        if status_now == "onayli":
+            repo.conn.execute("UPDATE subscribers SET status='durduruldu' WHERE chat_id=%s", (chat_id,))
+            reply = "Bildirimler durduruldu. /basla ile tekrar açabilirsin."
+        else:
+            reply = "Bildirimler zaten durdurulmuş. /basla ile açabilirsin." if status_now == "durduruldu" else NOT_APPROVED_REPLY
+        api(token, "sendMessage", chat_id=chat_id, text=reply)
+    elif cmd == "/basla":
+        if status_now == "durduruldu":
+            repo.conn.execute("UPDATE subscribers SET status='onayli' WHERE chat_id=%s", (chat_id,))
+            reply = "Bildirimler açıldı."
+        else:
+            reply = "Bildirimler zaten açık." if status_now == "onayli" else NOT_APPROVED_REPLY
+        api(token, "sendMessage", chat_id=chat_id, text=reply)
+    elif cmd and chat_id != owner:  # sahip komutu: sessiz kalma, söyle
+        api(token, "sendMessage", chat_id=chat_id, text=OWNER_ONLY_REPLY)
     elif chat_id == owner and (msg.get("photo") or (raw and not raw.startswith("/"))):
         # İlet → cevap al: kapalı gruptan/başka yerden gelen ilan; otomatik tarananlarla aynı kurallarla değerlendirilir
-        image = _download_photo(token, msg["photo"]) if msg.get("photo") else None
-        if msg.get("photo") and image is None:
-            reply = "Görüntüyü indiremedim (en çok 5 MB olmalı). İlanı yazı olarak da gönderebilirsin."
+        if msg.get("photo"):
+            image = _download_photo(token, msg["photo"])
+            reply = ("Görüntüyü indiremedim (en çok 5 MB olmalı). İlanı yazı olarak da gönderebilirsin." if image is None
+                     else ad_check.handle(repo, raw, image, llm_reader.from_env(repo)))
+        elif _is_bare_link(raw):  # link açılmaz; kota ve yapay zekâ çağrısı harcanmasın
+            reply = LINK_REPLY
+        elif not _looks_like_ad(raw):  # "tamam", "teşekkürler"...: ilan kontrolüne girmez
+            reply = CHATTER_REPLY
         else:
-            reply = ad_check.handle(repo, raw, image, llm_reader.from_env(repo))
+            reply = ad_check.handle(repo, raw, None, llm_reader.from_env(repo))
         api(token, "sendMessage", chat_id=chat_id, text=reply[:3900], disable_web_page_preview=True)
+    elif chat_id == owner and cmd:  # yazım hatası/bilinmeyen komut sessiz kalmasın
+        api(token, "sendMessage", chat_id=chat_id, text=UNKNOWN_OWNER_REPLY)
 
 
 PAS_LIMIT = 3  # aynı modele bu kadar "pas" deyince kapatmayı öneririm
@@ -148,7 +213,9 @@ def _handle_callback(repo: Repository, token: str, owner: str, cb: dict) -> None
         if not allowed or (action.startswith("audit_") and sender != owner):  # engellenmiş/yabancı kullanıcı emsali bozmasın
             _answer(token, cb["id"])
             return
-        repo.conn.execute("INSERT INTO feedback (listing_id, action, note) VALUES (%s,%s,%s)", (target, action, f"chat:{sender}"))
+        note = f"chat:{sender}"
+        if not repo.conn.execute("SELECT 1 FROM feedback WHERE listing_id=%s AND action=%s AND note=%s", (target, action, note)).fetchone():
+            repo.conn.execute("INSERT INTO feedback (listing_id, action, note) VALUES (%s,%s,%s)", (target, action, note))  # çift basış çift oy olmasın
         answer = "Not aldım 👍"
         if sender == owner:  # tek abonenin yanlış basışı herkes için karar vermesin: kararları yalnızca sahip sisteme geri döner
             if action == "satilmis":
@@ -160,6 +227,17 @@ def _handle_callback(repo: Repository, token: str, owner: str, cb: dict) -> None
         _answer(token, cb["id"], answer)
     else:
         _answer(token, cb["id"])
+
+
+def _tell_error(token: str, update: dict) -> None:
+    """İşlenemeyen komutta sahibe/göndericiye sessiz kalma: kısa bir hata cevabı (en iyi çaba; hata metni sızdırılmaz)."""
+    chat = (update.get("message") or {}).get("chat", {}).get("id")
+    if chat is None:
+        return
+    try:
+        api(token, "sendMessage", chat_id=str(chat), text=ERROR_REPLY)
+    except Exception:
+        pass
 
 
 def poll_bot(repo: Repository, token: str, owner_chat_id: str) -> int:
@@ -174,7 +252,7 @@ def poll_bot(repo: Repository, token: str, owner_chat_id: str) -> int:
                 _handle_callback(repo, token, owner_chat_id, u["callback_query"])
         except Exception as e:  # tek güncelleme hatası diğerlerini engellemesin
             print("bot güncellemesi işlenemedi:", type(e).__name__, str(e)[:100])
+            _tell_error(token, u)
         offset = u["update_id"] + 1
-    if updates:
-        repo.set_state("tg_offset", str(offset))
+        repo.set_state("tg_offset", str(offset))  # her güncellemeden sonra: yarıda kesilen tur aynı komutu ikinci kez çalıştırmasın
     return len(updates)

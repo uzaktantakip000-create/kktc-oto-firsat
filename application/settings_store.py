@@ -1,5 +1,6 @@
 """Kullanıcının Telegram'dan verdiği kararlar (eşik, bütçe, istenmeyen marka/model, kara liste) -> Settings.
 Değerler bot_state içinde 'cfg:*' anahtarlarında; kodda gömülü varsayılanlar yalnızca başlangıçtır."""
+from domain.alert_policy import estimated_sendable
 from domain.normalize import normalize_brand
 from domain.settings import Settings
 from infrastructure.db.repository import Repository
@@ -41,7 +42,7 @@ def load_settings(repo: Repository) -> Settings:
 
 def set_threshold(repo: Repository, arg: str) -> str:
     try:
-        pct = float((arg or "").strip().replace(",", ".").rstrip("%"))
+        pct = float((arg or "").strip().replace(",", ".").strip("%").strip())  # "25", "25%", "%25", "% 25"
     except ValueError:
         return f"Kullanım: /esik 20  (🟢 için en az kaç % kâr aranacağı; {STRONG_RANGE[0]}-{STRONG_RANGE[1]} arası)"
     if not STRONG_RANGE[0] <= pct <= STRONG_RANGE[1]:
@@ -64,17 +65,22 @@ def set_budget(repo: Repository, arg: str) -> str:
     return f"Tamam. Bundan sonra £{int(digits):,} üstü ilanlar için bildirim göndermeyeceğim.".replace(",", ".")
 
 
+ESTIMATED_CLOSED_NOTE = ("Not: 🟠 mesajlarını şu an sistem hiç göndermiyor (hazırlık sürüyor; deneme dönemini açmadan önce sana soracağım). "
+                         "Bu ayar kaydedilir ama şimdilik bir şeyi değiştirmez.")
+
+
 def set_estimated(repo: Repository, arg: str) -> str:
     """/tahmini ac | kapat: 🟠 tahmini fırsat bildirimleri (az emsalli araçlar için değer eğrisiyle)."""
     word = (arg or "").strip().lower().replace("ç", "c").replace("ı", "i")
+    note = "" if estimated_sendable() else "\n" + ESTIMATED_CLOSED_NOTE
     if word in ("ac", "acik", "on", "1"):
         repo.set_state("cfg:estimated_alerts", "1")
     elif word in ("kapat", "kapali", "off", "0"):
         repo.set_state("cfg:estimated_alerts", "0")
     else:
         now = "açık" if load_settings(repo).estimated_alerts else "kapalı"
-        return f"🟠 tahmini fırsat bildirimleri şu an {now}. Kullanım: /tahmini ac  ya da  /tahmini kapat"
-    return f"🟠 tahmini fırsat bildirimleri {'açık' if word in ('ac', 'acik', 'on', '1') else 'kapalı'}"
+        return f"🟠 tahmini fırsat bildirimleri şu an {now}. Kullanım: /tahmini ac  ya da  /tahmini kapat" + note
+    return f"🟠 tahmini fırsat bildirimleri {'açık' if word in ('ac', 'acik', 'on', '1') else 'kapalı'}" + note
 
 
 def block_brand(repo: Repository, arg: str, block: bool) -> str:
@@ -104,8 +110,11 @@ def describe(repo: Repository) -> str:
         "• İstenmeyen markalar: " + (", ".join(s.blocked_brands) or "yok") + "  → /istemiyorum fiat",
         "• Sessize aldığın modeller: " + (", ".join(m.replace("|", " ") for m in s.muted_models) or "yok") + "  (3 kez 'pas' deyince sorarım)",
         f"• Kara listedeki satıcı: {len(s.blocked_phones)}  ('kusurlu/sahte' dediklerin)",
-        "• 🟠 Tahmini fırsat bildirimleri (az emsal, değer eğrisiyle): " + ("açık" if s.estimated_alerts else "kapalı")
-        + ("" if s.est_min_discount_to_lower == d.est_min_discount_to_lower
-           else f" (alt sınırın %{s.est_min_discount_to_lower * 100:.0f}'i)") + "  → /tahmini kapat",
+        ("• 🟠 Tahmini fırsat bildirimleri (az emsal, değer eğrisiyle): " + ("açık" if s.estimated_alerts else "kapalı")
+         + ("" if s.est_min_discount_to_lower == d.est_min_discount_to_lower
+            else f" (alt sınırın %{s.est_min_discount_to_lower * 100:.0f}'i)") + "  → /tahmini kapat")
+        if estimated_sendable() else
+        "• 🟠 Tahmini fırsat bildirimleri: şu an sistem tarafından KAPALI (hazırlık sürüyor; açmadan önce sana soracağım). "
+        f"/tahmini ayarın ({'açık' if s.estimated_alerts else 'kapalı'}) kaydedilir ama şimdilik etkisi yok",
         f"• Fırsat sıklığı: 🟡 eşik %{s.negotiable_threshold * 100:.0f}, masraf £{s.fixed_cost_gbp:.0f}, hızlı satış çarpanı {s.quick_sale_factor}",
     ])

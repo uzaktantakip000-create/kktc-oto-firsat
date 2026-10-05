@@ -70,9 +70,9 @@ def test_son_unknown_action_and_limit():
     assert history_cmd.last_opportunities(FakeRepo(opps=[opp(fb="pas")] * 15)).count("🟢") == 10
 
 
-def test_welcome_mentions_son():
-    from application.bot_poll import WELCOME_OWNER
-    assert "/son" in WELCOME_OWNER
+def test_help_mentions_son():
+    from application.bot_poll import HELP_OWNER, WELCOME_OWNER
+    assert "/son" in HELP_OWNER and "/yardim" in WELCOME_OWNER
 
 
 # --- anlık kaynak alarmı ---

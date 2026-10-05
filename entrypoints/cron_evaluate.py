@@ -111,7 +111,7 @@ def run(repo: Repository) -> None:
     except Exception as e:  # bot komutları değerlendirmeyi engellemesin
         print("bot güncellemeleri alınamadı:", type(e).__name__, redact(str(e))[:150])
     try:
-        ensure_menu(repo, token)  # görünür komut menüsü (bir kez; sahibin kararıyla yalnız 6 komut)
+        ensure_menu(repo, token, owner)  # komut menüsü (bir kez): sahip sohbetine 8 komut, diğer herkese yardim/dur/basla
     except Exception as e:
         print("komut menüsü yazılamadı:", type(e).__name__, redact(str(e))[:150])
 

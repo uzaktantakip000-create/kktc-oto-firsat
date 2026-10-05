@@ -164,7 +164,9 @@ class Repository:
                  AND karantina_nedeni IS NULL
                  AND COALESCE(posted_at, data_as_of, first_seen_at) > NOW() - make_interval(days => %s)
                  AND NOT EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = listings.id
-                                 AND f.action IN ('yanlis_fiyat','kusurlu','audit_yanlis'))""" + key_sql,
+                                 AND f.action IN ('yanlis_fiyat','kusurlu','audit_yanlis')
+                                 -- abonenin (sahip olmayan) yanlış basışı emsali herkes için bozmasın: yalnız sahip/sistem oyu dışlar
+                                 AND NOT EXISTS (SELECT 1 FROM subscribers s WHERE NOT s.is_owner AND f.note = 'chat:' || s.chat_id))""" + key_sql,
             args,
         ).fetchall()
 

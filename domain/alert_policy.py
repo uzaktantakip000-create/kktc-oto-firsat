@@ -13,3 +13,8 @@ def send_floor_ok(tier: Tier, method: str, comparables_n: int) -> bool:
     if tier is Tier.STRONG:
         return method == "A" and comparables_n >= MIN_COMPARABLES_TO_SEND
     return tier not in (Tier.ESTIMATED,)
+
+
+def estimated_sendable() -> bool:
+    """🟠 şu an gönderilebiliyor mu? Gönderim kapısıyla (send_floor_ok) aynı kural; /ayarlar sahibe 'açık' diye yanlış söylemesin diye."""
+    return send_floor_ok(Tier.ESTIMATED, "B", 3)

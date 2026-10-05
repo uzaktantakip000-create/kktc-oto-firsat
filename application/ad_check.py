@@ -77,7 +77,7 @@ def build_reply(listing: dict, by: str, a, comps: list[dict], s: Settings) -> st
             f"💰 En kötü ihtimalle satılabilir ~{_fmt_money(p.exit_price_gbp)} · tahmini kâr ~{_fmt_money(p.profit_gbp)} "
             f"(masraf {_fmt_money(s.fixed_cost_gbp)} düşüldü)",
         ]
-        if listing.get("extraction_by") == "llm":
+        if listing.get("extraction_by") == "llm" or "yapay zekâ" in by:
             lines.append("⚠️ Bilgileri yapay zekâ okudu; fiyatı ve km'yi ilanla karşılaştır")
         if a.warnings:
             lines.append("⚠️ Dikkat: " + ", ".join(a.warnings))
@@ -98,6 +98,8 @@ def build_reply(listing: dict, by: str, a, comps: list[dict], s: Settings) -> st
         f"güven {confidence_label(p.confidence)}",
         f"💰 Satılabilir ~{_fmt_money(p.exit_price_gbp)} · tahmini kâr ~{_fmt_money(p.profit_gbp)} (masraf {_fmt_money(s.fixed_cost_gbp)} düşüldü)",
     ]
+    if "yapay zekâ" in by:  # rakamları (fiyat/km/yıl) yapay zekâ okuduysa 🟢 de olsa ilanla karşılaştırılmalı
+        lines.append("⚠️ Bilgileri yapay zekâ okudu; fiyatı ve km'yi ilanla karşılaştır")
     if a.gaps:
         lines.append("⚠️ 🟢 değil çünkü: " + ", ".join(GAP_LABELS.get(g, g) for g in a.gaps))
     if a.warnings:
@@ -112,9 +114,11 @@ def build_reply(listing: dict, by: str, a, comps: list[dict], s: Settings) -> st
     return "\n".join(lines)
 
 
-def analyze_text(repo: Repository, text: str, reader: LlmReader | None, s: Settings | None = None) -> str:
+def analyze_text(repo: Repository, text: str, reader: LlmReader | None, s: Settings | None = None, from_image: bool = False) -> str:
     s = s or Settings()
     listing, by, why = read_ad(text, reader)
+    if listing is not None and from_image:
+        by = "ekran görüntüsünden, yapay zekâ okudu"  # yazıyı yapay zekâ çıkardı; kural ayrıştırıcı yalnız onu parçaladı
     if listing is None:
         return f"🤔 Okuyamadım: {why}.\nİlanı yazı olarak (marka, yıl, fiyat dahil) gönder. {EXAMPLE}"
     if not is_car_brand(Repository.norm_keys(listing["brand"], listing.get("model"))["brand_norm"]):
@@ -154,4 +158,4 @@ def handle(repo: Repository, text: str, image: bytes | None, reader: LlmReader |
             return f"🤔 Görüntüden yazı okuyamadım{extra}. Daha net bir görüntü ya da yazı olarak gönder."
         text = (text + "\n" + seen).strip() if text else seen
     from application.settings_store import load_settings
-    return analyze_text(repo, text, reader, load_settings(repo))
+    return analyze_text(repo, text, reader, load_settings(repo), from_image=image is not None)

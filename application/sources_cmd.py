@@ -2,6 +2,7 @@
 import re
 from datetime import datetime, timezone
 
+from application.feed_switch import LABEL, paused_platforms
 from infrastructure.db.repository import Repository
 
 RESERVED = {"p", "reel", "reels", "explore", "accounts", "stories", "tv", "direct"}
@@ -37,13 +38,22 @@ def sources_report(repo: Repository, now: datetime | None = None) -> str:
                      FROM listings l WHERE l.source_id = s.id AND l.first_seen_at > NOW() - interval '7 days') AS parsed_pct
            FROM sources s ORDER BY s.status, s.platform, s.name"""
     ).fetchall()
-    scanned = [r for r in rows if r["status"] in ("aktif", "deneme")]
+    paused = paused_platforms(repo)  # Instagram/Facebook okuması kapalıyken "✅ son tarama 3 gün önce" yazmak yanıltıcıydı
+    active = [r for r in rows if r["status"] in ("aktif", "deneme")]
+    scanned = [r for r in active if r["platform"] not in paused]
     lines = [f"📡 Taranan kaynaklar ({len(scanned)})"]
     for r in scanned:
         extra = f" · %{r['parsed_pct']} okundu" if r["parsed_pct"] is not None and r["platform"] == "instagram" else ""
         level = {"golge": " 🌑gölge: bildirim yok", "sari": " 🟡sarı: bildirim yok (özet kapalı)"}.get(r["alert_level"], "")
         lines.append(f"{STATUS_ICON.get(r['status'], '•')} {r['name']} ({r['platform']}){level} · son tarama {_ago(r['last_checked_at'], now)} · "
                      f"7 günde {r['listings_7d'] or 0} yeni · {r['active_n']} aktif · 30 günde {r['strong_30d']} 🟢{extra}")
+    stopped = {}
+    for r in active:
+        if r["platform"] in paused:
+            stopped[r["platform"]] = stopped.get(r["platform"], 0) + 1
+    if stopped:
+        lines.append("\n📴 Şu an taranmıyor: " + ", ".join(f"{LABEL.get(p, p)} ({n} kaynak)" for p, n in stopped.items())
+                     + " — sosyal medya okuması kapalı (sahibin kararı); siteler normal taranıyor.")
     waiting = [r for r in rows if r["status"] not in ("aktif", "deneme")]
     if waiting:
         by = {}

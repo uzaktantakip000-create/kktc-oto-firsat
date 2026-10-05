@@ -54,7 +54,8 @@ def test_user_decisions_change_the_verdict():
     assert run(deal, Settings(strong_threshold=0.80)) is Tier.NEGOTIABLE           # /esik 80 (pratikte) -> 🟡
 
 
-def test_estimated_toggle_persists_and_shows_in_describe():
+def test_estimated_toggle_persists_and_shows_in_describe(monkeypatch):
+    monkeypatch.setattr(ss, "estimated_sendable", lambda: True)  # kapı açıkken (deneme dönemi) metinler
     st = Store()
     assert ss.load_settings(st).estimated_alerts is True  # varsayılan açık
     assert ss.set_estimated(st, " kapat") == "🟠 tahmini fırsat bildirimleri kapalı"
@@ -64,3 +65,13 @@ def test_estimated_toggle_persists_and_shows_in_describe():
     assert "şu an açık" in ss.set_estimated(st, "") and "Kullanım" in ss.set_estimated(st, "belki")
     st.d["cfg:est_min_discount_to_lower"] = "0.7"
     assert ss.load_settings(st).est_min_discount_to_lower == 0.7 and "%70" in ss.describe(st)
+
+
+def test_estimated_setting_says_honestly_that_the_system_does_not_send_it_yet():
+    """Gönderim kapısı 🟠'yi geçirmiyorken (domain/alert_policy.py) 'açık' yazmak sahibi yanıltırdı: /ayarlar ve /tahmini bunu söyler."""
+    assert ss.estimated_sendable() is False  # bugünkü kapı; açıldığında bu test bilerek güncellenir
+    st = Store()
+    assert "KAPALI" in ss.describe(st) and "etkisi yok" in ss.describe(st)
+    reply = ss.set_estimated(st, "ac")
+    assert reply.startswith("🟠 tahmini fırsat bildirimleri açık") and ss.ESTIMATED_CLOSED_NOTE in reply
+    assert st.d["cfg:estimated_alerts"] == "1"  # ayar yine kaydedilir

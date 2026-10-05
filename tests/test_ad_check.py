@@ -134,9 +134,10 @@ def test_owner_price_book_commands_are_routed(monkeypatch):
     bot_poll._handle_message(repo, "tok", "1", _msg(1, "/fiyat Corolla 2014"))
     bot_poll._handle_message(repo, "tok", "1", _msg(1, "/satti corolla 2014 120000km 7200"))
     bot_poll._handle_message(repo, "tok", "1", _msg(1, "/tahmini kapat"))
-    bot_poll._handle_message(repo, "tok", "1", _msg(2, "/fiyat corolla 2014"))  # arkadaş: komut çalışmaz
-    assert sent == ["fiyat: corolla 2014", "satti: corolla 2014 120000km 7200", "tahmini: kapat"]
-    assert "/fiyat" in bot_poll.WELCOME_OWNER and "/satti" in bot_poll.WELCOME_OWNER and "/tahmini" in bot_poll.WELCOME_OWNER
+    bot_poll._handle_message(repo, "tok", "1", _msg(2, "/fiyat corolla 2014"))  # arkadaş: komut çalışmaz, ama sessiz de kalınmaz
+    assert sent == ["fiyat: corolla 2014", "satti: corolla 2014 120000km 7200", "tahmini: kapat", bot_poll.OWNER_ONLY_REPLY]
+    assert "/yardim" in bot_poll.WELCOME_OWNER
+    assert all(c in bot_poll.HELP_OWNER for c in ("/fiyat", "/satti", "/tahmini", "/son", "/durum"))
 
 
 def pool_far_km():
