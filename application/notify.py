@@ -172,9 +172,9 @@ def _burst_summary(repo: Repository, token: str, fresh: list[Evaluated], subs: l
         except TelegramError as e:
             print(f"özet gönderilemedi ({mask_chat(sub['chat_id'])}): {e.status} {e.description}")
             continue
-        for ev in todo:
-            repo.save_alert(ev.listing["id"], sub["chat_id"], Tier.ESTIMATED.value, res["message_id"],
-                            evaluation_id=ev.listing.get("evaluation_id"), price_gbp=float(ev.listing["price_gbp"]))
+        for ev in todo:  # özet GİTTİ: kayıt tek tek ilanlarla aynı yoldan (yazılamazsa yedek iz; özet her turda yeniden gitmesin)
+            _record_alert(repo, ev.listing["id"], sub["chat_id"], Tier.ESTIMATED.value, res["message_id"],
+                          evaluation_id=ev.listing.get("evaluation_id"), price_gbp=float(ev.listing["price_gbp"]))
         done += 1
     print(f"🟠 arıza freni: {len(fresh)} tahmini fırsat tek özet olarak gönderildi")
     notify_owner(repo, "est_burst", f"⚠️ 🟠 arıza freni: bu turda {len(fresh)} tahmini fırsat çıktı (sınır {limit}). "
