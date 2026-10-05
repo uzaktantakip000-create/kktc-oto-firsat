@@ -10,6 +10,11 @@ from infrastructure.config import redact
 from infrastructure.db.repository import Repository
 
 FEEDBACK_ACTIONS = ("ilgilendim", "pas", "yanlis_fiyat", "satilmis", "kusurlu", "audit_dogru", "audit_yanlis")
+SAVED_ACTION = "kayitli"  # oydan sonra oy düğmelerinin yerine konan "✅ Kaydedildi" düğmesi (fb:kayitli:<ilan>); FEEDBACK_ACTIONS'ta DEĞİL: basınca kayıt yok
+SAVED_ANSWER = "Zaten kaydedildi"
+# "✅ Kaydedildi: ..." düğmesindeki oy adı: mesajlardaki düğme yazılarından (notify.keyboard, eski mesajlardaki düğmeler, aylık denetim)
+VOTE_NAMES = {"ilgilendim": "👍 İşe yarar", "yanlis_fiyat": "👎 Yanlış", "pas": "Pas", "satilmis": "Zaten satılmış", "kusurlu": "Kusurlu/sahte",
+              "audit_dogru": "Doğru", "audit_yanlis": "Yanlış"}
 WELCOME_OWNER = ("Merhaba! Fırsat bildirimleri bu sohbete gelecek. /dur ile durdurabilir, /basla ile açabilirsin.\n"
                  "Tüm komutlar ve örnekler için /yardim. Sol alttaki menü düğmesinden de seçebilirsin.\n"
                  "Bir ilanı (yazı ya da ekran görüntüsü) bana gönderirsen piyasayla karşılaştırıp cevap veririm; cevap en geç ~15 dk içinde gelir.")
@@ -90,6 +95,48 @@ def _answer(token: str, callback_id: str, text: str | None = None) -> None:
         api(token, "answerCallbackQuery", callback_query_id=callback_id, **({"text": text} if text else {}))
     except TelegramError:
         pass
+
+
+def _saved_markup(markup: dict, listing_id: str, action: str) -> dict | None:
+    """Oy verilen mesajın yeni düğme dizisi: yalnız BU ilanın oy düğmeleri (fb:<eylem>:<ilan>) tek "✅ Kaydedildi: <oy>" düğmesine dönüşür
+    (eski mesajlardaki iki satırlı 5 düğme de TEK düğme olur); URL düğmeleri (📲 WhatsApp) ve başka ilanların düğmeleri aynen kalır. Haftalık
+    rapor tek mesajda birçok ilanın düğmesini taşır ve bir satıra 2 ilan sığdırır ("1 👍 1 👎 2 👍 2 👎"): değişim satır değil DÜĞME düzeyindedir,
+    yoksa yanındaki ilanın düğmeleri de silinirdi. Numaralı rapor düğmesinde numara korunur ("2 ✅ 👎"): uzun yazı 3-4 düğmelik satıra
+    sığmaz, numara da hangi ilan olduğunu söyler. Değişecek düğme yoksa (zaten değişmiş) None."""
+    mine = {f"fb:{a}:{listing_id}" for a in FEEDBACK_ACTIONS}
+    rows, placed = [], False
+    for row in markup.get("inline_keyboard") or []:
+        out = []
+        for b in row:
+            if b.get("callback_data") not in mine:
+                out.append(b)
+            elif not placed:  # ilanın ilk oy düğmesinin yerine tek "kaydedildi" düğmesi; ilanın öteki oy düğmeleri düşer
+                name = VOTE_NAMES.get(action, action)
+                number = re.match(r"\d+", b.get("text") or "")
+                out.append({"text": f"{number.group()} ✅ {name.split()[0]}" if number else f"✅ Kaydedildi: {name}",
+                            "callback_data": f"fb:{SAVED_ACTION}:{listing_id}"})
+                placed = True
+        if out:
+            rows.append(out)
+    return {"inline_keyboard": rows} if placed else None
+
+
+def _mark_saved(token: str, cb: dict, listing_id: str, action: str) -> None:
+    """Oyu veren kişinin KENDİ mesajındaki düğmeleri "kaydedildi"ye çevirir (editMessageReplyMarkup; yalnız basılan `cb["message"]`: her
+    kişinin mesajı ayrıdır, diğerininkine dokunulmaz). Oy bu noktada zaten kayıtlıdır: düğme görünümü süstür, hatası oyu ve cevabı bozmaz
+    (eski/silinmiş mesaj, "message is not modified"...); tek kısa satır loglanır, sohbet kimliği yazılmaz."""
+    msg = cb.get("message") or {}
+    markup, chat, message_id = msg.get("reply_markup"), (msg.get("chat") or {}).get("id"), msg.get("message_id")
+    if not markup or chat is None or message_id is None:
+        return
+    try:
+        new = _saved_markup(markup, listing_id, action)
+        if new is not None:
+            api(token, "editMessageReplyMarkup", chat_id=chat, message_id=message_id, reply_markup=new)
+    except TelegramError as e:
+        print(f"oy düğmesi güncellenemedi: {e.status} {(e.description or '')[:60]}")
+    except Exception as e:  # beklenmedik biçimli düğme dizisi de oyu "işlem yapılamadı"ya çevirmesin
+        print("oy düğmesi güncellenemedi:", type(e).__name__)
 
 
 def _upsert_owner(repo: Repository, owner_chat_id: str) -> None:
@@ -278,6 +325,9 @@ def _handle_callback(repo: Repository, token: str, owner: str, cb: dict) -> None
             elif action == "pas":
                 _maybe_ask_mute(repo, token, owner, target)
         _answer(token, cb["id"], answer)
+        _mark_saved(token, cb, target, action)  # oy kayıtlı: BASILAN mesajın düğmesi "✅ Kaydedildi" olur (öteki kişinin mesajına dokunulmaz)
+    elif kind == "fb" and action == SAVED_ACTION:  # "✅ Kaydedildi" düğmesine tekrar basış: hiçbir şey kaydedilmez
+        _answer(token, cb["id"], SAVED_ANSWER)
     else:
         _answer(token, cb["id"])
 

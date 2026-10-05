@@ -714,6 +714,37 @@ def test_learning_gate_counts_owner_votes_only(db):
     assert db.feedback_votes() == 2
 
 
+def test_button_press_flow_keeps_the_subscribers_vote_separate_and_edits_only_the_pressed_message(db, monkeypatch):
+    """Düğme basışı uçtan uca (gerçek veritabanı, `bot_poll._handle_callback`): her kişinin mesajı ayrıdır. Abonenin basışı yalnız KENDİ mesajını
+    düzenler, oyu 'chat:<abone>' notuyla kaydolur ve sahibin sayımlarını (öğrenme kapısı, emsal havuzu) etkilemez; sahibin basışı yalnız
+    sahibin mesajını düzenler ve sayımlara girer. Oy saklama ve sayım yolu bu özellikten ÖNCEKİYLE aynıdır."""
+    from application import bot_poll, notify
+    c, sid = db.conn, add_source(db.conn)
+    owner, sub = "1001", "2002"
+    c.execute("INSERT INTO subscribers (chat_id, name, status, is_owner) VALUES (%s,'sahip','onayli',TRUE), (%s,'abone','onayli',FALSE)", (owner, sub))
+    lid = add_listing(c, sid, "a")
+    calls = []
+    monkeypatch.setattr(bot_poll, "api", lambda token, method, **kw: calls.append((method, kw)) or {})
+    wa = "https://wa.me/905330000021?text=Merhaba"
+
+    def press(sender, message_id, action):
+        message = {"message_id": message_id, "chat": {"id": int(sender)}, "reply_markup": notify.keyboard(lid, wa)}  # her sohbette kendi mesajı
+        bot_poll._handle_callback(db, "t", owner, {"id": "1", "from": {"id": int(sender)}, "data": f"fb:{action}:{lid}", "message": message})
+        return [(e["chat_id"], e["message_id"]) for m, e in calls if m == "editMessageReplyMarkup"]
+
+    def votes():
+        return sorted((r["action"], r["note"]) for r in c.execute("SELECT action, note FROM feedback").fetchall())
+
+    assert press(sub, 22, "yanlis_fiyat") == [(2002, 22)]  # yalnız abonenin mesajı düzenlendi
+    assert votes() == [("yanlis_fiyat", "chat:2002")]
+    assert db.feedback_votes() == 0  # abonenin oyu öğrenme kapısını açmaya saymaz
+    assert {str(r["id"]) for r in db.market_pool(days=120)} == {str(lid)}  # abonenin "yanlış"ı ilanı emsalden düşürmez
+    assert press(owner, 11, "yanlis_fiyat") == [(2002, 22), (1001, 11)]  # sahibin basışı yalnız sahibin mesajını düzenledi (abonenin ikinci kez DEĞİL)
+    assert votes() == [("yanlis_fiyat", "chat:1001"), ("yanlis_fiyat", "chat:2002")]
+    assert db.feedback_votes() == 1  # yalnız sahibin oyu sayılır
+    assert db.market_pool(days=120) == []  # sahibin "yanlış"ı eskisi gibi ilanı emsalden düşürür
+
+
 def test_pas_count_counts_owner_passes_only(db):
     c, sid = db.conn, add_source(db.conn)
     add_people(c)
