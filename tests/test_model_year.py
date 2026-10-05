@@ -28,6 +28,18 @@ def test_freetext_parser_ceiling_follows_the_date():
     assert diagnose("Toyota Corolla 2028 5000£", today=D2027) == "ok"
 
 
+def test_freetext_parser_reads_2030s_years_while_the_ceiling_still_rejects_future_ones():
+    """Yıl kalıbı eskiden 2029'da bitiyordu (20[0-2]x): 2030'da 2031 modeli hiç okunamazdı. Kalıp 2039'a kadar; tavan (bu yıl + 1) aynen."""
+    d2030 = date(2030, 10, 5)
+    assert parse_freetext("2031 Toyota Corolla 5.000 STG", today=d2030).year == 2031  # tavan dahil
+    assert parse_freetext("2030 Toyota Corolla 5.000 STG", today=d2030).year == 2030
+    assert parse_freetext("2032 Toyota Corolla 5.000 STG", today=d2030) is None  # tavanın üstü
+    assert diagnose("Toyota Corolla 2031 5000£", today=d2030) == "ok"
+    assert parse_freetext("2031 Toyota Corolla 5.000 STG", today=D2026) is None  # 2026'da eskisi gibi reddedilir
+    assert diagnose("Toyota Corolla 2031 5000£", today=D2026) == "yil_yok"
+    assert parse_freetext("2031 Toyota Corolla 2015 5.000 STG", today=D2026).year == 2015  # geleceğe dönük sayı atlanır, gerçek yıl okunur
+
+
 def test_llm_read_year_ceiling_follows_the_date():
     text = "2028 Honda Fit 1.3 otomatik 53.000 km 7.500£"
     data = {"arac_ilani_mi": True, "yil": 2028, "yil_alinti": "2028 Honda Fit"}
