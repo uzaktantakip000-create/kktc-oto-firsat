@@ -45,6 +45,8 @@ Kurulumun yaptıkları:
 - Kodu `/opt/kktc-social/app` klasörüne indirir. Yalnız `live` dalı alınır, yani testten geçmiş sürüm.
   - Deneme sırasında, okuyucu henüz `live`'a girmediyse başka bir dal alınabilir. Bunun için klonda ve kurulumda o dalın adını ver: `git clone --branch <DAL> ...` ve `sudo KKTC_BRANCH=<DAL> bash .../setup.sh`.
   - `sudo kktc-deploy` sonra hep klonun dalını izler. `live`'a geçmek için bir kez `sudo KKTC_BRANCH=live kktc-deploy` yaz.
+  - Deneme kodu GitHub'a hiç gönderilmeden de kurulabilir. Kod bu bilgisayardan sunucudaki çıplak repoya (`/opt/kktc-social/src.git`) gönderilir. Kurulum o klasörle yapılır: `sudo KKTC_BRANCH=deneme bash .../setup.sh /opt/kktc-social/src.git`.
+  - Sonra GitHub'daki `live`'a geçmek için iki komut gerekir: `sudo git -C /opt/kktc-social/app remote set-url origin https://github.com/<KULLANICI>/<REPO>.git` ve `sudo KKTC_BRANCH=live kktc-deploy`.
 - Python ortamını, Chromium tarayıcısını ve zamanlayıcı dosyalarını kurar.
 
 **Hiçbir şeyi çalıştırmaya başlamaz.** 10–15 dakika sürebilir ve sonunda `KURULUM TAMAM` yazar. Bu adımdan sonra `~/kktc-kurulum` klasörünü silebilirsin.

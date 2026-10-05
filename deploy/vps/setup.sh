@@ -55,7 +55,8 @@ resolve_repo_url() {
   case "$url" in
     https://*@*) die "repo adresinde kullanıcı/şifre olmamalı (herkese açık https adresi kullan)" ;;
     https://*) ;;
-    *) die "repo adresi https:// ile başlamalı (herkese açık GitHub adresi); bulunan: $url" ;;
+    /*.git) [ -d "$url" ] || die "yerel repo bulunamadı: $url" ;;  # deneme: bu sunucudaki çıplak (bare) repo (README "Deneme dalı")
+    *) die "repo adresi https:// ile başlamalı (herkese açık GitHub adresi) ya da sunucudaki /...git klasörü olmalı; bulunan: $url" ;;
   esac
   printf '%s' "$url"
 }
