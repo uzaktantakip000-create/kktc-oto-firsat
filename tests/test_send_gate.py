@@ -59,18 +59,26 @@ class World:
             raise self.boom[point]
 
 
+SPEND = "llm_spend:<gün>"
+
+
+def shown(key):
+    """Günlük yapay zekâ harcama anahtarı (`llm_spend:<tarih>`) izde tarihsiz görünür: iz gece yarısına bağlı olmasın."""
+    return SPEND if key.startswith("llm_spend:") else key
+
+
 class FakeRepo:
     def __init__(self, w):
         self.w, self.state = w, {}
 
     def get_state(self, key, default=None):
         if key not in TIME_KEYS:
-            self.w.log("repo.get_state", key)
+            self.w.log("repo.get_state", shown(key))
         return self.state.get(key, default)
 
     def set_state(self, key, value):
         if key not in TIME_KEYS:
-            self.w.log("repo.set_state", key, value)
+            self.w.log("repo.set_state", shown(key), value)
         self.state[key] = value
 
     def apply_refresh(self, listing_id, old, data):
@@ -161,8 +169,8 @@ def wire(monkeypatch, w, *, llm_configured=True, orange_floor_open=False):
         return FakeReader(w) if llm_configured else real_from_env(repo)
 
     monkeypatch.setattr(llm_reader, "from_env", from_env)
-    monkeypatch.setattr(cron_evaluate, "check_deal",
-                        lambda key, model, text, summary: w.log("check_deal", text, summary) or {"gercek_firsat_mi": True})
+    monkeypatch.setattr(cron_evaluate, "check_deal",  # (veri, hata, maliyet $): okuyucuyla aynı biçim
+                        lambda key, model, text, summary: w.log("check_deal", text, summary) or ({"gercek_firsat_mi": True}, None, 0.0005))
 
     def send_alerts(repo, token, evs, notes=None, tier=Tier.STRONG, s=None):
         w.log("send_alerts", tier.value, [(e.listing["id"], tuple(e.warnings), tuple(e.checks)) for e in evs],
@@ -202,8 +210,7 @@ def golden_world():
 OLD = {"price_amount": 5000.0, "currency": "GBP", "price_gbp": 5000.0}
 READ = {"price_amount": 5000, "currency": "GBP", "price_gbp": 5000.0}
 
-GOLDEN_GREEN_TRACE = [
-    ("pending_alerts", "guclu", True),
+GOLDEN_GATE_TRACE = [
     # canlılık: yalnız taze VE emsali yeten KKTCar ilanları (g2 bayat, g3 az emsal: sayfası hiç açılmadı)
     ("site.new_client",),
     ("site.get", kk("g1")), ("repo.apply_refresh", "g1", OLD, READ), ("site.sleep",),
@@ -216,11 +223,24 @@ GOLDEN_GREEN_TRACE = [
     ("repo.set_state", "verify:g6", "bad"),
     ("repo.get_state", "verify:g7"), ("llm.read", "ilan g7"), ("repo.set_state", "verify:g7", "ok"),
     ("repo.get_state", "verify:g8"), ("llm.read", "ilan g8"),
-    ("check_deal", "ilan g1", "Emsal: 9 ilan, medyan £8000, aralık £7000–£9000"),
-    ("check_deal", "ilan g7", "Emsal: 11 ilan, medyan £8000, aralık £7000–£9000"),
-    ("check_deal", "ilan g8", "Emsal: 9 ilan, medyan £8000, aralık £7000–£9000"),
-    ("send_alerts", "guclu", [("g1", (), ()), ("g7", (), (llm_reader.OK_CHECK,)), ("g8", (llm_reader.UNCHECKED,), ())],
-     ["g1", "g7", "g8"], False),
+]
+
+
+def note_trace(i, n, spent_after):
+    """Fırsat notu (05.10.2026'dan beri: okuyucuyla aynı günlük bütçe + (ilan, fiyat) önbelleği): önbellek bakılır, bütçe okunur, sorulur,
+    harcama ve sonuç yazılır."""
+    return [("repo.get_state", f"deal_note:{i}:t5000.0"), ("repo.get_state", SPEND),
+            ("check_deal", f"ilan {i}", f"Emsal: {n} ilan, medyan £8000, aralık £7000–£9000"),
+            ("repo.set_state", SPEND, spent_after), ("repo.set_state", f"deal_note:{i}:t5000.0", '{"gercek_firsat_mi": true}')]
+
+
+GOLDEN_SEND = ("send_alerts", "guclu", [("g1", (), ()), ("g7", (), (llm_reader.OK_CHECK,)), ("g8", (llm_reader.UNCHECKED,), ())],
+               ["g1", "g7", "g8"], False)
+GOLDEN_GREEN_TRACE = [
+    ("pending_alerts", "guclu", True),
+    *GOLDEN_GATE_TRACE,
+    *note_trace("g1", 9, "0.00050"), *note_trace("g7", 11, "0.00100"), *note_trace("g8", 9, "0.00150"),
+    GOLDEN_SEND,
 ]
 
 
@@ -238,6 +258,45 @@ def test_golden_trace_green_and_orange(monkeypatch, capsys):
         "emsal kapısı (🟠): 1 ilan gönderilmedi (emsal < 8)",
         "değerlendirilen=0 güçlü=3 bildirilen=3 tahmini_bildirilen=0",
     ]
+
+
+def test_deal_note_budget_exhausted_asks_nothing_and_alerts_still_go_without_note(monkeypatch, capsys):
+    """Günlük yapay zekâ bütçesi (okuyucuyla ortak) dolu: fırsat notu hiç sorulmaz, harcama/önbellek yazılmaz (bütçe yenilenince
+    sorulabilsin), 🟢'lerin üçü de notsuz AYNEN gider."""
+    monkeypatch.setattr(llm_reader, "DAILY_BUDGET_USD", 0.0)  # hangi gün olursa olsun bütçe dolu
+    w = golden_world()
+    cron_evaluate.run(wire(monkeypatch, w))
+    green = [("pending_alerts", "guclu", True), *GOLDEN_GATE_TRACE,
+             ("repo.get_state", "deal_note:g1:t5000.0"), ("repo.get_state", SPEND),
+             ("repo.get_state", "deal_note:g7:t5000.0"), ("repo.get_state", SPEND),
+             ("repo.get_state", "deal_note:g8:t5000.0"), ("repo.get_state", SPEND),
+             GOLDEN_SEND[:3] + ([], False)]  # aynı üç 🟢, not yok
+    assert w.trace[:len(green)] == green and not any(e[0] == "check_deal" for e in w.trace)
+    assert out_lines(capsys) == [
+        "emsal kapısı (🟢): 2 ilan gönderilmedi (emsal < 8)",
+        "fırsat notu alınmadı: günlük yapay zekâ bütçesi doldu (bildirim notsuz gider)",  # bir kez, ilan başına değil
+        "emsal kapısı (🟠): 1 ilan gönderilmedi (emsal < 8)",
+        "değerlendirilen=0 güçlü=3 bildirilen=3 tahmini_bildirilen=0",
+    ]
+
+
+def test_deal_note_is_asked_once_per_listing_and_price_across_ticks(monkeypatch):
+    """Gönderilemeyen 🟢 (örn. bir aboneye gidemedi) 36 saat bekleyebilir: not her 15 dakikalık turda yeniden SORULMAZ, önbellekten gelir;
+    fiyat değişince yeniden sorulur."""
+    w = golden_world()
+    repo = wire(monkeypatch, w)
+    asked = lambda: [e[1] for e in w.trace if e[0] == "check_deal"]  # noqa: E731
+    cron_evaluate.run(repo)
+    assert asked() == ["ilan g1", "ilan g7", "ilan g8"]
+    w.trace.clear()
+    cron_evaluate.run(repo)  # sonraki tur, aynı ilanlar aynı fiyatla
+    assert asked() == [] and next(e for e in w.trace if e[0] == "send_alerts")[3] == ["g1", "g7", "g8"]  # not önbellekten: mesaj yine taşır
+    assert not any(e[:2] == ("repo.set_state", SPEND) for e in w.trace)  # ücret yok
+    w.cands[Tier.STRONG][0].listing["price_gbp"] = 4800.0  # g1'in fiyatı değişti
+    w.trace.clear()
+    cron_evaluate.run(repo)
+    assert asked() == ["ilan g1"]
+    assert sum(float(v) for k, v in repo.state.items() if k.startswith("llm_spend:")) == pytest.approx(4 * 0.0005)  # 4 soru, 4 ücret
 
 
 def test_llm_not_configured_passes_through_and_orange_path_after_the_floor(monkeypatch, capsys):
@@ -326,7 +385,7 @@ def test_gate_returns_sendable_and_reason_per_rejected_listing_in_check_order(mo
     assert ids(rejected) == [("g2", TAZE_DEGIL), ("g3", EMSAL_AZ), ("g9", EMSAL_AZ), ("g4", CANLI_DEGIL), ("g5", CANLI_DEGIL),
                              ("g6", LLM_REDDETTI)]
     assert (TAZE_DEGIL, EMSAL_AZ, CANLI_DEGIL, LLM_REDDETTI) == ("taze_degil", "emsal_az", "canli_degil", "llm_reddetti")
-    assert w.trace == GOLDEN_GREEN_TRACE[1:-4]  # yan etkiler: run() izinin kapıya düşen kısmı (aday okuma, not ve gönderim hariç)
+    assert w.trace == GOLDEN_GATE_TRACE  # yan etkiler: run() izinin kapıya düşen kısmı (aday okuma, not ve gönderim hariç)
     assert out_lines(capsys) == ["emsal kapısı (🟢): 2 ilan gönderilmedi (emsal < 8)"]
     # bugünkü kural: taze 🟠'nin hepsi emsal kapısında kalır
     w.trace.clear()

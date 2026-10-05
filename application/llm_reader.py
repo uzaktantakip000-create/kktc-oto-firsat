@@ -1,7 +1,9 @@
 """Yapay zekâ okuyucu (GLM, OpenRouter). İki iş yapar:
 1) Kural ayrıştırıcının okuyamadığı Instagram/Facebook gönderisini okur (sonuç en fazla 🟡, emsale girmez).
 2) Sosyal medyadan gelen 🟢 adayını göndermeden önce bağımsız okur; uyuşmazsa 🟡'ye düşürür.
-Yapay zekâ asla tek başına 🟢 üretmez; yalnızca düşürebilir. Hata/bütçe aşımında ilan "kontrol edilmedi" notuyla gider."""
+Yapay zekâ asla tek başına 🟢 üretmez; yalnızca düşürebilir. Hata/bütçe aşımında ilan "kontrol edilmedi" notuyla gider.
+Ayrıca 🟢 mesajının kısa "fırsat notu" (deal_notes, OPENROUTER_MODEL) aynı günlük bütçeden düşer."""
+import json
 import os
 from datetime import datetime, timezone
 
@@ -13,7 +15,7 @@ from infrastructure.db.repository import Repository
 from infrastructure.fx.frankfurter import gbp_rate
 from infrastructure.llm import openrouter
 
-DAILY_BUDGET_USD = 0.40  # günlük yapay zekâ okuma harcama tavanı (🟠 ikinci okuma + Facebook fotoğraf okuma dahil)
+DAILY_BUDGET_USD = 0.40  # günlük yapay zekâ harcama tavanı (🟠 ikinci okuma + Facebook fotoğraf okuma + 🟢 fırsat notu dahil)
 SOCIAL = ("instagram", "facebook")
 FREE_TEXT = ("parser_serbest", "llm")  # serbest metinden okunan ilan (site olsa bile) bağımsız okumadan geçer
 UNCHECKED = "yapay zekâ kontrolü yapılamadı (kontrol edilmedi)"
@@ -162,3 +164,56 @@ def verify_candidates(repo: Repository, reader: LlmReader | None, evs: list[Eval
             ev.warnings.append(KM_READ_WARNING)
         kept.append(ev)
     return kept
+
+
+def deal_note_key(ev: Evaluated) -> str:
+    """Fırsat notu önbelleği (bot_state). Fiyat da anahtarda: fiyat değişince not yeniden sorulur (🟠 doğrulama anahtarıyla aynı biçim)."""
+    return f"deal_note:{ev.listing['id']}:t{ev.listing.get('price_gbp')}"
+
+
+def _cached_note(raw: str) -> dict | None:
+    try:
+        note = json.loads(raw)
+    except ValueError:
+        return None
+    return note if isinstance(note, dict) else None
+
+
+def deal_notes(repo: Repository, evs: list[Evaluated], api_key: str, model: str, call=openrouter.check_deal, now=None) -> dict:
+    """🟢 mesajına eklenen kısa "fırsat notu" (OPENROUTER_MODEL; mesaja yalnız ⚠️ ekler, 🟢'yi düşürmez). Dönen: {ilan_id: not}.
+    - Okuyucuyla AYNI günlük bütçeden düşer (DAILY_BUDGET_USD, `llm_spend:<gün>`); bütçe doluysa soru sorulmaz.
+    - Her (ilan, fiyat) için en çok BİR kez sorulur: sonuç (not ya da hata/boş = 'null') bot_state'e yazılır. Gönderilemeyen 🟢 36 saat
+      bekleyebilir; eskiden her 15 dakikalık turda yeniden soruluyordu.
+    - Bütçe doluysa, çağrı ya da veritabanı hata verirse o ilanın notu yok: bildirim notsuz gider (gönderim bu nota bağlı DEĞİL; hata
+      yukarı fırlatılmaz)."""
+    notes: dict = {}
+    ledger = LlmReader(repo, api_key, model, now=now)  # yalnız harcama defteri: okuyucuyla aynı günlük anahtar
+    budget_logged = False
+    for ev in evs:
+        try:
+            l, m = ev.listing, ev.market
+            key = deal_note_key(ev)
+            cached = repo.get_state(key)
+            if cached is not None:  # bu ilan bu fiyatla daha önce soruldu: yeniden sorulmaz (ücret yok)
+                note = _cached_note(cached)
+                if note is not None:
+                    notes[l["id"]] = note
+                continue
+            spent = ledger.spent_today()
+            if spent >= DAILY_BUDGET_USD:
+                if not budget_logged:
+                    print("fırsat notu alınmadı: günlük yapay zekâ bütçesi doldu (bildirim notsuz gider)")
+                    budget_logged = True
+                continue
+            summary = f"Emsal: {m.n} ilan, medyan £{m.median_gbp:.0f}, aralık £{m.low_gbp:.0f}–£{m.high_gbp:.0f}"
+            data, err, cost = call(api_key, model, (l["raw_text"] or "")[:1500], summary)
+            note = data if isinstance(data, dict) else None
+            if note is not None:  # önce nota koy: aşağıdaki kayıt yazılamasa da bu turun mesajı notu taşısın
+                notes[l["id"]] = note
+            if err:
+                print("LLM notu alınamadı:", err)
+            repo.set_state(ledger._spend_key(), f"{spent + cost:.5f}")
+            repo.set_state(key, json.dumps(note, ensure_ascii=False))
+        except Exception as e:  # yapay zekâ ya da veritabanı hatası bildirimi engellemesin
+            print("LLM notu alınamadı:", type(e).__name__)
+    return notes

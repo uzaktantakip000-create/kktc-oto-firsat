@@ -13,6 +13,7 @@ from application.discovery import send_discovery
 from application.estimate_guard import guard_estimates
 from application.evaluate import evaluate_new, load_book, pending_alerts
 from application.health import check_fx, check_sources, notify_owner
+from application.llm_reader import deal_notes
 from application.notify import send_alerts
 from application.report import send_weekly_report
 from application.send_gate import gonderim_kontrol
@@ -173,14 +174,11 @@ def run(repo: Repository) -> None:
 
     notes = {}
     key, model = os.environ.get("OPENROUTER_API_KEY"), os.environ.get("OPENROUTER_MODEL")
-    if key and model:
-        for ev in strong:
-            l, m = ev.listing, ev.market
-            summary = f"Emsal: {m.n} ilan, medyan £{m.median_gbp:.0f}, aralık £{m.low_gbp:.0f}–£{m.high_gbp:.0f}"
-            try:
-                notes[l["id"]] = check_deal(key, model, (l["raw_text"] or "")[:1500], summary)
-            except Exception as e:  # LLM hatası bildirimi engellemesin
-                print("LLM notu alınamadı:", type(e).__name__)
+    if key and model:  # fırsat notu: okuyucuyla aynı günlük bütçe, (ilan, fiyat) başına tek soru (application/llm_reader.deal_notes)
+        try:
+            notes = deal_notes(repo, strong, key, model, call=check_deal)
+        except Exception as e:  # not alınamazsa bildirim notsuz gider: gönderim bu nota hiçbir durumda bağlı değil
+            print("LLM notu alınamadı:", type(e).__name__)
     sent = send_alerts(repo, token, strong, notes)
     est_sent = 0
     if settings.estimated_alerts and book is not None:  # 🟠 tahmini fırsat: ayrı gönderim (tablo yoksa hiç çıkmaz)

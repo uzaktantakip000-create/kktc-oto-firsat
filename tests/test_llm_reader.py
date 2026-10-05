@@ -1,11 +1,15 @@
 from datetime import datetime, timezone
 
+import httpx
 import pytest
 
 from application import collect_facebook as cf
 from application import llm_reader as lr
+from application import notify
 from application.evaluate import Evaluated
 from infrastructure.collectors.facebook_groups import RawGroupPost
+from infrastructure.llm import openrouter
+from tests.test_notify import FakeRepo as NotifyRepo, ev as notify_ev, patch_api
 
 TEXT = "2016 Honda Fit 1.3 otomatik\n53.000 km\nFiyat: 7.500£ nakit"
 GOOD = {"arac_ilani_mi": True, "marka": "Honda", "model": "Fit", "yil": 2016, "yil_alinti": "2016 Honda Fit",
@@ -163,3 +167,100 @@ def test_free_text_site_listing_is_verified_but_structured_site_is_not():
     assert len(lr.verify_candidates(repo, r, [structured])) == 1 and r.seen == []        # JSON-LD'li site: gerek yok
     free = ev("web", extraction_by="parser_serbest", price_amount=4500)                  # serbest metin: okutulur, fiyat uyuşmuyor
     assert lr.verify_candidates(repo, r, [free]) == [] and len(r.seen) == 1
+
+
+# --- 🟢 fırsat notu (deal_notes): okuyucuyla aynı günlük bütçe + (ilan, fiyat) başına tek soru ---
+DAY = datetime(2026, 10, 2, 9, tzinfo=timezone.utc)
+SPEND = "llm_spend:2026-10-02"
+SUSPICIOUS = {"gercek_firsat_mi": False, "risk_notlari": ["hasar kaydı olabilir"], "fiyat_yorumu": "ucuz", "sorulacak_sorular": []}
+
+
+def green(price=5000):
+    e = notify_ev(1)
+    e.listing.update(raw_text="2015 Toyota Vitz 5.000 STG", price_gbp=price)
+    return e
+
+
+def deal_call(note=SUSPICIOUS, err=None, cost=0.002):
+    def call(key, model, text, summary):
+        call.seen.append((text, summary))
+        if isinstance(note, Exception):
+            raise note
+        return note, err, cost
+    call.seen = []
+    return call
+
+
+def test_deal_note_cost_goes_to_the_shared_daily_budget_and_the_note_is_cached():
+    repo, call = FakeRepo(), deal_call()
+    assert lr.deal_notes(repo, [green()], "k", "m", call=call, now=DAY) == {1: SUSPICIOUS}
+    assert call.seen == [("2015 Toyota Vitz 5.000 STG", "Emsal: 5 ilan, medyan £8000, aralık £7000–£9000")]
+    assert repo.state[SPEND] == "0.00200" and reader(repo).spent_today() == 0.002  # okuyucu da aynı harcamayı görür
+    again = lr.deal_notes(repo, [green()], "k", "m", call=call, now=DAY)  # sonraki tur: aynı ilan, aynı fiyat
+    assert again == {1: SUSPICIOUS} and len(call.seen) == 1 and repo.state[SPEND] == "0.00200"  # önbellekten: soru ve ücret yok
+    assert "⚠️ Yapay zekâ şüpheli buldu: hasar kaydı olabilir" in notify.format_alert(green(), again[1])  # önbellekteki not mesaja aynen girer
+
+
+def test_deal_note_is_asked_again_when_the_price_changes():
+    repo, call = FakeRepo(), deal_call()
+    lr.deal_notes(repo, [green(5000)], "k", "m", call=call, now=DAY)
+    lr.deal_notes(repo, [green(4800)], "k", "m", call=call, now=DAY)
+    assert len(call.seen) == 2 and repo.state[SPEND] == "0.00400"
+    assert {k for k in repo.state if k.startswith("deal_note:")} == {"deal_note:1:t5000", "deal_note:1:t4800"}
+
+
+def test_deal_note_budget_exhausted_no_call_and_the_alert_still_goes(monkeypatch):
+    repo, call = FakeRepo(), deal_call()
+    repo.state[SPEND] = f"{lr.DAILY_BUDGET_USD:.5f}"  # bugünkü bütçe (okuyucuyla ortak) doldu
+    notes = lr.deal_notes(repo, [green()], "k", "m", call=call, now=DAY)
+    assert notes == {} and call.seen == [] and repo.state == {SPEND: "0.40000"}  # soru yok, önbelleğe 'soruldu' yazılmadı
+    sent = patch_api(monkeypatch, {})
+    assert notify.send_alerts(NotifyRepo(["a"]), "t", [green()], notes) == 1 and sent == ["a"]  # bildirim notsuz gider
+    tomorrow = datetime(2026, 10, 3, 9, tzinfo=timezone.utc)
+    assert lr.deal_notes(repo, [green()], "k", "m", call=call, now=tomorrow) == {1: SUSPICIOUS}  # ertesi gün yeni bütçe: sorulur
+
+
+def test_deal_note_failure_is_asked_once_and_never_raises():
+    repo, call = FakeRepo(), deal_call(note=None, err="http 500", cost=0.0)
+    assert lr.deal_notes(repo, [green()], "k", "m", call=call, now=DAY) == {}
+    assert repo.state["deal_note:1:t5000"] == "null"
+    assert lr.deal_notes(repo, [green()], "k", "m", call=call, now=DAY) == {} and len(call.seen) == 1  # hata da "soruldu" sayılır
+    boom = deal_call(note=RuntimeError("model yok"))
+    assert lr.deal_notes(FakeRepo(), [green()], "k", "m", call=boom, now=DAY) == {}  # çağrı patlarsa: not yok, hata fırlamaz
+
+    class DeadRepo(FakeRepo):
+        def get_state(self, k, default=None):
+            raise RuntimeError("veritabanı yok")
+
+    assert lr.deal_notes(DeadRepo(), [green()], "k", "m", call=call, now=DAY) == {}
+
+
+def test_check_deal_caps_tokens_masks_phone_and_returns_cost(monkeypatch):
+    """Fırsat notu çağrısı: max_tokens tavanı var, telefon maskelenir, (veri, hata, maliyet) döner (maliyet yanıtta yoksa okuyucuyla aynı
+    tahmini maliyet); ağ/HTTP hatası istisna değil kısa neden ve 0 ücrettir."""
+    body = {"choices": [{"message": {"content": 'Not: {"gercek_firsat_mi": true}'}}], "usage": {"cost": 0.0012}}
+    sent, reply = [], {"status": 200, "body": body}
+
+    class Resp:
+        def __init__(self):
+            self.status_code = reply["status"]
+
+        def json(self):
+            return reply["body"]
+
+    def post(url, headers=None, json=None, timeout=None):
+        sent.append(json)
+        if reply["status"] is None:
+            raise httpx.ConnectError("bağlanamadı")
+        return Resp()
+
+    monkeypatch.setattr(openrouter.httpx, "post", post)
+    assert openrouter.check_deal("k", "m", "Vitz, tel 0533 123 45 67", "Emsal: 9 ilan") == ({"gercek_firsat_mi": True}, None, 0.0012)
+    assert sent[0]["max_tokens"] == openrouter.CHECK_MAX_TOKENS == 1500
+    assert "0533" not in sent[0]["messages"][0]["content"] and "[tel]" in sent[0]["messages"][0]["content"]
+    reply["body"] = {"choices": [{"message": {"content": "JSON yok"}}]}
+    assert openrouter.check_deal("k", "m", "x", "y") == (None, "json yok", openrouter.CALL_COST_USD)
+    reply["status"] = 429
+    assert openrouter.check_deal("k", "m", "x", "y") == (None, "http 429", 0.0)
+    reply["status"] = None
+    assert openrouter.check_deal("k", "m", "x", "y") == (None, "ConnectError", 0.0)
