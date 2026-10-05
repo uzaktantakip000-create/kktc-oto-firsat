@@ -51,7 +51,7 @@ def load_book(repo) -> PriceBook | None:
     try:
         return PriceBookStore(repo.conn).load_book()
     except Exception as e:  # tablo hatası değerlendirmeyi engellemesin
-        print("değer tablosu yüklenemedi:", type(e).__name__, str(e)[:120])
+        print("değer tablosu yüklenemedi:", type(e).__name__, redact(str(e))[:120])
         return None
 
 

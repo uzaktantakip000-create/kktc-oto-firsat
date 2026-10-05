@@ -8,7 +8,7 @@ from application.evaluate import Evaluated, confidence_label
 from domain.profit import Tier
 from domain.red_flags import customs_stated
 from domain.settings import Settings
-from infrastructure.config import redact
+from infrastructure.config import mask_chat, redact
 from infrastructure.db.repository import Repository, unsaved_alert_key
 
 SOCIAL = ("instagram", "facebook")
@@ -170,7 +170,7 @@ def _burst_summary(repo: Repository, token: str, fresh: list[Evaluated], subs: l
         try:
             res = api(token, "sendMessage", chat_id=sub["chat_id"], text=text, disable_web_page_preview=True)
         except TelegramError as e:
-            print(f"özet gönderilemedi (chat {sub['chat_id']}): {e.status} {e.description}")
+            print(f"özet gönderilemedi ({mask_chat(sub['chat_id'])}): {e.status} {e.description}")
             continue
         for ev in todo:
             repo.save_alert(ev.listing["id"], sub["chat_id"], Tier.ESTIMATED.value, res["message_id"],
@@ -250,7 +250,7 @@ def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes:
                 if e.status == 403:  # kullanıcı botu engellemiş: bir daha denenmesin
                     repo.conn.execute("UPDATE subscribers SET status='durduruldu' WHERE chat_id=%s", (sub["chat_id"],))
                     subs = [x for x in subs if x["chat_id"] != sub["chat_id"]]
-                print(f"bildirim gönderilemedi (chat {sub['chat_id']}): {e.status} {e.description}")
+                print(f"bildirim gönderilemedi ({mask_chat(sub['chat_id'])}): {e.status} {e.description}")
                 continue
             _record_alert(repo, ev.listing["id"], sub["chat_id"], ev.profit.tier.value, res["message_id"],
                           evaluation_id=ev.listing.get("evaluation_id"), price_gbp=float(ev.listing["price_gbp"]))

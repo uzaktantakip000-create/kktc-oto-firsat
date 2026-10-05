@@ -87,7 +87,7 @@ def run_batch(batch: list[str], repo, now: datetime, started: float, errors: lis
         try:
             errors.extend(runner(job, repo))
         except Exception as e:  # bir kaynağın çökmesi diğerlerini ve değerlendirmeyi durdurmasın
-            msg = redact(f"{type(e).__name__}: {str(e)[:150]}")
+            msg = f"{type(e).__name__}: {redact(str(e))[:150]}"  # önce maskele, sonra kırp
             print(f"{job}: HATA {msg}", flush=True)
             errors.append((job, msg))
         repo.set_state(f"tick:{job}", now.isoformat())  # hata olsa da hemen tekrar denenmesin

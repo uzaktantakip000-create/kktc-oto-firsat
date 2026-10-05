@@ -6,6 +6,7 @@ import httpx
 from application import ad_check, discovery, history_cmd, llm_reader, price_book_cmd, settings_store, sources_cmd, status
 from application.learning import learning_open
 from application.notify import TelegramError, api
+from infrastructure.config import redact
 from infrastructure.db.repository import Repository
 
 FEEDBACK_ACTIONS = ("ilgilendim", "pas", "yanlis_fiyat", "satilmis", "kusurlu", "audit_dogru", "audit_yanlis")
@@ -308,7 +309,7 @@ def poll_bot(repo: Repository, token: str, owner_chat_id: str) -> int:
             elif "callback_query" in u:
                 _handle_callback(repo, token, owner_chat_id, u["callback_query"])
         except Exception as e:  # tek güncelleme hatası diğerlerini engellemesin
-            print("bot güncellemesi işlenemedi:", type(e).__name__, str(e)[:100])
+            print("bot güncellemesi işlenemedi:", type(e).__name__, redact(str(e))[:100])
             _tell_error(token, owner_chat_id, u)
         offset = u["update_id"] + 1
         repo.set_state("tg_offset", str(offset))  # her güncellemeden sonra: yarıda kesilen tur aynı komutu ikinci kez çalıştırmasın

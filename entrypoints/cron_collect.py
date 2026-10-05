@@ -47,7 +47,7 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
         except Exception as e:
             if _provider_limit(repo, "instagram", e):
                 return errors
-            msg = redact(f"{type(e).__name__}: {str(e)[:150]}")
+            msg = f"{type(e).__name__}: {redact(str(e))[:150]}"  # önce maskele, sonra kırp (kırpma sırrı ortadan bölüp maskeyi atlatmasın)
             print(f"Instagram (toplu): HATA {msg}")
             errors.append(("Instagram (toplu)", msg))
             track_collect(repo, "Instagram (toplu)", msg)
@@ -64,7 +64,7 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
         except Exception as e:
             if _provider_limit(repo, "facebook", e):
                 return errors
-            msg = redact(f"{type(e).__name__}: {str(e)[:150]}")
+            msg = f"{type(e).__name__}: {redact(str(e))[:150]}"  # önce maskele, sonra kırp (kırpma sırrı ortadan bölüp maskeyi atlatmasın)
             print(f"Facebook grupları: HATA {msg}")
             errors.append(("Facebook grupları", msg))
             track_collect(repo, "Facebook grupları", msg)
@@ -81,7 +81,7 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
                 print(f"{source['name']}: {fn(repo, source)}")
                 track_collect(repo, source["name"])
             except Exception as e:
-                msg = redact(f"{type(e).__name__}: {str(e)[:150]}")
+                msg = f"{type(e).__name__}: {redact(str(e))[:150]}"  # önce maskele, sonra kırp (kırpma sırrı ortadan bölüp maskeyi atlatmasın)
                 print(f"{source['name']}: HATA {msg}")
                 errors.append((source["name"], msg))
                 track_collect(repo, source["name"], msg)

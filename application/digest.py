@@ -7,6 +7,7 @@ from application.notify import TelegramError, api, is_fresh, posted_age_text
 from domain.data_gate import GAP_LABELS
 from domain.kktc_time import kktc_hour
 from domain.profit import Confidence
+from infrastructure.config import mask_chat
 from infrastructure.db.repository import Repository
 
 MAX_ITEMS = 8
@@ -69,7 +70,7 @@ def send_daily_digest(repo: Repository, token: str, now: datetime | None = None)
         try:
             res = api(token, "sendMessage", chat_id=sub["chat_id"], text=text, disable_web_page_preview=True)
         except TelegramError as e:
-            print(f"özet gönderilemedi (chat {sub['chat_id']}): {e.status}")
+            print(f"özet gönderilemedi ({mask_chat(sub['chat_id'])}): {e.status}")
             if e.status == 429:
                 break
             continue
