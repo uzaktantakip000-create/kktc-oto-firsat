@@ -1,7 +1,7 @@
 """İş 2: emsal < 8 ise 🟢/🟠 gitmez; 🟡 özet ve 🆕 etiketi kapalı."""
 import pytest
 
-from application import digest
+from application import digest, send_gate
 from application.evaluate import Evaluated, apply_send_floor
 from domain.alert_policy import MIN_COMPARABLES_TO_SEND, send_floor_ok
 from domain.comparables import Market
@@ -79,10 +79,10 @@ def test_cron_evaluate_sends_only_what_passes_the_floor(monkeypatch):
     monkeypatch.setattr(cron_evaluate, "load_book", lambda repo: object())
     monkeypatch.setattr(cron_evaluate, "evaluate_new", lambda *a, **k: [])
     monkeypatch.setattr(cron_evaluate, "pending_alerts", lambda repo, tier=Tier.STRONG, book=None: [orange] if tier is Tier.ESTIMATED else [low, ok])
-    monkeypatch.setattr(cron_evaluate, "is_fresh", lambda *a, **k: True)
-    monkeypatch.setattr(cron_evaluate, "recheck_before_send", lambda repo, evs: evs)
-    monkeypatch.setattr(cron_evaluate.llm_reader, "from_env", lambda repo: None)
-    monkeypatch.setattr(cron_evaluate.llm_reader, "verify_candidates", lambda repo, reader, evs: evs)
+    monkeypatch.setattr(send_gate, "is_fresh", lambda *a, **k: True)
+    monkeypatch.setattr(send_gate, "recheck_before_send", lambda repo, evs: evs)
+    monkeypatch.setattr(send_gate.llm_reader, "from_env", lambda repo: None)
+    monkeypatch.setattr(send_gate.llm_reader, "verify_candidates", lambda repo, reader, evs: evs)
     seen = []
     monkeypatch.setattr(cron_evaluate, "send_alerts", lambda repo, token, evs, *a, **k: seen.append([e.listing["id"] for e in evs]) or len(evs))
 

@@ -11,12 +11,11 @@ from application.dedupe import mark_duplicates
 from application.digest import send_daily_digest
 from application.discovery import send_discovery
 from application.estimate_guard import guard_estimates
-from application.evaluate import apply_send_floor, evaluate_new, load_book, pending_alerts
+from application.evaluate import evaluate_new, load_book, pending_alerts
 from application.health import check_fx, check_sources, notify_owner
-from application import llm_reader
-from application.liveness import recheck_before_send
-from application.notify import is_fresh, send_alerts
+from application.notify import send_alerts
 from application.report import send_weekly_report
+from application.send_gate import gonderim_kontrol
 from application.settings_store import load_settings
 from application.source_alarm import check_source_alarms
 from application.source_guard import demote_failing_sources
@@ -161,13 +160,9 @@ def run(repo: Repository) -> None:
         print("değerlendirme turu başarısız:", type(e).__name__, redact(str(e))[:150])
     if failures:
         report_eval_failures(repo, failures)
-    # Yeni 🟢'ler + önceki turlarda gönderilemeyenler (hata, hız sınırı, sonradan onaylanan abone)
-    strong = [ev for ev in pending_alerts(repo, book=book)
-              if is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
-                      platform=ev.listing.get("platform"))]
-    strong = apply_send_floor(strong, "🟢")  # emsal < 8 ise gitmez (okuma/canlılık maliyeti de harcanmaz)
-    strong = recheck_before_send(repo, strong)  # satılmış/fiyatı değişmiş ilan gönderilmez
-    strong = llm_reader.verify_candidates(repo, llm_reader.from_env(repo), strong)  # sosyal medya 🟢'sini bağımsız okut; uyuşmazsa 🟡
+    # Yeni 🟢'ler + önceki turlarda gönderilemeyenler (hata, hız sınırı, sonradan onaylanan abone). Gönderim kontrolü (send_gate):
+    # tazelik → emsal ≥ 8 → sitede canlı mı → yapay zekâ okuması. 🟢 yolu try DIŞINDA (eskisi gibi): hata turu durdurur
+    strong, _ = gonderim_kontrol(repo, pending_alerts(repo, book=book), "🟢")
 
     notes = {}
     key, model = os.environ.get("OPENROUTER_API_KEY"), os.environ.get("OPENROUTER_MODEL")
@@ -183,12 +178,8 @@ def run(repo: Repository) -> None:
     est_sent = 0
     if settings.estimated_alerts and book is not None:  # 🟠 tahmini fırsat: ayrı gönderim (tablo yoksa hiç çıkmaz)
         try:
-            est = [ev for ev in pending_alerts(repo, tier=Tier.ESTIMATED, book=book)
-                   if is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
-                               platform=ev.listing.get("platform"))]
-            est = apply_send_floor(est, "🟠")  # 🟠 doğrudan emsal < 8 iken doğar: dürüst 🟠 KONTROL ET gelene kadar gönderilmez
-            est = recheck_before_send(repo, est)
-            est = llm_reader.verify_candidates(repo, llm_reader.from_env(repo), est)  # her kaynakta ikinci okuma + gizli sorun kontrolü
+            # aynı gönderim kontrolü; 🟠 doğrudan emsal < 8 iken doğar: dürüst 🟠 KONTROL ET gelene kadar emsal kapısında kalır
+            est, _ = gonderim_kontrol(repo, pending_alerts(repo, tier=Tier.ESTIMATED, book=book), "🟠")
             est_sent = send_alerts(repo, token, est, tier=Tier.ESTIMATED, s=settings)
         except Exception as e:  # 🟠 hatası özet/rapor gibi yan işleri engellemesin
             print("tahmini fırsat gönderimi başarısız:", type(e).__name__, redact(str(e))[:150])

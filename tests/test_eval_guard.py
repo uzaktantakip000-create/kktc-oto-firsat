@@ -3,6 +3,7 @@ tek tek ilan hataları sahibe (en çok günde 1) haber verilir; veritabanı yoks
 import psycopg
 import pytest
 
+from application import send_gate
 from application.evaluate import EvaluationFailure
 from domain.profit import Tier
 from entrypoints import cron_evaluate
@@ -42,9 +43,9 @@ def wire(monkeypatch, evaluate_new):
     monkeypatch.setattr(cron_evaluate, "load_book", lambda repo: object())
     monkeypatch.setattr(cron_evaluate, "evaluate_new", evaluate_new)
     monkeypatch.setattr(cron_evaluate, "pending_alerts", lambda repo, tier=Tier.STRONG, book=None: [])
-    monkeypatch.setattr(cron_evaluate, "recheck_before_send", lambda repo, evs: evs)
-    monkeypatch.setattr(cron_evaluate.llm_reader, "from_env", lambda repo: None)
-    monkeypatch.setattr(cron_evaluate.llm_reader, "verify_candidates", lambda repo, reader, evs: evs)
+    monkeypatch.setattr(send_gate, "recheck_before_send", lambda repo, evs: evs)
+    monkeypatch.setattr(send_gate.llm_reader, "from_env", lambda repo: None)
+    monkeypatch.setattr(send_gate.llm_reader, "verify_candidates", lambda repo, reader, evs: evs)
     monkeypatch.setattr(cron_evaluate, "send_alerts", lambda *a, **k: 0)
     monkeypatch.setattr("application.price_book_job.run_price_book", nop)
     side = []
