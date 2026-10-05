@@ -606,6 +606,78 @@ class Repository:
                WHERE action NOT LIKE 'audit_%%' AND created_at > NOW() - make_interval(days => %s) GROUP BY action""", (days,)).fetchall()
         return {r["action"]: r["n"] for r in rows}
 
+    # --- haftalık rapor (application/report.py): yalnız okur ---
+    def alerted_votes(self, days: int = 30) -> list[dict]:
+        """Son 'days' günde 🟢/🟠 bildirimi giden ilanlar (ilan başına tek satır, en yeni önce) ve oylanıp oylanmadığı: denetim dışındaki
+        her düğme cevabı (👍/👎, eski mesajlardaki pas/satılmış/kusurlu) oy sayılır."""
+        return self.conn.execute(
+            """SELECT l.id, l.url, l.year, l.brand, l.model, l.price_gbp::float8 AS price_gbp, l.is_active, x.tier, x.sent_at,
+                      EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = l.id AND f.action NOT LIKE 'audit_%%') AS voted
+               FROM (SELECT listing_id, MIN(tier) AS tier, MIN(sent_at) AS sent_at FROM alerts  -- MIN(tier): ikisi birden varsa guclu
+                     WHERE tier = ANY(%s) AND sent_at > NOW() - make_interval(days => %s) GROUP BY listing_id) x
+               JOIN listings l ON l.id = x.listing_id
+               ORDER BY x.sent_at DESC""",
+            (SENT_ONCE_TIERS, days)).fetchall()
+
+    def unnotified_strong(self, rules_version: str, days: int = 14, limit: int = 50) -> list[dict]:
+        """Bildirilmemiş 🟢'ler: EN SON değerlendirmesi bu kural sürümüyle 🟢 ve son 'days' günde yapılmış, ilan aktif, kopya/karantina değil,
+        kaynağı anlık bildirim veren ('yesil'), hiçbir sohbete 🟢/🟠 gitmemiş (yazılamamış gönderimin yedek izi de sayılır). En iyi kâr önce.
+        Tazelik ve emsal kapısı uygulamada süzülür (application/report.py); canlılık kontrolü için fiyat/kaynak alanları da döner."""
+        return self.conn.execute(
+            """SELECT l.id, l.url, l.source_item_id, l.year, l.brand, l.model, l.km, l.price_amount::float8 AS price_amount, l.currency,
+                      l.price_gbp::float8 AS price_gbp, l.first_seen_at, l.posted_at, s.name AS source_name, s.platform,
+                      e.evaluated_at, e.comparables_n, e.market_median_gbp::float8 AS market_median_gbp,
+                      e.profit_gbp::float8 AS profit_gbp, e.profit_pct::float8 AS profit_pct,
+                      COALESCE(to_jsonb(e) ->> 'method', 'A') AS method,
+                      (SELECT MAX(h.changed_at) FROM listing_history h WHERE h.listing_id = l.id AND h.field = 'price_gbp')
+                          AS price_changed_at
+               FROM (SELECT DISTINCT ON (listing_id) * FROM evaluations ORDER BY listing_id, evaluated_at DESC) e
+               JOIN listings l ON l.id = e.listing_id JOIN sources s ON s.id = l.source_id
+               WHERE e.tier = 'guclu' AND e.rules_version = %s AND e.evaluated_at > NOW() - make_interval(days => %s)
+                 AND s.alert_level = 'yesil' AND l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL
+                 AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.tier = ANY(%s))
+                 AND NOT EXISTS (SELECT 1 FROM bot_state u WHERE starts_with(u.key, %s || l.id::text || ':'))
+               ORDER BY e.profit_pct DESC LIMIT %s""",
+            (rules_version, days, SENT_ONCE_TIERS, UNSAVED_ALERT_PREFIX, limit)).fetchall()
+
+    def near_misses(self, rules_version: str, days: int = 7, min_comparables: int = 8, skip_reasons: list[str] | tuple = (),
+                    limit: int = 5) -> list[dict]:
+        """Yakın kaçanlar (yalnız bilgi): son 'days' günde ilk görülen ya da fiyatı değişen aktif ilanlardan EN SON değerlendirmesi bu kural
+        sürümüyle 🟡 ('pazarlik') ve en az 'min_comparables' emsalli olanlar; kopya/karantina değil, kaynağı 'yesil', hiç 🟢/🟠 gitmemiş.
+        Nedenlerinden biri 'skip_reasons' içinde olan (ör. yazım hatası şüphesi, karışık model) atlanır. En iyi kâr önce."""
+        return self.conn.execute(
+            """SELECT l.id, l.url, l.year, l.brand, l.model, l.price_gbp::float8 AS price_gbp, s.name AS source_name,
+                      e.comparables_n, e.profit_pct::float8 AS profit_pct, e.nedenler
+               FROM (SELECT DISTINCT ON (listing_id) * FROM evaluations ORDER BY listing_id, evaluated_at DESC) e
+               JOIN listings l ON l.id = e.listing_id JOIN sources s ON s.id = l.source_id
+               WHERE e.tier = 'pazarlik' AND e.rules_version = %s AND e.comparables_n >= %s
+                 AND NOT (COALESCE(e.nedenler, '{}') && %s::text[])
+                 AND s.alert_level = 'yesil' AND l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL
+                 AND (l.first_seen_at > NOW() - make_interval(days => %s)
+                      OR EXISTS (SELECT 1 FROM listing_history h WHERE h.listing_id = l.id AND h.field = 'price_gbp'
+                                 AND h.changed_at > NOW() - make_interval(days => %s)))
+                 AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.tier = ANY(%s))
+               ORDER BY e.profit_pct DESC LIMIT %s""",
+            (rules_version, min_comparables, list(skip_reasons), days, days, SENT_ONCE_TIERS, limit)).fetchall()
+
+    def disappeared_counts(self, days: int = 7) -> list[dict]:
+        """Son 'days' günde pasifleşen (kopya olmayan) ilanlar, pasifleşme nedenine göre: [{reason, n, alerted}]. Nedeni boş eski satırlar
+        'belirsiz' sayılır; 'alerted' = bunlardan 🟢/🟠 bildirimi gitmiş olanlar. Pasif doğan ilan (inactive_at boş) sayılmaz."""
+        return self.conn.execute(
+            """SELECT COALESCE(l.inactive_reason, %s) AS reason, count(*) AS n,
+                      count(*) FILTER (WHERE EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.tier = ANY(%s))) AS alerted
+               FROM listings l
+               WHERE NOT l.is_active AND l.duplicate_of IS NULL AND l.inactive_at > NOW() - make_interval(days => %s)
+               GROUP BY 1 ORDER BY 1""",
+            (UNKNOWN, SENT_ONCE_TIERS, days)).fetchall()
+
+    def listing_counts(self, days: int = 7) -> dict:
+        """Son 'days' günde ilk görülen ilan sayısı ve şu an aktif (kopya olmayan) ilan sayısı: {new_n, active_n}."""
+        return self.conn.execute(
+            """SELECT count(*) FILTER (WHERE first_seen_at > NOW() - make_interval(days => %s)) AS new_n,
+                      count(*) FILTER (WHERE is_active AND duplicate_of IS NULL) AS active_n
+               FROM listings""", (days,)).fetchone()
+
     def alert_marks_since(self, prefix: str, days: int = 7) -> list[str]:
         """'alert:<prefix>...' işaretlerinden son 'days' günde atılanların anahtar sonekleri (öğrenme olayları için)."""
         rows = self.conn.execute(

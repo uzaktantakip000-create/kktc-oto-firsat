@@ -132,6 +132,15 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
     return "\n".join(lines)[:3900]
 
 
+def late_sources(repo: Repository, now: datetime | None = None) -> list[dict]:
+    """Taranan (aktif/deneme), duraklatılmamış ve normal süresinden uzun süredir başarılı taranmamış kaynaklar (nabız ve haftalık rapor)."""
+    now = now or datetime.now(timezone.utc)
+    rows = repo.conn.execute(_SOURCE_SQL).fetchall()
+    paused = feed_switch.paused_platforms(repo, now)
+    quiet = feed_switch.quiet_platforms(repo, now)
+    return [r for r in rows if r["status"] in ("aktif", "deneme") and r["platform"] not in paused and _is_late(r, quiet)]
+
+
 def build_heartbeat(repo: Repository, now: datetime | None = None) -> str:
     """Günlük "sistem çalışıyor" nabzı (sahibin kararı 03.10.2026: sabah durumu kalktı; ayrıntı /durum'da). Arıza varsa ayrıca haber gider
     (check_sources, kaynak alarmı); burada yalnız gecikme sayısı + son 24 saat sayıları."""
@@ -140,10 +149,7 @@ def build_heartbeat(repo: Repository, now: datetime | None = None) -> str:
     sent = repo.conn.execute(
         "SELECT count(DISTINCT listing_id) FILTER (WHERE tier='guclu') AS strong, count(DISTINCT listing_id) FILTER (WHERE tier='tahmini') AS est "
         "FROM alerts WHERE sent_at > NOW() - interval '24 hours'").fetchone()
-    rows = repo.conn.execute(_SOURCE_SQL).fetchall()
-    paused = feed_switch.paused_platforms(repo, now)
-    quiet = feed_switch.quiet_platforms(repo, now)
-    late = [r for r in rows if r["status"] in ("aktif", "deneme") and r["platform"] not in paused and _is_late(r, quiet)]
+    late = late_sources(repo, now)
     text = f"✅ Sistem çalışıyor · son 24 saatte {new_n} yeni ilan tarandı, {sent['strong'] or 0} 🟢 ve {sent['est'] or 0} 🟠 gönderildi."
     if late:
         text += f"\n⚠️ {len(late)} yerde gecikme var (ayrıntı: /durum)."

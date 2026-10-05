@@ -647,3 +647,118 @@ def test_current_decisions_reads_the_latest_evaluation_of_active_listings_for_fi
     assert by[green]["comparables_n"] == 9 and by[green]["total"] == 3
     assert by[est]["method"] == "B" and by[plain]["method"] == "A"  # NULL yöntem = A (kolon varsayılanı)
     assert len(db.current_decisions("Toyota", "corolla", 2014, limit=1)) == 1
+
+
+# --- haftalık rapor sorguları (application/report.py; yalnız okur) ---
+def add_report_eval(conn, listing_id, tier, *, version="v1", hours=1, pct=25.0, n=10, nedenler=None):
+    conn.execute("INSERT INTO evaluations (listing_id, evaluated_at, comparables_n, confidence, tier, rules_version, market_median_gbp, "
+                 "profit_gbp, profit_pct, nedenler) VALUES (%s, now() - make_interval(hours => %s), %s, 'orta', %s, %s, 9000, 1500, %s, %s::text[])",
+                 (listing_id, hours, n, tier, version, pct, nedenler))
+
+
+def item_names(conn, rows):
+    names = {r["id"]: r["source_item_id"] for r in conn.execute("SELECT id, source_item_id FROM listings").fetchall()}
+    return [names[r["id"]] for r in rows]
+
+
+def test_unnotified_strong_lists_only_never_sent_current_green_listings_best_first(db):
+    """'Bildirmediğim fırsatlar': son satırı BU sürümle 🟢 (son 14 gün), aktif, kopya/karantina değil, 'yesil' kaynak, hiçbir sohbete 🟢/🟠
+    gitmemiş (yazılamamış gönderimin yedek izi de gitmiş sayılır). 🟡 özet kaydı bildirim sayılmaz."""
+    from infrastructure.db.repository import unsaved_alert_key
+    c, sid = db.conn, add_source(db.conn)
+    shadow = add_source(c, "S")
+    c.execute("UPDATE sources SET alert_level='sari' WHERE id=%s", (shadow,))
+    best, good, digest_only = (add_listing(c, sid, n) for n in ("best", "good", "digest_only"))
+    add_report_eval(c, best, "guclu", pct=40)
+    add_report_eval(c, good, "guclu", pct=25)
+    add_report_eval(c, digest_only, "guclu", pct=22)
+    db.save_alert(digest_only, "c1", "pazarlik", 1, evaluation_id=None, price_gbp=None)
+    sent_green = add_listing(c, sid, "sent_green")
+    add_report_eval(c, sent_green, "guclu", pct=50)
+    db.save_alert(sent_green, "c1", "guclu", 2, evaluation_id=None, price_gbp=None)
+    sent_orange = add_listing(c, sid, "sent_orange")
+    add_report_eval(c, sent_orange, "guclu", pct=50)
+    db.save_alert(sent_orange, "c2", "tahmini", 3, evaluation_id=None, price_gbp=None)
+    traced = add_listing(c, sid, "traced")
+    add_report_eval(c, traced, "guclu", pct=50)
+    db.set_state(unsaved_alert_key(traced, "c1"), "42")
+    old_version = add_listing(c, sid, "old_version")
+    add_report_eval(c, old_version, "guclu", version="v0", pct=50)
+    downgraded = add_listing(c, sid, "downgraded")
+    add_report_eval(c, downgraded, "guclu", hours=2, pct=50)
+    add_report_eval(c, downgraded, "pazarlik", hours=1, pct=50)  # en son satır 🟡
+    stale = add_listing(c, sid, "stale")
+    add_report_eval(c, stale, "guclu", hours=24 * 20, pct=50)  # 14 günden eski değerlendirme
+    for name, cols in (("inactive", {"is_active": False}), ("dup", {"duplicate_of": best}), ("quarantine", {"karantina_nedeni": "test"})):
+        add_report_eval(c, add_listing(c, sid, name, **cols), "guclu", pct=50)
+    add_report_eval(c, add_listing(c, shadow, "shadow_src"), "guclu", pct=50)  # anlık bildirim vermeyen kaynak
+    rows = db.unnotified_strong("v1", days=14)
+    assert item_names(c, rows) == ["best", "good", "digest_only"]
+    assert item_names(c, db.unnotified_strong("v1", days=14, limit=1)) == ["best"]
+    r = rows[0]
+    assert r["method"] == "A" and r["price_changed_at"] is None and r["price_amount"] == 6000 and r["currency"] == "GBP"
+    assert (r["comparables_n"], r["market_median_gbp"], r["profit_pct"], r["source_name"], r["platform"]) == (10, 9000, 40, "T", "web")
+
+
+def test_near_misses_are_this_weeks_well_compared_yellow_listings_that_were_never_sent(db):
+    """Yakın kaçanlar: bu hafta ilk görülen ya da fiyatı değişen, son satırı BU sürümle 🟡, ≥8 emsal, hiç 🟢/🟠 gitmemiş; süzülen nedenler atlanır."""
+    c, sid = db.conn, add_source(db.conn)
+
+    def make(name, tier="pazarlik", first_seen_at=None, **kw):
+        lid = add_listing(c, sid, name, **({"first_seen_at": first_seen_at} if first_seen_at else {}))
+        add_report_eval(c, lid, tier, **kw)
+        return lid
+
+    make("near", pct=18)
+    make("gap", pct=26, nedenler=["km_yuksek"])
+    make("typo", pct=60, nedenler=["fiyat_asiri_dusuk"])
+    make("mixed", pct=50, nedenler=["model_belirsiz", "km_yuksek"])
+    make("few", pct=30, n=5)
+    make("old", pct=19, first_seen_at=ago(days=10))
+    repriced = make("repriced", pct=15, first_seen_at=ago(days=10))
+    c.execute("INSERT INTO listing_history (listing_id, field, old_value, new_value, changed_at) "
+              "VALUES (%s,'price_gbp','6000','5000', now() - interval '1 day')", (repriced,))
+    sent = make("sent", pct=40)
+    db.save_alert(sent, "c1", "guclu", 1, evaluation_id=None, price_gbp=None)
+    make("green", tier="guclu", pct=45)
+    make("other_version", pct=17, version="v0")
+    rows = db.near_misses("v1", days=7, min_comparables=8, skip_reasons=["fiyat_asiri_dusuk", "model_belirsiz"], limit=10)
+    assert item_names(c, rows) == ["gap", "near", "repriced"]
+    assert rows[0]["nedenler"] == ["km_yuksek"] and rows[1]["nedenler"] is None and rows[0]["profit_pct"] == 26
+    assert item_names(c, db.near_misses("v1", skip_reasons=[], limit=2)) == ["typo", "mixed"]  # boş süzgeç + sınır
+
+
+def test_alerted_votes_one_row_per_alerted_listing_newest_first_with_vote_state(db):
+    c, sid = db.conn, add_source(db.conn)
+    a, b, old, digest = (add_listing(c, sid, n) for n in ("a", "b", "old", "digest"))
+    db.save_alert(a, "c1", "guclu", 1, evaluation_id=None, price_gbp=None)
+    db.save_alert(a, "c2", "guclu", 2, evaluation_id=None, price_gbp=None)  # iki aboneye gitti: tek satır
+    db.save_alert(b, "c1", "tahmini", 3, evaluation_id=None, price_gbp=None)
+    db.save_alert(old, "c1", "guclu", 4, evaluation_id=None, price_gbp=None)
+    db.save_alert(digest, "c1", "pazarlik", 5, evaluation_id=None, price_gbp=None)  # özet kaydı: oylanacak bildirim değil
+    c.execute("UPDATE alerts SET sent_at = now() - interval '2 days' WHERE listing_id=%s", (a,))
+    c.execute("UPDATE alerts SET sent_at = now() - interval '1 day' WHERE listing_id=%s", (b,))
+    c.execute("UPDATE alerts SET sent_at = now() - interval '40 days' WHERE listing_id=%s", (old,))
+    c.execute("INSERT INTO feedback (listing_id, action) VALUES (%s,'ilgilendim'), (%s,'audit_dogru')", (a, b))  # denetim oy değildir
+    rows = db.alerted_votes(30)
+    assert [(r["id"], r["tier"], r["voted"]) for r in rows] == [(b, "tahmini", False), (a, "guclu", True)]
+    assert rows[0]["is_active"] is True and len(db.alerted_votes(60)) == 3
+
+
+def test_disappeared_counts_split_by_reason_and_listing_counts(db):
+    """Kaybolan ilanlar: yalnız son 7 günde pasifleşen, kopya olmayan ilanlar nedene göre (boş neden = belirsiz); pasif doğan sayılmaz."""
+    c, sid = db.conn, add_source(db.conn)
+    sold = add_listing(c, sid, "sold", is_active=False, inactive_at=ago(days=1), inactive_reason="satildi")
+    db.save_alert(sold, "c1", "guclu", 1, evaluation_id=None, price_gbp=None)
+    add_listing(c, sid, "unclear", is_active=False, inactive_at=ago(days=2), inactive_reason="belirsiz")
+    add_listing(c, sid, "removed", is_active=False, inactive_at=ago(days=1), inactive_reason="kaldirildi")
+    add_listing(c, sid, "no_reason", is_active=False, inactive_at=ago(days=1))
+    add_listing(c, sid, "last_month", is_active=False, inactive_at=ago(days=10), inactive_reason="satildi")
+    add_listing(c, sid, "born_inactive", is_active=False, inactive_reason="satildi")
+    add_listing(c, sid, "dup", is_active=False, inactive_at=ago(days=1), inactive_reason="belirsiz", duplicate_of=sold)
+    add_listing(c, sid, "live")
+    add_listing(c, sid, "live_old", first_seen_at=ago(days=10))
+    got = {r["reason"]: (r["n"], r["alerted"]) for r in db.disappeared_counts(7)}
+    assert got == {"satildi": (1, 1), "belirsiz": (2, 0), "kaldirildi": (1, 0)}
+    assert dict(db.listing_counts(7)) == {"new_n": 8, "active_n": 2}
+

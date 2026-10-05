@@ -16,6 +16,11 @@ def _is_kaa(listing: dict) -> bool:
     return "kibrisarabaal.com" in (listing.get("url") or "")
 
 
+def can_check(listing: dict) -> bool:
+    """Bu ilan gönderimden önce yeniden okunabiliyor mu (satıldı/kalktı/fiyat değişti)? Yalnız KKTCar ve KibrisArabaAl."""
+    return _is_kktcar(listing) or _is_kaa(listing)
+
+
 def _old(l: dict) -> dict:
     return {"price_amount": float(l["price_amount"]) if l.get("price_amount") is not None else None,
             "currency": l.get("currency"), "price_gbp": float(l["price_gbp"])}
