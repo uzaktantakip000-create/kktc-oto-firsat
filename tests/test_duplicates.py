@@ -1,7 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 
 from application.dedupe import mark_duplicates
-from domain.duplicates import same_car
+from domain.duplicates import cross_source_twin, district, same_car
 
 NOW = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
@@ -99,11 +99,15 @@ def test_mark_duplicates_uses_the_round_time():
 
 
 class FakeRepo:
-    def __init__(self, rows):
-        self.rows, self.dups = rows, {}
+    def __init__(self, rows, twins=()):
+        self.rows, self.twins, self.dups, self.twin_calls = rows, list(twins), {}, []
 
-    def dedupe_candidates(self):
+    def dedupe_candidates(self, days=120, new_hours=None):
         return self.rows
+
+    def twin_candidates(self, window_hours, days=120, new_hours=None):
+        self.twin_calls.append((window_hours, new_hours))
+        return self.twins
 
     def set_duplicate(self, i, canon):
         self.dups[i] = canon
@@ -135,11 +139,121 @@ def test_quick_round_asks_only_for_groups_with_new_listings_and_marks_the_same()
             self.new_hours.append(new_hours)
             return list(self.rows)
 
+        def twin_candidates(self, window_hours, days=120, new_hours=None):
+            self.new_hours.append(("ikiz", new_hours))
+            return []
+
         def set_duplicate(self, listing_id, canonical_id):
             self.dups[listing_id] = canonical_id
 
     repo = QuickRepo([car("a", 5), car("b", 1, price_gbp=5900.0)])
     assert mark_duplicates(repo, quick=True) == 1 and repo.dups == {"b": "a"}  # sonuç tam tarama ile aynı
-    assert repo.new_hours == [3]
+    assert repo.new_hours == [3, ("ikiz", 3)]  # kaynaklar arası ikiz geçişi de aynı daraltmayla
     mark_duplicates(repo)  # varsayılan: tam tarama
-    assert repo.new_hours == [3, None]  # tam taramada daraltma yok
+    assert repo.new_hours == [3, ("ikiz", 3), None, ("ikiz", None)]  # tam taramada daraltma yok
+
+
+# --- kaynaklar arası ikiz: KKTCarabam (km/telefon yok) ↔ KibrisArabaAl ---
+def ad(i, site, minutes_ago=0, **kw):
+    """twin_candidates satırı. Varsayılan: canlıdaki BMW vakası (KKTCarabam BMW 3 2007 £5.400 Girne ↔ KAA 3 Serisi 320i, konum boş, 16 dk önce)."""
+    base = dict(id=i, site=site, brand_norm="BMW", model_norm="3", year=2007, price_amount=5400.0, currency="GBP",
+                location="girne" if site == "kktcarabam" else None, transmission="otomatik", fuel="benzin",
+                first_seen_at=NOW - timedelta(minutes=minutes_ago), duplicate_of=None, is_active=True)
+    return base | kw
+
+
+def test_cross_source_twin_needs_same_key_exact_price_and_close_time():
+    a, b = ad("a", "kktcarabam"), ad("b", "kibrisarabaal", 16)
+    assert cross_source_twin(a, b)
+    assert cross_source_twin(a, {**b, "first_seen_at": NOW - timedelta(hours=3)})  # sınır dahil
+    assert not cross_source_twin(a, {**b, "first_seen_at": NOW - timedelta(hours=3, minutes=1)})
+    assert cross_source_twin(a, {**b, "first_seen_at": NOW + timedelta(hours=2)})  # KAA sonra görülmüş: yön aynı
+    assert not cross_source_twin(a, {**b, "price_amount": 5450.0})  # yakın fiyat yetmez: BİREBİR aynı tutar
+    assert not cross_source_twin(a, {**b, "currency": "TRY"})
+    assert not cross_source_twin(a, {**b, "price_amount": None})
+    assert not cross_source_twin({**a, "price_amount": None}, b)
+    assert not cross_source_twin(a, {**b, "year": 2008})
+    assert not cross_source_twin(a, {**b, "model_norm": "5"})
+    assert not cross_source_twin({**a, "model_norm": None}, {**b, "model_norm": None})  # "ikisi de bilinmiyor" aynı model değildir
+
+
+def test_cross_source_twin_city_transmission_fuel_must_not_conflict():
+    a, b = ad("a", "kktcarabam"), ad("b", "kibrisarabaal", 16)
+    assert cross_source_twin(a, {**b, "location": "Girne"})
+    assert cross_source_twin({**a, "location": "lefkosa"}, {**b, "location": "Lefkoşa"})
+    assert cross_source_twin({**a, "location": "magusa"}, {**b, "location": "Gazimağusa"})
+    assert not cross_source_twin(a, {**b, "location": "Lefkoşa"})  # şehir çelişiyor
+    assert cross_source_twin(a, {**b, "location": "Benz C Serisi"})  # KAA konum alanında model parçası: bilinmiyor, çelişki değil
+    assert cross_source_twin({**a, "location": None}, {**b, "location": "Lefke"})
+    assert cross_source_twin({**a, "transmission": "düz"}, {**b, "transmission": "manuel"})  # yazım farkı çelişki değil
+    assert not cross_source_twin(a, {**b, "transmission": "manuel"})
+    assert cross_source_twin({**a, "fuel": "elektrik"}, {**b, "fuel": "elektrikli"})
+    assert not cross_source_twin(a, {**b, "fuel": "dizel"})
+    assert cross_source_twin(a, {**b, "fuel": None, "transmission": None})
+
+
+def test_district_reads_the_six_districts_and_nothing_else():
+    assert [district(v) for v in ("Lefkoşa", "lefkosa", "Gazimağusa", "magusa", "İskele", "Güzelyurt", "Lefke", "Girne", "lapta")] == \
+        ["lefkosa", "lefkosa", "magusa", "magusa", "iskele", "guzelyurt", "lefke", "girne", "girne"]
+    assert [district(v) for v in (None, "", "other", "Benz C Serisi", "5", "V Hybrid")] == [None] * 6
+
+
+def test_twin_marks_kktcarabam_as_copy_of_kaa_even_when_kktcarabam_was_seen_first():
+    # Canlıdaki BMW vakası: KKTCarabam 🟢 (km yok), KAA ikizi 145.000 km ile 'yok'. Bugünkü kural ilk görüleni kanonik yapardı.
+    repo = FakeRepo([], twins=[ad("arabam", "kktcarabam", 0), ad("kaa", "kibrisarabaal", 16)])
+    assert mark_duplicates(repo) == 1 and repo.dups == {"arabam": "kaa"}
+    repo = FakeRepo([], twins=[ad("arabam", "kktcarabam", 120), ad("kaa", "kibrisarabaal", 0)])  # KKTCarabam ÖNCE görülmüş
+    assert mark_duplicates(repo) == 1 and repo.dups == {"arabam": "kaa"}
+    assert repo.twin_calls == [(3, None)]
+
+
+def test_twin_requires_a_unique_match_in_both_directions():
+    two_kaa = [ad("arabam", "kktcarabam"), ad("kaa1", "kibrisarabaal", 10), ad("kaa2", "kibrisarabaal", 20)]
+    assert mark_duplicates(FakeRepo([], twins=two_kaa)) == 0  # hangi KAA ilanı? bilinmez
+    two_arabam = [ad("arabam1", "kktcarabam"), ad("arabam2", "kktcarabam", 30), ad("kaa", "kibrisarabaal", 10)]
+    assert mark_duplicates(FakeRepo([], twins=two_arabam)) == 0
+    # zaten bağlı KKTCarabam ilanı da aday sayılır: sonradan gelen ikinci KKTCarabam ilanı aynı KAA ilanına bağlanmaz
+    linked = [ad("arabam1", "kktcarabam", 60, duplicate_of="kaa"), ad("arabam2", "kktcarabam"), ad("kaa", "kibrisarabaal", 50)]
+    repo = FakeRepo([], twins=linked)
+    assert mark_duplicates(repo) == 0 and repo.dups == {}
+    # rakip başka şehirde / farklı tutarda ise teklik bozulmaz
+    other = [ad("arabam", "kktcarabam"), ad("kaa1", "kibrisarabaal", 10), ad("kaa2", "kibrisarabaal", 20, location="Lefkoşa"),
+             ad("kaa3", "kibrisarabaal", 20, price_amount=5500.0)]
+    repo = FakeRepo([], twins=other)
+    assert mark_duplicates(repo) == 1 and repo.dups == {"arabam": "kaa1"}
+
+
+def test_twin_respects_active_rule_and_never_chains_onto_a_kaa_copy():
+    # aktif KKTCarabam ilanı pasif (satılmış/kalkmış) KAA ilanının kopyası olmaz (release_orphan_duplicates ile tutarlı)
+    repo = FakeRepo([], twins=[ad("arabam", "kktcarabam"), ad("kaa", "kibrisarabaal", 10, is_active=False)])
+    assert mark_duplicates(repo) == 0
+    # ikisi de pasif: bağ kurulur (arşivde de tek araç sayılsın); pasif KKTCarabam aktif KAA'nın kopyası olabilir
+    repo = FakeRepo([], twins=[ad("arabam", "kktcarabam", is_active=False), ad("kaa", "kibrisarabaal", 10, is_active=False)])
+    assert mark_duplicates(repo) == 1
+    # zaten bağlı KKTCarabam ilanı yeniden yazılmaz
+    repo = FakeRepo([], twins=[ad("arabam", "kktcarabam", duplicate_of="kaa"), ad("kaa", "kibrisarabaal", 10)])
+    assert mark_duplicates(repo) == 0 and repo.dups == {}
+
+
+def test_twin_of_a_kaa_copy_links_to_its_canonical_without_a_chain():
+    # Canlıdaki örnek: KAA'da aynı araç (aynı telefon/km/fiyat) iki kez ilanda; yeni KAA ilanı eskisinin kopyası, KKTCarabam ikizi yeni ilanla aynı saatte
+    repo = FakeRepo([], twins=[ad("arabam", "kktcarabam"), ad("kaa_new", "kibrisarabaal", 16, duplicate_of="kaa_old")])
+    assert mark_duplicates(repo) == 1 and repo.dups == {"arabam": "kaa_old"}
+    # aynı aracın iki KAA ilanı (kanonik + kopyası) ikisi de eşleşirse "iki aday" sayılmaz
+    repo = FakeRepo([], twins=[ad("arabam", "kktcarabam"), ad("kaa_new", "kibrisarabaal", 16, duplicate_of="kaa_old"),
+                               ad("kaa_old", "kibrisarabaal", 100)])
+    assert mark_duplicates(repo) == 1 and repo.dups == {"arabam": "kaa_old"}
+    # ama FARKLI iki KAA aracı (biri kopya olsa da) hâlâ belirsizdir
+    repo = FakeRepo([], twins=[ad("arabam", "kktcarabam"), ad("kaa_new", "kibrisarabaal", 16, duplicate_of="kaa_old"),
+                               ad("kaa_other", "kibrisarabaal", 20)])
+    assert mark_duplicates(repo) == 0
+    # pasif KAA kopyası üzerinden aktif KKTCarabam ilanı bağlanmaz (kanoniğin aktifliği bilinmez)
+    repo = FakeRepo([], twins=[ad("arabam", "kktcarabam"), ad("kaa_new", "kibrisarabaal", 16, duplicate_of="kaa_old", is_active=False)])
+    assert mark_duplicates(repo) == 0
+
+
+def test_twin_pass_never_pairs_two_listings_of_the_same_site():
+    repo = FakeRepo([], twins=[ad("a1", "kktcarabam"), ad("a2", "kktcarabam", 10)])
+    assert mark_duplicates(repo) == 0
+    repo = FakeRepo([], twins=[ad("k1", "kibrisarabaal"), ad("k2", "kibrisarabaal", 10)])
+    assert mark_duplicates(repo) == 0

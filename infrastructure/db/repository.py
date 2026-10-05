@@ -278,6 +278,37 @@ class Repository:
             args,
         ).fetchall()
 
+    def twin_candidates(self, window_hours: int, days: int = 120, new_hours: int | None = None) -> list[dict]:
+        """Kaynaklar arası ikiz taraması (application/dedupe.py) için KKTCarabam ve KibrisArabaAl ilanları: yalnız ÖBÜR sitede aynı
+        marka/model/yıl, birebir aynı tutar+para birimi ve ilk görülmesi ±`window_hours` içinde en az bir ilanı olanlar (eşleşmenin ön
+        koşulu; tekliği bozabilecek her rakip de bu koşulu sağlar, yani gelen küme eşleşme için tamdır). `site`: 'kktcarabam' ya da
+        'kibrisarabaal' (kaynağın adresinden). `new_hours` verilirse (hızlı tur) yalnız son `new_hours` saatte iki siteden birinde yeni ilan
+        görülen (marka, model, yıl) grupları gelir; gruplar tam gelir (dedupe_candidates gibi): eşleştirme sonucu tam taramayla aynıdır."""
+        extra, args = "", [days, window_hours, window_hours]
+        if new_hours is not None:
+            extra = """ AND EXISTS (SELECT 1 FROM t n WHERE n.first_seen_at > NOW() - make_interval(hours => %s)
+                                    AND n.brand_norm = t.brand_norm AND n.model_norm = t.model_norm AND n.year = t.year)"""
+            args.append(new_hours)
+        return self.conn.execute(
+            """WITH t AS (
+                 SELECT l.id, l.brand_norm, l.model_norm, l.year, l.price_amount, l.currency, l.location, l.transmission, l.fuel,
+                        l.first_seen_at, l.duplicate_of, l.is_active,
+                        CASE WHEN s.url LIKE '%%kktcarabam.com%%' THEN 'kktcarabam' ELSE 'kibrisarabaal' END AS site
+                 FROM listings l JOIN sources s ON s.id = l.source_id
+                 WHERE (s.url LIKE '%%kktcarabam.com%%' OR s.url LIKE '%%kibrisarabaal.com%%')
+                   AND l.brand_norm IS NOT NULL AND l.model_norm IS NOT NULL AND l.year IS NOT NULL
+                   AND l.price_amount IS NOT NULL AND l.currency IS NOT NULL
+                   AND l.first_seen_at > NOW() - make_interval(days => %s))
+               SELECT t.id, t.brand_norm, t.model_norm, t.year, t.price_amount::float8 AS price_amount, t.currency, t.location,
+                      t.transmission, t.fuel, t.first_seen_at, t.duplicate_of, t.is_active, t.site
+               FROM t
+               WHERE EXISTS (SELECT 1 FROM t o WHERE o.site <> t.site AND o.brand_norm = t.brand_norm AND o.model_norm = t.model_norm
+                               AND o.year = t.year AND o.price_amount = t.price_amount AND o.currency = t.currency
+                               AND o.first_seen_at BETWEEN t.first_seen_at - make_interval(hours => %s)
+                                                       AND t.first_seen_at + make_interval(hours => %s))""" + extra,
+            args,
+        ).fetchall()
+
     def release_orphan_duplicates(self) -> int:
         """Kanonik (ilk görülen) ilan pasifleşmiş ama kopyası hâlâ AKTİFSE kopya serbest kalır (duplicate_of = NULL): aksi halde bu
         aktif ilan emsale girmez ve hiç değerlendirilmez. (Aktif ilan yalnızca aktif bir ilanın kopyası sayılır: application/dedupe.py.)

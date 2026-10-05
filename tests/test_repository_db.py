@@ -110,6 +110,67 @@ def test_dedupe_candidates_quick_returns_complete_groups_only_where_new_listings
     assert found(db.dedupe_candidates()) == {"x_old", "x_new", "y_old1", "y_old2", "z_old", "z_new"}
 
 
+def add_site(conn, name, url):
+    """Gerçek adresli kaynak (KKTCarabam ve KibrisArabaAl tohum migration'larında zaten var: onlar kullanılır)."""
+    row = conn.execute("SELECT id FROM sources WHERE url=%s", (url,)).fetchone()
+    return row["id"] if row else conn.execute("INSERT INTO sources (platform, name, url, status) VALUES ('web',%s,%s,'aktif') RETURNING id",
+                                              (name, url)).fetchone()["id"]
+
+
+def test_twin_candidates_returns_only_cross_site_exact_price_rows_within_the_window(db):
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", "https://www.kktcarabam.com/kategori/ikinci-el-araclar")
+    kaa = add_site(c, "KibrisArabaAl", "https://kibrisarabaal.com/")
+    other = add_site(c, "KKTCar", "https://kktcar.com/")
+    bmw = dict(brand_norm="BMW", model_norm="3", year=2007, price_gbp=5400, price_amount=5400, currency="GBP", km=None)
+    add_listing(c, arabam, "a_bmw", **bmw, location="girne", first_seen_at=ago(minutes=10))
+    add_listing(c, kaa, "k_bmw", **(bmw | {"km": 145_000}), first_seen_at=ago(minutes=26))  # eş
+    add_listing(c, kaa, "k_bmw_late", **bmw, first_seen_at=ago(hours=4))  # 3 saatten uzak: gelmez
+    add_listing(c, kaa, "k_bmw_price", **(bmw | {"price_amount": 5450, "price_gbp": 5450}), first_seen_at=ago(minutes=20))  # tutar farklı
+    add_listing(c, kaa, "k_bmw_try", **(bmw | {"currency": "TRY"}), first_seen_at=ago(minutes=20))  # para birimi farklı
+    add_listing(c, other, "x_bmw", **bmw, first_seen_at=ago(minutes=20))  # başka site: gelmez
+    add_listing(c, arabam, "a_bmw2", **bmw, first_seen_at=ago(minutes=15))  # aynı sitede eşi var ama öbür sitede de var: gelir (rakip)
+    old = dict(brand_norm="Honda", model_norm="fit", year=2012, price_gbp=5450, price_amount=5450, currency="GBP", km=None)
+    add_listing(c, arabam, "a_fit_old", **old, first_seen_at=ago(days=4, hours=1))  # eski grup: yalnız tam turda
+    add_listing(c, kaa, "k_fit_old", **old, first_seen_at=ago(days=4))
+    add_listing(c, arabam, "a_nomodel", **(bmw | {"model_norm": None}), first_seen_at=ago(minutes=10))  # model bilinmiyor: gelmez
+    add_listing(c, kaa, "k_nomodel", **(bmw | {"model_norm": None}), first_seen_at=ago(minutes=10))
+    names = {r["id"]: r["source_item_id"] for r in c.execute("SELECT id, source_item_id FROM listings").fetchall()}
+
+    def found(rows):
+        return {(names[r["id"]], r["site"]) for r in rows}
+
+    full = db.twin_candidates(window_hours=3)
+    assert found(full) == {("a_bmw", "kktcarabam"), ("k_bmw", "kibrisarabaal"), ("a_bmw2", "kktcarabam"),
+                           ("a_fit_old", "kktcarabam"), ("k_fit_old", "kibrisarabaal")}
+    assert found(db.twin_candidates(window_hours=3, new_hours=3)) == {("a_bmw", "kktcarabam"), ("k_bmw", "kibrisarabaal"),
+                                                                       ("a_bmw2", "kktcarabam")}
+    r = next(r for r in full if names[r["id"]] == "a_bmw")
+    assert r["price_amount"] == 5400.0 and r["currency"] == "GBP" and r["location"] == "girne" and r["is_active"] and r["duplicate_of"] is None
+
+
+def test_mark_duplicates_links_kktcarabam_twin_to_kaa_on_real_db_and_quick_equals_full(db):
+    from application.dedupe import mark_duplicates
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", "https://www.kktcarabam.com/kategori/ikinci-el-araclar")
+    kaa = add_site(c, "KibrisArabaAl", "https://kibrisarabaal.com/")
+    bmw = dict(brand_norm="BMW", model_norm="3", year=2007, price_gbp=5400, price_amount=5400, currency="GBP", km=None, seller_phone=None)
+    a = add_listing(c, arabam, "a_bmw", **bmw, location="girne", first_seen_at=ago(hours=2))  # KKTCarabam ÖNCE görülmüş
+    k = add_listing(c, kaa, "k_bmw", **(bmw | {"km": 145_000, "seller_phone": "905330000001"}), first_seen_at=ago(minutes=30))
+    fit = dict(brand_norm="Honda", model_norm="fit", year=2012, price_gbp=5450, price_amount=5450, currency="GBP", km=None, seller_phone=None)
+    a_amb = add_listing(c, arabam, "a_fit", **fit, first_seen_at=ago(minutes=40))  # iki KAA adayı: bağ yok
+    add_listing(c, kaa, "k_fit1", **(fit | {"km": 200_000, "seller_phone": "905330000002"}), first_seen_at=ago(minutes=30))
+    add_listing(c, kaa, "k_fit2", **(fit | {"km": 90_000, "seller_phone": "905330000003"}), first_seen_at=ago(minutes=50))
+    assert mark_duplicates(db, quick=True) == 1
+    dup = {r["id"]: r["duplicate_of"] for r in c.execute("SELECT id, duplicate_of FROM listings").fetchall()}
+    assert dup[a] == k and dup[k] is None and dup[a_amb] is None
+    assert mark_duplicates(db) == 0  # tam tur aynı sonucu verir (yeni bağ yok)
+    assert db.unevaluated_active() and a not in {r["id"] for r in db.unevaluated_active()}  # kopya değerlendirilmez
+    c.execute("UPDATE listings SET is_active=FALSE WHERE id=%s", (k,))  # KAA ilanı satıldı/kalktı
+    assert db.release_orphan_duplicates() == 1  # mevcut kural: aktif kopya serbest kalır
+    assert mark_duplicates(db) == 0  # ve pasif KAA ilanına yeniden bağlanmaz
+
+
 def test_release_orphan_duplicates_frees_only_active_copies_of_inactive_originals(db):
     c, sid = db.conn, add_source(db.conn)
     dead = add_listing(c, sid, "dead", is_active=False)
