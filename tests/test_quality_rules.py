@@ -102,7 +102,8 @@ def test_alert_shows_age_and_no_longer_asks_about_customs():
 def test_suspicious_low_km_is_treated_as_unknown():
     from domain.comparables import effective_km
     assert effective_km({"km": 370, "year": 2016}) is None   # 370 = 370.000 yazılmış olabilir
-    assert effective_km({"km": 370, "year": 2026}) == 370     # yeni araçta makul
+    from datetime import date
+    assert effective_km({"km": 370, "year": 2026}, today=date(2026, 10, 5)) == 370  # yeni araçta makul (saat SABİT: 2028'de 2026 model 2 yaşında olur)
     assert effective_km({"km": 98000, "year": 2012}) == 98000
     from domain.data_gate import data_gaps, km_unknown
     from domain.comparables import Market

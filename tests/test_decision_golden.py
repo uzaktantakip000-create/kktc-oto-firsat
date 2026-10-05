@@ -29,6 +29,7 @@ GOLDEN = json.loads((Path(__file__).parent / "fixtures" / "decision_golden.json"
 CASES = GOLDEN["cases"]
 LABELS = {"yesil", "kontrol", "yok"}
 NOW = datetime.now(timezone.utc)
+SNAPSHOT_NOW = datetime(2026, 10, 4, 12, 0, tzinfo=timezone.utc)  # kayıtlı istatistikler bu tarihe göre alındı (km yaşı yıla bağlı: gerçek saatle yıllar sonra kayardı)
 FORBIDDEN_KEYS = {"seller_phone", "phone", "telefon", "url", "raw_text", "seller_handle", "handle", "name", "text"}
 
 # Bugünkü sistemin "olması gerekenden" ayrıştığı STRICT vakalar. Bu liste yalnızca KÜÇÜLEBİLİR: sistem düzeldikçe satır silinir.
@@ -110,7 +111,7 @@ def test_blocking_phrases_reproduce_flags():
 @pytest.mark.parametrize("case", CASES, ids=[c["id"] for c in CASES])
 def test_market_stats_reproduce_from_snapshot(case):
     """Kayıtlı emsal havuzundan bugünkü find_market aynı piyasa özetini üretir (kod ya da dosya sessizce kaymasın)."""
-    m = find_market(case_target(case), case_pool(GOLDEN, case, NOW), Settings(), NOW)
+    m = find_market(case_target(case), case_pool(GOLDEN, case, SNAPSHOT_NOW), Settings(), SNAPSHOT_NOW)
     st = case["stats"]
     if st is None:
         assert m is None
