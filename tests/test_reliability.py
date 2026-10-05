@@ -1,4 +1,5 @@
 """Toplama güvenilirliği: tick süresi/log, Apify maliyet kaydı, KKTCar/KibrisArabaal hata yakalama ve yenileme, Facebook görsel alanı."""
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -80,6 +81,30 @@ def test_tick_has_time_thresholds_and_facebook_first():
 def test_workflow_unbuffered_and_timeout():
     wf = (Path(__file__).parent.parent / ".github/workflows/tick.yml").read_text()
     assert 'PYTHONUNBUFFERED: "1"' in wf and "timeout-minutes: 20" in wf and "cancel-in-progress: false" in wf
+
+
+def test_ci_workflow_least_privilege():
+    """ci.yml (05.10.2026): iş akışı geneli yalnız okuma; dala yazma izni yalnız `live`'ı ilerleten `yayin` işinde. pip ile bağımlılık kuran
+    işler checkout jetonunu diske bırakmaz (persist-credentials: false): bozulmuş bir paket `live`'a yazamasın. (YAML kütüphanesi yok: satır okunur.)"""
+    text = (Path(__file__).parent.parent / ".github/workflows/ci.yml").read_text()
+    lines = [re.sub(r"(^|\s+)#.*$", "", ln) for ln in text.splitlines()]  # yorumlar atılır
+    top = lines[:lines.index("jobs:")]
+    assert top[top.index("permissions:") + 1] == "  contents: read" and not any(ln.endswith(": write") for ln in top)
+    jobs, name = {}, None
+    for ln in lines[lines.index("jobs:") + 1:]:
+        m = re.fullmatch(r"  ([\w-]+):", ln)
+        if m:
+            name = m.group(1)
+            jobs[name] = []
+        elif name and ln.strip():
+            jobs[name].append(ln.strip())
+    assert set(jobs) == {"test", "bildir", "db-test", "yayin"}
+    checkouts = {name: sum(ln.startswith("- uses: actions/checkout@") for ln in body) for name, body in jobs.items()}
+    assert checkouts == {"test": 1, "bildir": 0, "db-test": 1, "yayin": 1}
+    for name, body in jobs.items():
+        assert [ln for ln in body if ln.endswith(": write")] == (["contents: write"] if name == "yayin" else []), name
+        assert body.count("persist-credentials: false") == (0 if name == "yayin" else checkouts[name]), name  # yayin jetonla git push yapar
+    assert any(ln.startswith("run: git push origin") for ln in jobs["yayin"])
 
 
 # ---------- Apify maliyet kaydı ----------
