@@ -122,6 +122,23 @@ def test_release_orphan_duplicates_frees_only_active_copies_of_inactive_original
     assert rows["copy_of_dead_active"] is None and rows["copy_of_dead_inactive"] == dead and rows["copy_of_live"] == live
 
 
+def test_release_orphan_duplicates_also_frees_copies_linked_to_a_different_model_key(db):
+    """Model anahtarı düzeltmesinden (renormalize) sonra eski karışık anahtarda kurulmuş yanlış kopya bağı (CX-5 ↔ CX-30) çözülür; aynı modelin
+    gerçek kopyası ve yıl farkı olan aynı model kalır. Aktif/pasif fark etmez (yanlış bağ her iki durumda yanlış)."""
+    c, sid = db.conn, add_source(db.conn)
+    canon = add_listing(c, sid, "canon", brand_norm="Mazda", model_norm="cx-5")
+    add_listing(c, sid, "wrong_model", brand_norm="Mazda", model_norm="cx-30", duplicate_of=canon)  # serbest kalmalı
+    add_listing(c, sid, "wrong_model_inactive", brand_norm="Mazda", model_norm="cx-8", duplicate_of=canon, is_active=False)  # serbest kalmalı
+    add_listing(c, sid, "real_copy", brand_norm="Mazda", model_norm="cx-5", duplicate_of=canon)  # kalır
+    add_listing(c, sid, "other_year", brand_norm="Mazda", model_norm="cx-5", year=2016, duplicate_of=canon)  # yıl farkı: bu adımın işi değil, kalır
+    null_canon = add_listing(c, sid, "null_canon", brand_norm="Mazda", model_norm=None)
+    add_listing(c, sid, "null_copy", brand_norm="Mazda", model_norm=None, duplicate_of=null_canon)  # NULL = NULL: aynı anahtar, kalır
+    assert db.release_orphan_duplicates() == 2
+    rows = {r["source_item_id"]: r["duplicate_of"] for r in c.execute("SELECT source_item_id, duplicate_of FROM listings").fetchall()}
+    assert rows["wrong_model"] is None and rows["wrong_model_inactive"] is None
+    assert rows["real_copy"] == canon and rows["other_year"] == canon and rows["null_copy"] == null_canon
+
+
 def test_pending_strong_skips_a_listing_whose_alert_was_sent_but_not_recorded_for_that_subscriber(db):
     """Gönderilmiş ama `alerts` kaydı yazılamamış 🟢 (bot_state yedek izi) sonraki turlarda aday olmaz; izi olmayan başka abone için aday kalır."""
     from infrastructure.db.repository import unsaved_alert_key

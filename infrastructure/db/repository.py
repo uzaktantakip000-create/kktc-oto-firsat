@@ -264,11 +264,19 @@ class Repository:
 
     def release_orphan_duplicates(self) -> int:
         """Kanonik (ilk görülen) ilan pasifleşmiş ama kopyası hâlâ AKTİFSE kopya serbest kalır (duplicate_of = NULL): aksi halde bu
-        aktif ilan emsale girmez ve hiç değerlendirilmez. (Aktif ilan yalnızca aktif bir ilanın kopyası sayılır: application/dedupe.py.)"""
-        return self.conn.execute(
+        aktif ilan emsale girmez ve hiç değerlendirilmez. (Aktif ilan yalnızca aktif bir ilanın kopyası sayılır: application/dedupe.py.)
+        Ayrıca kopyanın (marka, model) anahtarı kanonikten FARKLIYSA bağ yanlıştır (aynı araç değil) ve çözülür: `mark_duplicates` yalnız
+        aynı anahtar+yıl grubunda bağ kurar, ama model anahtarı kuralları düzeltilince (renormalize) eski karışık anahtarda kurulmuş bağlar
+        (CX-5 ↔ CX-30 gibi) kalıyordu ve bu ilanlar hiç değerlendirilmiyordu. Yıla bakılmaz (yıl farkı ayrı karar). Dönen: serbest kalan sayısı."""
+        orphans = self.conn.execute(
             """UPDATE listings d SET duplicate_of = NULL FROM listings c
                WHERE d.duplicate_of = c.id AND d.is_active AND NOT c.is_active"""
         ).rowcount
+        mislinked = self.conn.execute(
+            """UPDATE listings d SET duplicate_of = NULL FROM listings c
+               WHERE d.duplicate_of = c.id AND ROW(d.brand_norm, d.model_norm) IS DISTINCT FROM ROW(c.brand_norm, c.model_norm)"""
+        ).rowcount
+        return orphans + mislinked
 
     def set_duplicate(self, listing_id, canonical_id) -> None:
         self.conn.execute("UPDATE listings SET duplicate_of=%s WHERE id=%s", (canonical_id, listing_id))

@@ -118,9 +118,9 @@ def run(repo: Repository) -> None:
     now = datetime.now(timezone.utc)
     try:
         repo.expire_unverifiable()
-        released = repo.release_orphan_duplicates()  # kanoniği pasifleşen aktif kopya serbest kalır (önce: tarama onları yeniden hesaplar)
+        released = repo.release_orphan_duplicates()  # kanoniği pasifleşen aktif kopya ya da farklı modele bağlı yanlış kopya serbest kalır
         if released:
-            print(f"mükerrer: kanoniği pasifleşen {released} aktif ilan serbest bırakıldı")
+            print(f"mükerrer: {released} ilan serbest bırakıldı (kanoniği pasifleşmiş ya da farklı model)")
         dedupe_full = full_pass_due(repo, DEDUPE_FULL_KEY, now)
         mark_duplicates(repo, quick=not dedupe_full)  # saatte bir tam tarama, arada yalnız yeni ilanın değdiği gruplar
         if dedupe_full:
