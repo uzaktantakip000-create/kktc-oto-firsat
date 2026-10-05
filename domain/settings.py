@@ -1,6 +1,6 @@
 from pydantic import BaseModel, model_validator
 
-RULES_VERSION = "2026-10-05"  # değerleme kuralları değişince artır (günde en çok bir kez): sonraki TAM turda bildirime aday ilanlar yeni kurallarla yeniden değerlendirilir (EKLEME-YALNIZ: eski satır silinmez), kalanı 3 günlük yeniden bakışla yenilenir
+RULES_VERSION = "2026-10-07"  # değerleme kuralları değişince artır (günde en çok bir kez): sonraki TAM turda bildirime aday ilanlar yeni kurallarla yeniden değerlendirilir (EKLEME-YALNIZ: eski satır silinmez), kalanı 3 günlük yeniden bakışla yenilenir
 
 
 class Settings(BaseModel):
@@ -17,8 +17,18 @@ class Settings(BaseModel):
     min_plausible_price_gbp: float = 500  # altı yanlış yazım/eksik rakam sayılır (arabanın fiyatı değil)
     max_plausible_price_gbp: float = 250_000
     small_pool_band: float = 0.5  # 8'den az emsalde medyanın %50'sinden az / 2 katından çok olanlar atılır
-    km_high_ratio: float = 1.3  # ilanın km'si emsal medyanının bu katından fazlaysa 🟢 verilmez (ucuzluk yüksek kmdendir)
+    km_high_ratio: float = 1.3  # ilanın km'si emsal medyanının bu katından fazlaysa 🟢 verilmez: yalnız km'ye göre düzeltilmemiş piyasada (`km_yuksek`) ve km 'bin' eksik kuralında
     km_high_margin: int = 10_000  # ...ve fark en az bu kadar km ise
+    # km bandı YOK (kmbant2 çalışması 05.10.2026; sahip onayı ve canlı 07.10.2026, RULES_VERSION 2026-10-07): her emsalin fiyatı ilanın km'sine çekilir. Katsayı veriden ölçüldü: aynı marka+model+yıl
+    # ilan çiftlerinde (aktif + satıldı) Theil-Sen eğimi 10.000 km başına %1,06 (arşiv dahil %1,16); modeller arası fark gürültü düzeyinde
+    # (Cochran Q ≈ serbestlik derecesi): tek genel katsayı. Bu katsayıyla düzeltilmiş emsal, 0-150bin+ her km uzaklığında sapmasız (|sapma| ≤ %3).
+    # 07.10 yeniden ölçüm (2.516 ilan): yalnız aktif %0,98, aktif + satıldı %1,15, grup medyanı %0,95-1,07 → katsayı aynı kaldı.
+    km_adjust_per_10k: float = 0.011
+    # 🟢 için emsallerin en az km_near_min_comparables kadarının km'si ilanın km'sine ±km_near_limit yakın olmalı (km'si yazmayan emsal sayılır;
+    # ilanın km'si bilinmiyorsa kural yok). Uzak km'li emsal fiyatı düzeltilerek medyana girer ama "8 benzer araç" kanıtını tek başına tamamlamaz;
+    # ilandaki km yanlış yazılmışsa (190.000 → 19.000) sahte 🟢'yi de bu kural tutar (ölçüm: 1.456 ilanda sahte 🟢 37 → 1).
+    km_near_limit: int = 50_000
+    km_near_min_comparables: int = 8
     engine_tolerance_l: float = 0.3  # iki ilanın motor hacmi (litre) bundan fazla farklıysa emsal sayılmaz
     active_max_age_days: int = 60  # aktif ama 60 günden uzun süredir yayında duran ilan satılamamıştır: emsal sayılmaz
     min_distinct_sellers: int = 2  # emsaller en az bu kadar farklı satıcıdan gelmeli (sahip kararı 3→2). DÜRÜST NOT (Opus): satıcı başına ≤2 emsal + en az 3 emsal şartıyla bu kural pratikte HİÇ tetiklenmez (n≥3 zaten ≥2 satıcı anahtarı); asıl koruma satıcı sınırıdır. Kimliksiz emsaller (KKTCar satılmış) ayrı satıcı sayılır: gerçek güvence değil, üst sınır.

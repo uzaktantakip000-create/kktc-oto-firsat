@@ -17,6 +17,7 @@ GAP_LABELS = {
     "model_belirsiz": "model karışık havuzda (ör. CX-3/CX-5, Yaris/Yaris Cross): fiyat kıyası güvenilmez",
     "km_yuksek": "km emsallerden çok yüksek",
     "km_bin_eksik_yuksek": "km çok düşük yazıyor (bin eksik olabilir): ×1000 okunursa emsallerden çok yüksek",
+    "km_yakin_emsal_az": "km'si bu araca yakın (±50.000 km) benzer ilan 8'den az: fiyat kıyası uzak km'li emsallerin düzeltilmesine dayanıyor",
     "ucuz_ceyrek_degil": "fiyat benzer araçların en ucuz çeyreğinde değil",
     "emsal_yili_yeni": "benzer araçların model yılı bu araçtan daha YENİ ağırlıklı (yeni model pahalı): fiyat kıyası güvenilmez",
     "plaka_uyari": "TR/yabancı plaka yazıyor",
@@ -60,10 +61,13 @@ def data_gaps(listing: dict, market: Market, settings: Settings | None = None, n
     if listing.get("extraction_by") == "llm":
         gaps.append("llm_okudu")  # yapay zekâ okuması tek başına 🟢 vermez
     km, med = effective_km(listing, today), market.median_km
-    if km and med and km > med * s.km_high_ratio and km - med >= s.km_high_margin:
-        gaps.append("km_yuksek")
+    if km and med and market.near_n is None and km > med * s.km_high_ratio and km - med >= s.km_high_margin:
+        gaps.append("km_yuksek")  # yalnız km'ye göre DÜZELTİLMEMİŞ piyasada (07.10.2026): düzeltilmiş fiyatta yüksek km zaten düşülmüş; yüksek km'li
+        # ilanda düzeltilmiş medyan sapmasız ölçüldü (km/emsal km 1,3-1,6: %+1,0; 1,6+: %-0,8), ikinci ceza yanlış 🟡 üretiyordu. Uzak km'yi yakın emsal kapısı tutar.
     if km_thousand_missing_high(listing, market, s, today):
         gaps.append("km_bin_eksik_yuksek")  # "214 km" ≈ 214.000 ve emsallerden çok yüksek: km_yuksek gibi 🟢'yi 🟡'ya düşürür (bkz. DEGER_MOTORU §9)
+    if market.near_n is not None and market.near_n < s.km_near_min_comparables:
+        gaps.append("km_yakin_emsal_az")  # "8 benzer araç" kanıtı uzak km'li emsallerle tamamlanmaz (km'si bilinmeyen ilanda near_n yok: kural yok)
     return gaps
 
 

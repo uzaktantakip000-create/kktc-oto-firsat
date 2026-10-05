@@ -1,8 +1,8 @@
+import math
+import random
 from datetime import datetime, timedelta, timezone
 
-import random
-
-from domain.comparables import find_market, km_band, nearest_comparables, seller_key
+from domain.comparables import find_market, km_adjusted_price, nearest_comparables, seller_key
 
 NOW = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
@@ -45,8 +45,39 @@ def test_outlier_removed():
     assert find_market(TARGET, pool, now=NOW).high_gbp == 6700
 
 
-def test_km_band():
-    assert km_band(49_999) == 0 and km_band(50_000) == 1 and km_band(None) is None
+def test_km_adjusted_price_moves_the_comparable_to_the_target_km():
+    """10.000 km başına %1,1 (ln ölçeğinde, iki yönde aynı): az km'li emsal ucuzlar, çok km'li emsal pahalanır; km'lerden biri yoksa dokunulmaz."""
+    assert abs(km_adjusted_price(10_000, 120_000, 100_000, 0.011) - 10_000 * math.exp(-0.022)) < 1e-6  # emsal 20bin az km'li: ~£9.782
+    assert abs(km_adjusted_price(10_000, 100_000, 120_000, 0.011) - 10_000 * math.exp(0.022)) < 1e-6  # emsal 20bin çok km'li: ~£10.222
+    assert km_adjusted_price(10_000, None, 120_000, 0.011) == 10_000 and km_adjusted_price(10_000, 120_000, None, 0.011) == 10_000
+    assert km_adjusted_price(10_000, 120_000, 100_000, 0.0) == 10_000
+
+
+def test_no_km_band_cliff_at_150k():
+    """Eski bantta 149.999 km ile 150.000 km farklı emsal kümesi seçiyordu (BMW 3 2007 £5.400: +%7 ↔ +%24). Bant yok: aynı emsaller, aynı medyan."""
+    pool = [row(i, 5500 + i * 250, year=2007, km=116_000 + i * 8_000) for i in range(16)]  # 116.000 … 236.000 km
+    a = find_market(row("t", 5400, year=2007, km=149_999), pool, now=NOW)
+    b = find_market(row("t", 5400, year=2007, km=150_000), pool, now=NOW)
+    assert a.comparable_ids == b.comparable_ids and a.n == b.n == 16
+    assert abs(a.median_gbp - b.median_gbp) < 0.01 * a.median_gbp / 100  # 1 km farkı: medyan %0,01'den az oynar
+
+
+def test_market_uses_km_adjusted_prices_and_unknown_km_is_untouched():
+    pool = [row(i, 10_000, km=100_000) for i in range(3)] + [row(f"u{i}", 10_000, km=None) for i in range(2)]
+    m = find_market(row("t", 8000, km=120_000), pool, now=NOW)  # 3 emsal 20bin az km'li → £9.782; 2 km'siz emsal £10.000 (dokunulmaz)
+    assert m.n == 5 and abs(m.median_gbp - 10_000 * math.exp(-0.022)) < 0.01 and m.high_gbp == 10_000
+    km_less = find_market(row("t", 8000, km=None), pool, now=NOW)  # km'si yazmayan ilan: hiç düzeltme yok (bugünkü gibi)
+    assert km_less.median_gbp == 10_000 and km_less.near_n is None
+
+
+def test_far_km_comparables_enter_the_median_but_not_the_near_count():
+    """±50.000 km dışındaki emsal fiyatı düzeltilerek medyana girer, ama 'yakın emsal' sayısına girmez (km'si yazmayan emsal yakın sayılır)."""
+    near = [row(f"n{i}", 7000 + i * 100, km=70_000 + i * 5_000) for i in range(5)]  # 70-90bin: hedefe (80bin) yakın
+    far = [row(f"f{i}", 6000 + i * 100, km=200_000 + i * 5_000) for i in range(3)]  # 200-210bin: 120bin+ uzak
+    unknown = [row(f"u{i}", 7500, km=None) for i in range(2)]
+    m = find_market(TARGET, near + far + unknown, now=NOW)
+    assert m.n == 10 and m.near_n == 7  # 5 yakın + 2 km'siz
+    assert set(m.comparable_ids) >= {"f0", "f1", "f2"}
 
 
 def test_age_uses_ref_date_not_first_seen():
@@ -282,10 +313,11 @@ def test_cap_choice_does_not_depend_on_pool_order_property():
 
 def test_conservative_merge_takes_the_smaller_median_p25_and_km_and_records_both_medians():
     """Opus (04.10.2026): dar piyasanın medyanı ile geniş piyasanın p25/km'sinin karışması 'en ucuz çeyrek' kapısını gevşetirdi."""
-    narrow = [row(f"n{i}", 7000 + i * 100, year=2015, km=60_000 + i * 1000) for i in range(5)]  # medyan 7200, km ~62.000
+    narrow = [row(f"n{i}", 7000 + i * 100, year=2015, km=60_000 + i * 1000) for i in range(5)]  # medyan 7200 (62.000 km), km ~62.000
     wide = [row(f"w{i}", 9000 + i * 100, year=2013, km=90_000 + i * 1000) for i in range(5)]
     m = find_market(TARGET, narrow + wide, now=NOW)
-    assert m.year_span == 2 and m.median_gbp == 7200 and m.narrow_median_gbp == 7200 and m.wide_median_gbp > 8000
+    narrow_median = 7200 * math.exp(-0.011 * 1.8)  # medyan emsal 62.000 km, hedef 80.000 km: 18bin km farkı kadar ucuzlatılır (~£7.059)
+    assert m.year_span == 2 and abs(m.median_gbp - narrow_median) < 0.01 and m.narrow_median_gbp == m.median_gbp and m.wide_median_gbp > 8000
     assert m.p25_gbp is not None and m.p25_gbp <= m.median_gbp  # p25 ≤ medyan: tutarsız çift yok
     assert m.median_km is not None and m.median_km <= 80_000
 

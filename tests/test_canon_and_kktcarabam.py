@@ -33,14 +33,14 @@ def test_canon_maps_only_unambiguous_spellings():
 def test_same_vehicle_type_written_differently_is_a_comparable():
     target = car("t", transmission="düz", fuel="elektrik")  # KKTCarabam yazımı
     row = car("r", transmission="manuel", fuel="elektrikli")  # KibrisArabaAl yazımı
-    assert _is_comparable(target, row, 1, False, NOW, Settings())
+    assert _is_comparable(target, row, 1, NOW, Settings())
 
 
 def test_genuinely_different_types_are_still_not_comparables():
     s = Settings()
-    assert not _is_comparable(car("t", transmission="otomatik"), car("r", transmission="manuel"), 1, False, NOW, s)
-    assert not _is_comparable(car("t", fuel="dizel"), car("r", fuel="benzin"), 1, False, NOW, s)
-    assert not _is_comparable(car("t", transmission="yarı otomatik"), car("r", transmission="otomatik"), 1, False, NOW, s)
+    assert not _is_comparable(car("t", transmission="otomatik"), car("r", transmission="manuel"), 1, NOW, s)
+    assert not _is_comparable(car("t", fuel="dizel"), car("r", fuel="benzin"), 1, NOW, s)
+    assert not _is_comparable(car("t", transmission="yarı otomatik"), car("r", transmission="otomatik"), 1, NOW, s)
 
 
 def test_kktcarabam_card_gets_standard_spelling():

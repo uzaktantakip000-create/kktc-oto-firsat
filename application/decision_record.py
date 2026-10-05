@@ -39,6 +39,8 @@ def decision_record(a: Decision, listing: dict, book: PriceBook | None, s: Setti
     }
     if direct:
         evidence.update({"gbp_only": m.gbp_only, "medyan_yil": _r(m.median_year, 1), "medyan_km": m.median_km, "yil_araligi": m.year_span})
+        if m.near_n is not None:  # km'si ilana ±km_near_limit yakın emsal sayısı (🟢 için ≥ km_near_min_comparables); fiyatlar km'ye göre düzeltildi
+            evidence.update({"yakin_emsal_n": m.near_n, "km_duzeltme_10bin": s.km_adjust_per_10k})
         if m.narrow_median_gbp is not None:  # yıl aralığı genişletildi (7c): karar iki medyanın küçüğüyle verildi
             evidence.update({"medyan_dar": _r(m.narrow_median_gbp), "medyan_genis": _r(m.wide_median_gbp)})
         if a.profit.tier in (Tier.STRONG, Tier.ESTIMATED):

@@ -9,6 +9,10 @@ NOT (04.10.2026, Adım 7b): satıcı başına en fazla 2 emsal kuralı gelince H
 yeniden alındı (n 10→9, medyan £14.750→£14.500); etiketler/`expected` DEĞİŞMEDİ (g49 hâlâ 🟢: n=9 ≥ 8, fiyat medyandan %29 ucuz).
 NOT (04.10.2026, Adım 7c/7d): havuz genişletme 8'e kadar sürünce 9 vakanın `stats` kaydı yeniden alındı (g03, g06, g08, g14, g16, g29, g32, g36, g37: n arttı, yıl aralığı ±2);
 etiketler/`expected` ve bugünkü sistem sonucu DEĞİŞMEDİ (yanlış 🟢 testi geçiyor: g29/g32'yi yıl koruması `emsal_yili_yeni` tutar).
+NOT (05.10.2026, kmbant2): km bandı kalktı, emsal fiyatları ilanın km'sine çekiliyor (10.000 km başına %1,1) ve 🟢 için ≥8 emsal ilanın km'sine
+±50.000 km yakın olmalı: 35 vakanın `stats` kaydı yeniden alındı (n, medyan, yıl aralığı); etiketler/`expected`/`system_now` DEĞİŞMEDİ.
+g24 (BMW 1 2010, 140bin km) bantsız 8 emsale ulaşıyor (8.si 19bin km'li, 121bin uzak) ama yakın emsal 7: 🟢 değil (yanlış 🟢 testi geçiyor).
+NOT (07.10.2026, canlı): km'ye göre düzeltilmiş piyasada `km_yuksek` kapısı kalktı (spec §24.16); etiketler/`expected`/`stats` DEĞİŞMEDİ, yanlış 🟢 testi geçiyor.
 NOT: havuz satırları `currency` taşımaz → TL emsal kuralı (Adım 6c) bu dosyada görünmez; birim testleri tests/test_comparables.py'dadır."""
 import json
 import re

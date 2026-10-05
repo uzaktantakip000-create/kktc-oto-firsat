@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, timedelta, timezone
 
 import psycopg
@@ -83,12 +84,15 @@ def test_missing_model_never_strong():
     assert ev.profit.tier is Tier.NEGOTIABLE
 
 
-def test_km_far_above_comparables_never_strong():
+def test_km_far_above_comparables_is_judged_on_km_adjusted_prices():
+    """07.10.2026: emsal fiyatları ilanın km'sine çekilir (10.000 km başına %1,1); düzeltilmiş piyasada 'km_yuksek' kapısı yok (yüksek km fiyattan
+    zaten düşüldü). 98bin km'lik ilan, 60bin km'lik emsallerin düzeltilmiş medyanının hâlâ %20+ altındaysa 🟢; emsaller ±50bin yakın (8 ≥ 8)."""
     pool = [car(f"p{i}", 8000 + i * 100, km=60_000) for i in range(8)]  # hepsi 60 bin km
-    repo = FakeRepo([car("t", 5000, km=98_000)], pool)  # aynı km bandı (50-100 bin) ama +%63
+    repo = FakeRepo([car("t", 5000, km=98_000)], pool)
     (ev,) = evaluate_new(repo)
-    assert ev.market.median_km == 60_000
-    assert ev.profit.tier is Tier.NEGOTIABLE and "km_yuksek" in repo.saved[0][1]["red_flags"]
+    assert ev.market.median_km == 60_000 and ev.market.near_n == 8
+    assert abs(ev.market.median_gbp - 8350 * math.exp(-0.011 * 3.8)) < 0.01  # medyan £8.350, 38bin km farkıyla ≈ £8.008
+    assert ev.profit.tier is Tier.STRONG and "km_yuksek" not in (repo.saved[0][1]["red_flags"] or [])
 
 
 def test_similar_km_stays_strong():

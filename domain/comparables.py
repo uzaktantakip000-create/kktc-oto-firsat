@@ -1,13 +1,11 @@
 """Emsal seçimi ve piyasa medyanı (DEGER_MOTORU.md bölüm 2)."""
+import math
 import statistics
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 
 from domain.normalize import canon_fuel, canon_transmission
 from domain.settings import Settings
-
-KM_BANDS = [(0, 50_000), (50_000, 100_000), (100_000, 150_000), (150_000, 10**9)]
-
 
 LOW_KM_OLD_AGE = 10  # bu yaştan eski araçta...
 LOW_KM_OLD_LIMIT = 15_000  # ...bu kadar kmden azı (ör. 2013 model 11.500 km = 115.000 yazılmış olabilir) şüpheli: bilinmiyor sayılır
@@ -25,10 +23,12 @@ def effective_km(row: dict, today: date | None = None) -> int | None:
     return km
 
 
-def km_band(km: int | None) -> int | None:
-    if km is None:
-        return None
-    return next(i for i, (lo, hi) in enumerate(KM_BANDS) if lo <= km < hi)
+def km_adjusted_price(price: float, target_km: int | None, row_km: int | None, per_10k: float) -> float:
+    """Emsal fiyatını ilanın km'sine çeker: aradaki her 10.000 km için %`per_10k` (ln ölçeğinde; iki yönde aynı katsayı).
+    Emsal ilandan AZ km'liyse fiyatı düşer, ÇOK km'liyse yükselir. İki km'den biri bilinmiyorsa fiyata dokunulmaz (km'siz ilan = bugünkü gibi)."""
+    if target_km is None or row_km is None:
+        return price
+    return price * math.exp(-per_10k * (target_km - row_km) / 10_000)
 
 
 @dataclass(frozen=True)
@@ -47,9 +47,11 @@ class Market:
     comparable_ids: tuple = ()  # piyasayı KURAN emsal ilanlarının kimlikleri (mesajdaki emsaller yalnız bunlardan seçilir)
     narrow_median_gbp: float | None = None  # genişleme birleşiminde (7c): dar (ilk geçerli) piyasanın medyanı; birleşme olmadıysa None
     wide_median_gbp: float | None = None  # ...ve geniş piyasanın kendi medyanı (median_gbp ikisinin küçüğüdür)
+    near_n: int | None = None  # km'si ilana ±km_near_limit yakın (ya da km'si yazmayan) emsal sayısı; ilanın km'si bilinmiyorsa None
 
 
-def _is_comparable(target: dict, row: dict, year_span: int, widen_km: bool, now: datetime, s: Settings, gbp_only: bool = False) -> bool:
+def _is_comparable(target: dict, row: dict, year_span: int, now: datetime, s: Settings, gbp_only: bool = False) -> bool:
+    """Emsal kuralları (km HARİÇ: km bandı yok, fiyat _build_market'te ilanın km'sine çekilir)."""
     if row["id"] == target["id"] or row.get("duplicate_of"):
         return False
     if gbp_only and row.get("currency") == "TRY":
@@ -78,10 +80,6 @@ def _is_comparable(target: dict, row: dict, year_span: int, widen_km: bool, now:
     te, re_ = target.get("engine_l"), row.get("engine_l")
     if te is not None and re_ is not None and round(abs(float(te) - float(re_)), 1) > s.engine_tolerance_l:
         return False  # 316i ile 340i gibi farklı motorlar aynı havuzda karışmaz (bilinmeyen motor elenmez)
-    today = now.date()
-    tb, rb = km_band(effective_km(target, today)), km_band(effective_km(row, today))
-    if tb is not None and rb is not None and abs(tb - rb) > (1 if widen_km else 0):
-        return False
     # İlanın gerçek tarihi (yayın/arşiv); yoksa sisteme giriş tarihi. Geçmiş doldurma "bugün görüldü" sayılmaz.
     ref = row.get("ref_date") or row.get("first_seen_at")
     if ref and ref < now - timedelta(days=s.comparable_window_days):
@@ -137,27 +135,34 @@ def _drop_outliers(prices: list[float], band: float = 0.5) -> list[float]:
     return [p for p in prices if lo <= p <= hi]
 
 
-def _build_market(target: dict, pool: list[dict], span: int, widen: bool, gbp_only: bool, s: Settings, now: datetime) -> Market | None:
-    """Tek bir genişleme adımı (yıl aralığı + km bandı + TL ayrımı) için piyasa; geçerli değilse None."""
-    rows = _cap_per_seller([r for r in pool if _is_comparable(target, r, span, widen, now, s, gbp_only)],
-                           target, s.max_comparables_per_seller, now.date())
+def _build_market(target: dict, pool: list[dict], span: int, gbp_only: bool, s: Settings, now: datetime) -> Market | None:
+    """Tek bir genişleme adımı (yıl aralığı + TL ayrımı) için piyasa; geçerli değilse None.
+    km bandı yok: her emsalin fiyatı ilanın km'sine çekilir (km_adjusted_price); aykırı atma, medyan, alt çeyrek ve aralık DÜZELTİLMİŞ
+    fiyatlarla. km'si bilinmeyen ilanda (ya da emsalde) düzeltme yok."""
+    today = now.date()
+    rows = _cap_per_seller([r for r in pool if _is_comparable(target, r, span, now, s, gbp_only)],
+                           target, s.max_comparables_per_seller, today)
     if len(rows) < s.min_comparables_alert:
         return None
-    prices = _drop_outliers(sorted(r["price_gbp"] for r in rows), s.small_pool_band)
+    tk = effective_km(target, today)
+    adj = {r["id"]: km_adjusted_price(r["price_gbp"], tk, effective_km(r, today), s.km_adjust_per_10k) for r in rows}
+    prices = _drop_outliers(sorted(adj.values()), s.small_pool_band)
     if len(prices) < s.min_comparables_alert or (gbp_only and len(prices) < s.gbp_only_min_comparables):
         return None
     kept = set(prices)
-    used = [r for r in rows if r["price_gbp"] in kept]
+    used = [r for r in rows if adj[r["id"]] in kept]
     sellers_n = len({seller_key(r) for r in used})
     if sellers_n < s.min_distinct_sellers:
         return None  # emsallerin çoğu tek satıcıdan: piyasa fiyatı sayılmaz, havuzu genişlet
     archived = sum(1 for r in used if not r.get("is_active", True)) / len(used)
-    kms = [k for k in (effective_km(r, now.date()) for r in used) if k]
+    row_kms = [effective_km(r, today) for r in used]
+    kms = [k for k in row_kms if k]
     median_km = int(statistics.median(kms)) if len(kms) >= 3 else None
+    near_n = None if tk is None else sum(1 for k in row_kms if k is None or abs(k - tk) <= s.km_near_limit)
     p25 = statistics.quantiles(prices, n=4, method="inclusive")[0] if len(prices) >= 2 else min(prices)
     years = [r["year"] for r in used if r.get("year") is not None]
     return Market(len(prices), statistics.median(prices), min(prices), max(prices), span, archived, median_km, p25, gbp_only,
-                  sellers_n, statistics.median(years) if years else None, tuple(r["id"] for r in used))
+                  sellers_n, statistics.median(years) if years else None, tuple(r["id"] for r in used), near_n=near_n)
 
 
 def _merge_conservative(first: Market, wide: Market) -> Market:
@@ -170,7 +175,7 @@ def _merge_conservative(first: Market, wide: Market) -> Market:
 
 
 def find_market(target: dict, pool: list[dict], settings: Settings | None = None, now: datetime | None = None) -> Market | None:
-    """Önce ±1 yıl ve aynı km bandı; emsal azsa yıl ±2 ve komşu bant. Hiç emsal yoksa None.
+    """Önce ±1 yıl; emsal azsa yıl ±2. Hiç emsal yoksa None. km bandı yok: emsal fiyatları ilanın km'sine çekilir (_build_market).
     £ hedefte, her yıl aralığında önce TL fiyatlı emsal OLMADAN denenir (yalnız o havuz tek başına ≥ gbp_only_min_comparables emsal
     verirse kullanılır); olmazsa eskisi gibi TL dahil. Adım sırası: ±1 £ → ±1 hepsi → ±2 £ → ±2 hepsi.
     Genişleme (Adım 7c): ilk GEÇERLİ adım `widen_until_comparables`'a (8) ulaşıyorsa o seçilir; ulaşmıyorsa sıradaki adımlar denenir ve
@@ -180,9 +185,9 @@ def find_market(target: dict, pool: list[dict], settings: Settings | None = None
     now = now or datetime.now(timezone.utc)
     gbp_first = target.get("currency") != "TRY" and any(r.get("currency") == "TRY" for r in pool)
     first: Market | None = None
-    for span, widen in ((1, False), (2, True)):
+    for span in (1, 2):
         for gbp_only in ((True, False) if gbp_first else (False,)):
-            m = _build_market(target, pool, span, widen, gbp_only, s, now)
+            m = _build_market(target, pool, span, gbp_only, s, now)
             if m is None:
                 continue
             if m.n >= s.widen_until_comparables:
@@ -197,12 +202,11 @@ def nearest_comparables(target: dict, pool: list[dict], market: Market, k: int =
     """Mesajda gösterilecek en yakın k emsal (yıl farkı + km farkı + piyasa aralığı içinde fiyat)."""
     s = settings or Settings()
     now = now or datetime.now(timezone.utc)
-    widen = market.year_span >= 2
     if market.comparable_ids:  # piyasayı kuran emsaller (satıcı sınırı/aykırı atma sonrası): mesajda GÖSTERİLEN = SAYILAN
         ids = set(market.comparable_ids)
         rows = [r for r in pool if r["id"] in ids]
     else:  # piyasa kayıtlı özetten yeniden kurulmuş (kimlik yok): eski süzme
-        rows = [r for r in pool if _is_comparable(target, r, market.year_span, widen, now, s, market.gbp_only)
+        rows = [r for r in pool if _is_comparable(target, r, market.year_span, now, s, market.gbp_only)
                 and market.low_gbp <= r["price_gbp"] <= market.high_gbp]
 
     def distance(r: dict) -> float:
