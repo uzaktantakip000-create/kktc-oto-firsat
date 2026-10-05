@@ -8,7 +8,7 @@ from application import feed_switch, price_book_job
 from application.maintenance import summary_line
 from application.health import notify_owner, source_limit_hours
 from domain.kktc_time import kktc_hour, to_kktc
-from infrastructure.db.repository import Repository
+from infrastructure.db.repository import OWNER_VOTE_SQL, Repository
 
 MORNING_HOURS_KKTC = range(8, 12)  # KKTC yerel saatiyle 08:00–11:59 arası bir kez (yaz-kış aynı; yaz/kış saati domain/kktc_time)
 FEEDBACK_TARGET = 30  # eşik ayarı için gereken geri bildirim sayısı
@@ -72,7 +72,8 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
                                                ORDER BY evaluated_at DESC LIMIT 1) e ON TRUE
            WHERE l.is_active AND l.duplicate_of IS NULL
              AND COALESCE(l.posted_at, l.first_seen_at) > NOW() - interval '60 days'""").fetchone()
-    fb_n = repo.conn.execute("SELECT count(*) AS n FROM feedback WHERE action NOT LIKE 'audit_%'").fetchone()["n"]
+    # "Senin düğme basışların": yalnız sahibin (ve sahibi belli olmayan eski) oyu; abonenin basışı sayılmaz
+    fb_n = repo.conn.execute(f"SELECT count(*) AS n FROM feedback f WHERE f.action NOT LIKE 'audit_%' AND {OWNER_VOTE_SQL}").fetchone()["n"]
     last_tick = repo.get_state("tick:last")
 
     lines = [f"📊 Sistem raporu — {to_kktc(now):%d.%m %H:%M}", ""]

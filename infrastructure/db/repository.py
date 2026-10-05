@@ -565,11 +565,13 @@ class Repository:
         ).fetchall()
 
     def recent_opportunities(self, limit: int = 10) -> list[dict]:
-        """Gönderilmiş son 🟢/🟠 fırsatlar (en yeni önce, ilan başına tek satır) ve sahibin son düğme cevabı (/son komutu)."""
+        """Gönderilmiş son 🟢/🟠 fırsatlar (en yeni önce, ilan başına tek satır) ve SAHİBİN son düğme cevabı (/son komutu; abonenin
+        basışı "…dedin" diye sahibe yazılmasın)."""
         return self.conn.execute(
-            """SELECT l.id, l.url, l.year, l.brand, l.model, l.price_gbp::float8 AS price_gbp, x.tier, x.sent_at,
+            f"""SELECT l.id, l.url, l.year, l.brand, l.model, l.price_gbp::float8 AS price_gbp, x.tier, x.sent_at,
                       e.median::float8 AS median_gbp,
                       (SELECT f.action FROM feedback f WHERE f.listing_id = l.id AND f.action NOT LIKE 'audit_%%'
+                         AND {OWNER_VOTE_SQL}
                        ORDER BY f.created_at DESC LIMIT 1) AS feedback
                FROM (SELECT listing_id, tier, MIN(sent_at) AS sent_at FROM alerts
                      WHERE tier IN ('guclu','tahmini') GROUP BY listing_id, tier) x

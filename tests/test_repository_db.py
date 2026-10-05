@@ -544,8 +544,10 @@ def test_every_automatic_feedback_read_uses_the_owner_vote_filter():
 
     from infrastructure.db.repository import Repository
     for fn in (Repository.market_pool, Repository.feedback_votes, Repository.pas_count, Repository.est_feedback_by_model,
-               Repository.est_feedback_recent, Repository.sources_failing_feedback):
+               Repository.est_feedback_recent, Repository.sources_failing_feedback, Repository.recent_opportunities):
         assert "OWNER_VOTE_SQL" in inspect.getsource(fn), fn.__name__
+    from application import status
+    assert "OWNER_VOTE_SQL" in inspect.getsource(status.build_status)  # /durum "Senin düğme basışların"
 
 
 def test_learning_gate_counts_owner_votes_only(db):
@@ -618,6 +620,22 @@ def test_source_guard_counts_owner_wrong_votes_only(db):
     vote(c, lids[2], "yanlis_fiyat", None)  # sahibi belli olmayan eski kayıt sahibin sayılır
     (row,) = db.sources_failing_feedback(10, 3)
     assert row["id"] == sid and row["n"] == 3 and row["bad_n"] == 3
+
+
+def test_owner_screens_show_only_the_owners_taps(db):
+    """/son "…dedin" ve /durum "Senin düğme basışların" sahibin ekranıdır: abonenin basışı orada sahibinmiş gibi görünmez."""
+    from application import status
+    c, sid = db.conn, add_source(db.conn)
+    add_people(c)
+    a, b = add_listing(c, sid, "a"), add_listing(c, sid, "b")
+    for lid in (a, b):
+        db.save_alert(lid, "o1", "guclu", 1, evaluation_id=None, price_gbp=None)
+    vote(c, a, "ilgilendim", "chat:o1")
+    vote(c, a, "yanlis_fiyat", "chat:s1")  # abone sonradan bastı: sahibin cevabı değişmez
+    vote(c, b, "yanlis_fiyat", "chat:s1")
+    got = {r["id"]: r["feedback"] for r in db.recent_opportunities()}
+    assert got == {a: "ilgilendim", b: None}
+    assert "Senin düğme basışların: 1 " in status.build_status(db, datetime.now(timezone.utc))
 
 
 def test_current_decisions_reads_the_latest_evaluation_of_active_listings_for_fiyat(db):
