@@ -15,7 +15,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from domain.comparables import _drop_outliers, _is_comparable, effective_km, seller_key
-from domain.quality import YEAR_RANGE
+from domain.quality import YEAR_MIN
 from domain.settings import Settings
 
 STATUS_SETTLED = "oturmus"
@@ -329,7 +329,7 @@ def build_book(pool: list[dict], sales: list[dict], now: datetime, prev: PriceBo
     groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for r in pool:
         if r.get("brand_norm") and r.get("model_norm") and r.get("price_gbp") is not None and r.get("year") is not None \
-                and YEAR_RANGE[0] <= r["year"] <= ref_year + 1 and (r.get("km") or 0) <= MAX_PLAUSIBLE_KM \
+                and YEAR_MIN <= r["year"] <= ref_year + 1 and (r.get("km") or 0) <= MAX_PLAUSIBLE_KM \
                 and _is_comparable(_synthetic_target(r["brand_norm"], r["model_norm"], r["year"]), r, 0, False, now, s):
             groups[(r["brand_norm"], r["model_norm"])].append(r)
     sale_rows = defaultdict(list)  # (marka, model) -> temiz satışlar

@@ -1,8 +1,10 @@
 """Serbest yazılmış ilan metnini (Facebook grup gönderisi) ayrıştırır.
 Ölçüt: yanlış ilan üretmektense hiç üretmemek. Marka + yıl + AÇIK para birimli TEK fiyat yoksa None döner."""
 import re
+from datetime import date
 
 from domain.caption_parser import ParsedCaption, normalize_phone, tr_lower
+from domain.model_year import max_model_year
 from domain.normalize import fold
 from domain.price import parse_price
 
@@ -91,11 +93,14 @@ def _km(text: str) -> int | None:
     return None
 
 
-def parse_freetext(text: str, default_steering: str | None = None, max_year: int = 2027,
-                   known_price: tuple[float, str] | None = None) -> ParsedCaption | None:
-    """known_price=(tutar, para_birimi): sitenin yapılandırılmış alanından gelen kesin fiyat (metinde aranmaz)."""
+def parse_freetext(text: str, default_steering: str | None = None, max_year: int | None = None,
+                   known_price: tuple[float, str] | None = None, today: date | None = None) -> ParsedCaption | None:
+    """known_price=(tutar, para_birimi): sitenin yapılandırılmış alanından gelen kesin fiyat (metinde aranmaz).
+    Model yılı tavanı: max_year verilmişse o, yoksa bu yıl + 1 (today verilmezse UTC bugünü)."""
     if not text or _not_a_sale_ad(text):
         return None
+    if max_year is None:
+        max_year = max_model_year(today)
     brand_m = _BRAND_RE.search(text)
     if not brand_m:
         return None
@@ -161,14 +166,14 @@ def parse_freetext(text: str, default_steering: str | None = None, max_year: int
     return out
 
 
-def diagnose(text: str) -> str:
+def diagnose(text: str, today: date | None = None) -> str:
     """Gönderi neden ilan sayılmadı? ('ok' = okunur). Yalnızca sayaç için; metin saklanmaz."""
     if not text or _not_a_sale_ad(text):
         return "arac_degil"
     if not _BRAND_RE.search(text):
         return "marka_yok"
     no_phone = _PHONE.sub(" ", text)
-    if not [y for y in _YEAR.findall(no_phone) if int(y) <= 2027]:
+    if not [y for y in _YEAR.findall(no_phone) if int(y) <= max_model_year(today)]:
         return "yil_yok"
     if _price(_clean_lines(no_phone)) is None:
         return "fiyat_yok"

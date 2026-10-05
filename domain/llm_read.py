@@ -3,12 +3,14 @@ Saf mantık (ağ yok). Kural: modelin verdiği her sayı için ilan metninde Bİ
 alıntı metinde yoksa ya da sayıyı içermiyorsa o alan atılır (uydurmaya karşı sigorta)."""
 import re
 from dataclasses import dataclass
+from datetime import date
 
 from domain.caption_parser import tr_lower
+from domain.model_year import max_model_year
 from domain.normalize import fold, normalize_brand
 from domain.price import parse_price
 
-YEAR_RANGE = (1980, 2027)
+YEAR_MIN = 1980  # üst sınır: bu yıl + 1 (domain/model_year.py)
 KM_MAX = 600_000
 PRICE_RANGE = (300, 2_000_000)
 KM_TOLERANCE = 0.05
@@ -64,14 +66,14 @@ def _int_field(data: dict, key: str, quote_key: str, text: str, lo: int, hi: int
     return value
 
 
-def parse_llm_read(data, text: str) -> LlmRead | None:
+def parse_llm_read(data, text: str, today: date | None = None) -> LlmRead | None:
     """Ham model çıktısı -> doğrulanmış alanlar. Geçersiz/dict olmayan çıktı: None. Araç ilanı değilse is_car=False."""
     if not isinstance(data, dict):
         return None
     if data.get("arac_ilani_mi") is not True:
         return LlmRead(is_car=False)
     out = LlmRead(is_car=True)
-    out.year = _int_field(data, "yil", "yil_alinti", text, *YEAR_RANGE)
+    out.year = _int_field(data, "yil", "yil_alinti", text, YEAR_MIN, max_model_year(today))
     out.km = _int_field(data, "km", "km_alinti", text, 0, KM_MAX)
     brand, model = data.get("marka"), data.get("model")
     if isinstance(brand, str) and 2 <= len(brand) <= 30 and fold(brand) in fold(text):

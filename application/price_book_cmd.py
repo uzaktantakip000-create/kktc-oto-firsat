@@ -5,6 +5,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from difflib import get_close_matches
 
+from domain.model_year import max_model_year
 from domain.normalize import fold
 from domain.price import parse_price
 from domain.price_book import STATUS_SETTLED, STATUS_SUSPECT, BookRow, PriceBook
@@ -178,7 +179,7 @@ def _parse_sale(text: str, this_year: int) -> dict | None:
             return None
         low = low[:m.start()] + " " + low[m.end():]
     tokens = low.split()
-    year = next((int(t) for t in tokens if re.fullmatch(r"\d{4}", t) and 1980 <= int(t) <= this_year + 1), None)
+    year = next((int(t) for t in tokens if re.fullmatch(r"\d{4}", t) and 1980 <= int(t) <= max_model_year(this_year)), None)
     if year is None:
         return None
     tokens.remove(str(year))
