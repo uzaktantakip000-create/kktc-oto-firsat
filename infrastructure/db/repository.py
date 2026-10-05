@@ -21,6 +21,11 @@ def _tiers_blocking(tier: str) -> list[str]:
     return SENT_ONCE_TIERS if tier in SENT_ONCE_TIERS else [tier]
 
 
+def unsaved_alert_key(listing_id, chat_id: str) -> str:
+    """Telegram'a GİTMİŞ ama `alerts` kaydı yazılamamış 🟢/🟠 bildirimin yedek izi (bot_state anahtarı; bkz. notify._record_alert)."""
+    return f"alert:unsaved:{listing_id}:{chat_id}"
+
+
 class Repository:
     def __init__(self, dsn: str):
         self.conn = psycopg.connect(dsn, autocommit=True, row_factory=dict_row, prepare_threshold=None)
@@ -615,10 +620,13 @@ class Repository:
         return self.conn.execute("SELECT * FROM subscribers WHERE status='onayli'").fetchall()
 
     def alert_exists(self, listing_id, chat_id: str, tier: str) -> bool:
-        """Bu ilan bu sohbete bu seviyede (🟢/🟠 için: ikisinden biriyle) daha önce gitti mi?"""
-        return self.conn.execute(
+        """Bu ilan bu sohbete bu seviyede (🟢/🟠 için: ikisinden biriyle) daha önce gitti mi?
+        🟢/🟠'de kaydı yazılamayan ama gönderilmiş bildirimin yedek izi (`bot_state`) de sayılır: aksi halde her turda yeniden giderdi."""
+        if self.conn.execute(
             "SELECT 1 FROM alerts WHERE listing_id=%s AND chat_id=%s AND tier = ANY(%s)", (listing_id, chat_id, _tiers_blocking(tier))
-        ).fetchone() is not None
+        ).fetchone() is not None:
+            return True
+        return tier in SENT_ONCE_TIERS and self.get_state(unsaved_alert_key(listing_id, chat_id)) is not None
 
     def save_alert(self, listing_id, chat_id: str, tier: str, msg_id, *, evaluation_id, price_gbp) -> None:
         """Bildirim kaydı. `evaluation_id`: bildirimi doğuran değerlendirme satırı; `price_gbp`: gönderildiği andaki fiyat (£).

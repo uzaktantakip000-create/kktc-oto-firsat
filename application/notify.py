@@ -8,7 +8,8 @@ from application.evaluate import Evaluated, confidence_label
 from domain.profit import Tier
 from domain.red_flags import customs_stated
 from domain.settings import Settings
-from infrastructure.db.repository import Repository
+from infrastructure.config import redact
+from infrastructure.db.repository import Repository, unsaved_alert_key
 
 SOCIAL = ("instagram", "facebook")
 CURRENCY_NAMES = {"GBP": "STG", "TRY": "TL", "EUR": "EUR", "USD": "USD"}
@@ -181,6 +182,24 @@ def _burst_summary(repo: Repository, token: str, fresh: list[Evaluated], subs: l
     return len(fresh) if done else 0
 
 
+def _record_alert(repo: Repository, listing_id, chat_id: str, tier: str, msg_id, *, evaluation_id, price_gbp) -> None:
+    """Mesaj Telegram'a GİTTİ: kaydını yaz. Yazılamazsa (bağlantı kopması, eksik sütun gibi) bir kez daha dene; yine olmazsa `bot_state`'e
+    yedek iz bırak (`alert_exists` bunu da sayar) ve sesli log yaz. Aksi halde ilanın kaydı olmadığı için her turda (15 dk) aynı mesaj
+    yeniden giderdi. Hata yukarı fırlatılmaz: o turun diğer ilanları ve yan işleri çalışsın."""
+    err: Exception | None = None
+    for _ in range(2):
+        try:
+            repo.save_alert(listing_id, chat_id, tier, msg_id, evaluation_id=evaluation_id, price_gbp=price_gbp)
+            return
+        except Exception as e:
+            err = e
+    print(f"UYARI: bildirim gitti ama kaydı yazılamadı (ilan {listing_id}): {type(err).__name__} {redact(str(err))[:150]}")
+    try:
+        repo.set_state(unsaved_alert_key(listing_id, chat_id), str(msg_id))
+    except Exception as e:  # veritabanı tümden yoksa tur zaten hata verir; burada ikinci kez fırlatmanın faydası yok
+        print(f"UYARI: yedek iz de yazılamadı: {type(e).__name__} {redact(str(e))[:150]}")
+
+
 def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes: dict | None = None,
                 max_per_run: int = 10, tier: Tier = Tier.STRONG,
                 s: Settings | None = None) -> int:
@@ -225,8 +244,8 @@ def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes:
                     subs = [x for x in subs if x["chat_id"] != sub["chat_id"]]
                 print(f"bildirim gönderilemedi (chat {sub['chat_id']}): {e.status} {e.description}")
                 continue
-            repo.save_alert(ev.listing["id"], sub["chat_id"], ev.profit.tier.value, res["message_id"],
-                            evaluation_id=ev.listing.get("evaluation_id"), price_gbp=float(ev.listing["price_gbp"]))
+            _record_alert(repo, ev.listing["id"], sub["chat_id"], ev.profit.tier.value, res["message_id"],
+                          evaluation_id=ev.listing.get("evaluation_id"), price_gbp=float(ev.listing["price_gbp"]))
             delivered = True
         if delivered:
             sent += 1

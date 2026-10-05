@@ -6,6 +6,7 @@ from application import notify
 from application.evaluate import Evaluated
 from domain.comparables import Market
 from domain.profit import Confidence, ProfitResult, Tier
+from infrastructure.db.repository import unsaved_alert_key
 
 NOW = datetime.now(timezone.utc)
 
@@ -13,7 +14,7 @@ NOW = datetime.now(timezone.utc)
 class FakeRepo:
     def __init__(self, subs):
         self.subs, self.alerts, self.blocked = subs, set(), []
-        self.saved_alerts = []
+        self.saved_alerts, self.state, self.save_failures = [], {}, 0
         self.conn = self
 
     def approved_subscribers(self):
@@ -23,9 +24,15 @@ class FakeRepo:
         return getattr(self, "sent_today", 0)
 
     def alert_exists(self, listing_id, chat_id, tier):
-        return (listing_id, chat_id) in self.alerts
+        return (listing_id, chat_id) in self.alerts or unsaved_alert_key(listing_id, chat_id) in self.state
+
+    def set_state(self, key, value):
+        self.state[key] = value
 
     def save_alert(self, listing_id, chat_id, tier, msg_id, *, evaluation_id, price_gbp):
+        if self.save_failures > 0:  # veritabanı yazması geçici/kalıcı patlıyor
+            self.save_failures -= 1
+            raise RuntimeError("bağlantı koptu")
         self.alerts.add((listing_id, chat_id))
         self.saved_alerts.append({"listing": listing_id, "chat": chat_id, "tier": tier, "evaluation_id": evaluation_id, "price_gbp": price_gbp})
 
@@ -155,3 +162,26 @@ def test_estimated_alerts_respect_the_daily_limit(monkeypatch):
     repo = FakeRepo(["a"])
     repo.sent_today = 3  # 🟢 sınırdan etkilenmez
     assert notify.send_alerts(repo, "t", [ev(10)]) == 1
+
+
+def test_failed_alert_record_is_retried_once_and_the_message_is_not_duplicated(monkeypatch):
+    """Mesaj gitti ama `alerts` kaydı ilk denemede yazılamadı (geçici bağlantı hatası): bir kez yeniden denenir, kayıt düşer, tek mesaj."""
+    sent = patch_api(monkeypatch, {})
+    repo = FakeRepo(["a"])
+    repo.save_failures = 1
+    assert notify.send_alerts(repo, "t", [ev(1)]) == 1
+    assert sent == ["a"] and (1, "a") in repo.alerts and repo.state == {}
+    assert notify.send_alerts(repo, "t", [ev(1)]) == 0 and sent == ["a"]
+
+
+def test_persistently_failing_alert_record_leaves_a_fallback_trace_so_the_message_is_not_resent_every_round(monkeypatch, capsys):
+    """Kayıt iki denemede de yazılamazsa (örn. eksik sütun) hata turu çökertmez, aynı turun diğer ilanı gider, `bot_state`'e yedek iz
+    bırakılır ve sonraki turda AYNI mesaj tekrar gitmez (eskiden her 15 dakikada bir giderdi)."""
+    sent = patch_api(monkeypatch, {})
+    repo = FakeRepo(["a"])
+    repo.save_failures = 2  # yalnız ilk ilanın iki denemesi patlar
+    assert notify.send_alerts(repo, "t", [ev(1), ev(2)]) == 2  # ikisi de gitti, ikincisinin kaydı düştü
+    assert sent == ["a", "a"] and unsaved_alert_key(1, "a") in repo.state and (2, "a") in repo.alerts
+    assert "bildirim gitti ama kaydı yazılamadı" in capsys.readouterr().out
+    assert notify.send_alerts(repo, "t", [ev(1), ev(2)]) == 0 and sent == ["a", "a"]  # tekrar yok
+

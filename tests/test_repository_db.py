@@ -468,3 +468,16 @@ def test_alerts_sent_since_counts_distinct_listings_of_the_tier_in_the_window(db
     db.save_alert(old, "c1", "tahmini", 4, evaluation_id=None, price_gbp=None)
     c.execute("UPDATE alerts SET sent_at = now() - interval '30 hours' WHERE listing_id=%s", (old,))
     assert db.alerts_sent_since("tahmini", 24) == 1 and db.alerts_sent_since("guclu", 24) == 1 and db.alerts_sent_since("tahmini", 48) == 2
+
+
+def test_alert_exists_counts_the_fallback_trace_of_an_unsaved_green_or_orange_alert(db):
+    """`alerts` kaydı yazılamayan ama Telegram'a gitmiş 🟢/🟠 için `bot_state` yedek izi `alert_exists`te sayılır (tekrar mesaj yok);
+    başka sohbet ve 🟡 özet seviyesi etkilenmez."""
+    from infrastructure.db.repository import unsaved_alert_key
+    c, sid = db.conn, add_source(db.conn)
+    lid = add_listing(c, sid, "a")
+    assert not db.alert_exists(lid, "c1", "guclu")
+    db.set_state(unsaved_alert_key(lid, "c1"), "42")
+    assert db.alert_exists(lid, "c1", "guclu") and db.alert_exists(lid, "c1", "tahmini")
+    assert not db.alert_exists(lid, "c2", "guclu") and not db.alert_exists(lid, "c1", "pazarlik")
+
