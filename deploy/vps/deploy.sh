@@ -61,6 +61,9 @@ install_python_deps() {
 
 install_browser() {
   step "Chromium (Playwright) kuruluyor: $BROWSERS"
+  # İndiriciyi (Node) IPv4'e öncelik vermeye zorla: IPv6 rotası ilan edilip çalışmayan VPS'lerde (Servers.guru, 05.10.2026)
+  # cdn.playwright.dev'in IPv6 adresi 30 sn'de zaman aşımına uğruyor, IPv4 anında yanıt veriyor.
+  export NODE_OPTIONS="--dns-result-order=ipv4first${NODE_OPTIONS:+ $NODE_OPTIONS}"
   if [ "$SETUP_MODE" = 1 ] || [ "$PW_BEFORE" != "$PW_AFTER" ] || [ ! -d "$BROWSERS" ]; then
     # --with-deps: Chromium'un ihtiyaç duyduğu sistem kütüphanelerini de apt ile kurar (yalnız ilk kurulumda / sürüm değişince)
     "$VENV/bin/python" -m playwright install --with-deps chromium
