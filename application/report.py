@@ -17,10 +17,11 @@ from application.health import notify_owner
 from application.liveness import can_check, recheck_before_send
 from application.notify import is_fresh
 from application.settings_store import load_settings
-from application.status import KKTC, late_sources
+from application.status import late_sources
 from domain.alert_policy import MIN_COMPARABLES_TO_SEND
 from domain.data_gate import GAP_LABELS
 from domain.decision import send_allowed
+from domain.kktc_time import to_kktc
 from domain.lifecycle import SOLD
 from domain.profit import Tier
 from domain.settings import RULES_VERSION, Settings
@@ -73,7 +74,7 @@ def _num(n) -> str:
 
 
 def _day(dt) -> str:
-    return dt.astimezone(KKTC).strftime("%d.%m") if dt else "?"
+    return to_kktc(dt).strftime("%d.%m") if dt else "?"
 
 
 def _car(r: dict, width: int = 40) -> str:
@@ -251,7 +252,7 @@ def build_weekly_report(repo: Repository, recheck=None, now: datetime | None = N
     now = now or datetime.now(timezone.utc)
     votes, voted_rows = _votes_section(repo)
     body = [votes, _unnotified_section(repo, recheck, now), _near_section(repo, load_settings(repo))]
-    title = f"📊 Haftalık rapor · {(now - timedelta(days=WEEK_DAYS)).astimezone(KKTC):%d.%m}–{now.astimezone(KKTC):%d.%m}"
+    title = f"📊 Haftalık rapor · {to_kktc(now - timedelta(days=WEEK_DAYS)):%d.%m}–{to_kktc(now):%d.%m}"
     text = _fit(title, body, _health_lines(repo, now))
     return text, _vote_keyboard(voted_rows[:len(votes.items)])  # yalnız mesajda kalan satırların düğmesi
 

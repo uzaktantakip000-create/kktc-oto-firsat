@@ -5,18 +5,22 @@ import json
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 from selectolax.parser import HTMLParser
 
 from domain.caption_parser import normalize_phone
+from domain.kktc_time import KKTC
 from infrastructure.http.browserlike import new_browserlike_client
 
 BASE = "https://mezunumsatiyorumkibris.com.tr"
 LIST_URL = BASE + "/ilanlar/kktc-araba"
 UA = "Mozilla/5.0 (compatible; KKTCOtoFirsat/1.0; kisisel arac arama)"
 CRAWL_DELAY = 3.0
-KKTC_TZ = timezone(timedelta(hours=3))
+# Site saati dilimsiz yazar (JSON-LD validFrom "2026-08-21 15:57:14", sayfada "İlan Tarihi: 21 Ağustos 2026 15:36"): KKTC
+# okuyucusuna yerel duvar saati sayılır → Asia/Famagusta (yazın +3, kışın +2). Varsayım: sunucu İstanbul saatiyle (hep +3)
+# yazıyorsa kışın 1 saat sapar (25.10.2026'dan önce ikisi aynı; zararsız: tazelik pencereleri 48 saat, mesajda yalnız tarih).
+SITE_TZ = KKTC
 _PRICE_LINE = re.compile(r"^(?:[£₺$€]\s*[\d.,]+|[\d.,]+\s*[£₺$€])$")
 _PHONE = re.compile(r"\+?90\s*5\d{9}")
 
@@ -85,7 +89,7 @@ def parse_detail(html: str) -> dict | None:
         desc = "\n".join(out)
     phone = next((normalize_phone(m.group()) for l in lines for m in [_PHONE.search(l)] if m and "X" not in l), None)
     try:
-        posted = datetime.strptime(offer.get("validFrom", ""), "%Y-%m-%d %H:%M:%S").replace(tzinfo=KKTC_TZ)
+        posted = datetime.strptime(offer.get("validFrom", ""), "%Y-%m-%d %H:%M:%S").replace(tzinfo=SITE_TZ)
     except ValueError:
         posted = None
     place = ((offer.get("availableAtOrFrom") or {}).get("address") or {}).get("addressLocality")

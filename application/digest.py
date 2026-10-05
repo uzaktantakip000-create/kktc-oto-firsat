@@ -5,11 +5,12 @@ from datetime import datetime, timezone
 from application.evaluate import confidence_label
 from application.notify import TelegramError, api, is_fresh, posted_age_text
 from domain.data_gate import GAP_LABELS
+from domain.kktc_time import kktc_hour
 from domain.profit import Confidence
 from infrastructure.db.repository import Repository
 
 MAX_ITEMS = 8
-SEND_HOURS_UTC = range(5, 20)  # KKTC saatiyle 08:00–23:00 arası; geceleyin gönderme
+SEND_HOURS_KKTC = range(8, 23)  # KKTC yerel saatiyle 08:00–23:00 arası (yaz-kış aynı); geceleyin gönderme
 REPEAT_HOURS = 20
 LIMIT = 3900  # Telegram mesaj sınırı 4096
 ENABLED = False  # 🟡 özet kapalı
@@ -58,7 +59,7 @@ def send_daily_digest(repo: Repository, token: str, now: datetime | None = None)
     if not ENABLED:
         return 0
     now = now or datetime.now(timezone.utc)
-    if now.hour not in SEND_HOURS_UTC or repo.alert_recent("digest", REPEAT_HOURS):
+    if kktc_hour(now) not in SEND_HOURS_KKTC or repo.alert_recent("digest", REPEAT_HOURS):
         return 0
     sent = 0
     for sub in repo.approved_subscribers():

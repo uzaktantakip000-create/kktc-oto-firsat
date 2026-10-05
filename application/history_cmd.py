@@ -1,9 +1,7 @@
 """/son komutu: gönderilmiş son 10 fırsat, her biri için sahibin düğme cevabıyla (sade metin)."""
-from datetime import timedelta, timezone
-
+from domain.kktc_time import to_kktc
 from infrastructure.db.repository import Repository
 
-KKTC = timezone(timedelta(hours=3))
 ICON = {"guclu": "🟢", "tahmini": "🟠"}
 FEEDBACK_TEXT = {"satilmis": "✅ satılmış dedin", "pas": "🙅 pas dedin", "yanlis_fiyat": "❌ yanlış fiyat dedin",
                  "kusurlu": "⚠️ kusurlu/sahte dedin", "ilgilendim": "👍 ilgilendim dedin"}
@@ -15,7 +13,7 @@ def _gbp(x: float) -> str:
 
 
 def _line(r: dict) -> str:
-    when = r["sent_at"].astimezone(KKTC)
+    when = to_kktc(r["sent_at"])  # KKTC yerel saati (yazın +3, kışın +2)
     car = " ".join(str(x) for x in (r.get("year"), r.get("brand"), r.get("model")) if x)
     parts = [f"{ICON.get(r['tier'], '•')} {when:%d.%m %H:%M}", car or "araç", _gbp(float(r["price_gbp"]))]
     med = r.get("median_gbp")

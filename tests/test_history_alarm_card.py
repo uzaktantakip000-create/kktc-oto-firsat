@@ -46,7 +46,7 @@ def test_son_empty():
 def test_son_lines_feedback_and_url():
     text = history_cmd.last_opportunities(FakeRepo(opps=[opp(fb="satilmis"), opp("tahmini", price=7000.0, median=None, hour=9)]))
     first, second = text.split("\n\n")[1:]
-    assert first.startswith("🟢 02.10 14:20 · 2017 Mercedes A180 · £9.000 · %43 ucuz · ✅ satılmış dedin")  # UTC+3
+    assert first.startswith("🟢 02.10 14:20 · 2017 Mercedes A180 · £9.000 · %43 ucuz · ✅ satılmış dedin")  # KKTC yaz saati (UTC+3; kış: tests/test_kktc_time.py)
     assert first.endswith("\nhttps://x.example/ilan/1")
     assert second.startswith("🟠 02.10 12:20 · 2017 Mercedes A180 · £7.000 · ❔ düğmeye basılmadı")  # medyan yoksa % yazılmaz
 

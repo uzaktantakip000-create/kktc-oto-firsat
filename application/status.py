@@ -1,16 +1,16 @@
 """Sahibe sade dille sistem durumu: /durum komutu (ayrıntılı) ve her sabah KISA "sistem çalışıyor" nabzı."""
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from application.collect_facebook import MONTHLY_BUDGET_USD as FB_BUDGET
 from application.collect_instagram import MONTHLY_BUDGET_USD as IG_BUDGET
 from application import feed_switch, price_book_job
 from application.maintenance import summary_line
 from application.health import notify_owner, source_limit_hours
+from domain.kktc_time import kktc_hour, to_kktc
 from infrastructure.db.repository import Repository
 
-KKTC = timezone(timedelta(hours=3))
-MORNING_HOURS_UTC = range(5, 9)  # KKTC 08:00–11:00 arası bir kez
+MORNING_HOURS_KKTC = range(8, 12)  # KKTC yerel saatiyle 08:00–11:59 arası bir kez (yaz-kış aynı; yaz/kış saati domain/kktc_time)
 FEEDBACK_TARGET = 30  # eşik ayarı için gereken geri bildirim sayısı
 KIND = {"instagram": "Instagram", "facebook": "Facebook grubu", "web": "Site"}
 
@@ -75,7 +75,7 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
     fb_n = repo.conn.execute("SELECT count(*) AS n FROM feedback WHERE action NOT LIKE 'audit_%'").fetchone()["n"]
     last_tick = repo.get_state("tick:last")
 
-    lines = [f"📊 Sistem raporu — {now.astimezone(KKTC):%d.%m %H:%M}", ""]
+    lines = [f"📊 Sistem raporu — {to_kktc(now):%d.%m %H:%M}", ""]
     if late:
         lines.append(f"⚠️ {len(late)} yerde gecikme var (aşağıda işaretli).")
     else:
@@ -83,7 +83,7 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
     if paused:
         lines.append(feed_switch.pause_text(paused))
     if last_tick:
-        lines.append(f"Son kontrol saat {datetime.fromisoformat(last_tick).astimezone(KKTC):%H:%M}. Her 15 dakikada bir tekrar bakılır.")
+        lines.append(f"Son kontrol saat {to_kktc(datetime.fromisoformat(last_tick)):%H:%M}. Her 15 dakikada bir tekrar bakılır.")
 
     lines += ["", f"📣 SANA HABER VEREN YERLER ({len(open_n)})", "Burada iyi bir fırsat görürsem hemen yazarım."]
     lines += [_source_line(r, quiet) for r in open_n]
@@ -159,6 +159,6 @@ def build_heartbeat(repo: Repository, now: datetime | None = None) -> str:
 def send_morning_status(repo: Repository, now: datetime | None = None) -> bool:
     """Her sabah (KKTC 08–11) bir kez KISA "sistem çalışıyor" nabzı. Eski ayrıntılı rapor yalnız /durum komutuyla gelir."""
     now = now or datetime.now(timezone.utc)
-    if now.hour not in MORNING_HOURS_UTC:
+    if kktc_hour(now) not in MORNING_HOURS_KKTC:
         return False
     return notify_owner(repo, "durum-sabah", build_heartbeat(repo, now), repeat_hours=20)

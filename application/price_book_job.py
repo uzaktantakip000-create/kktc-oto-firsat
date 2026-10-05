@@ -9,7 +9,7 @@ from domain.settings import Settings
 from infrastructure.db.price_book_store import PriceBookStore
 from infrastructure.db.repository import Repository
 
-NIGHT_HOURS_UTC = range(0, 4)  # gece bakımıyla aynı pencere (KKTC 03:00–07:00)
+NIGHT_HOURS_UTC = range(0, 4)  # gece bakımıyla aynı UTC penceresi (bilerek UTC): KKTC yazın 03:00–07:00, kışın 02:00–06:00
 STATE_LAST, STATE_STATS, STATE_UNRELIABLE = "pb:last", "pb:stats", "est_unreliable"
 POOL_DAYS = 120
 SELF_CHECK_DAYS = 30

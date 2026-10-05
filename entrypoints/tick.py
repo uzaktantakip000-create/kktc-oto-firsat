@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from application import feed_switch
 from application.health import notify_owner, report_collect_errors
 from application.notify import TelegramError, api
+from domain.kktc_time import kktc_hour
 from entrypoints import cron_collect, cron_evaluate
 from infrastructure.config import load_env, redact, require
 from infrastructure.db.repository import Repository
@@ -16,7 +17,7 @@ from infrastructure.fx import frankfurter
 TOLERANCE = timedelta(minutes=3)  # dış tetikleyici birkaç dakika kayabilir
 GAP_ALERT_MIN = 45  # bu kadar dakika hiç çalışma olmazsa sahibine haber verilir
 EVAL_STALE_MIN = 45  # tick çalışıyor ama son BAŞARILI değerlendirme bu kadar dakikadan eskiyse sahibine haber verilir (cron_evaluate.EVAL_LAST_KEY)
-DAY_UTC = range(5, 21)  # KKTC 08:00–24:00
+DAY_KKTC = range(8, 24)  # gündüz = KKTC yerel saatiyle 08:00–24:00 (yaz-kış aynı; ilanlar yerel gündüz saatinde girilir)
 # iş -> (gündüz aralığı dk, gece aralığı dk)
 SCHEDULE = {
     "kktcar": (15, 30),
@@ -38,7 +39,7 @@ MIN_LEFT_S = {"facebook": 10 * 60, "instagram": 6 * 60}
 
 
 def due_jobs(now: datetime, last_runs: dict[str, datetime | None]) -> list[str]:
-    day = now.hour in DAY_UTC
+    day = kktc_hour(now) in DAY_KKTC
     out = []
     for job, (day_min, night_min) in SCHEDULE.items():
         last = last_runs.get(job)
