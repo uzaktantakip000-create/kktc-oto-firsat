@@ -519,3 +519,19 @@ Plan dosyası: `/Users/tamer/.claude/plans/sunny-spinning-wilkes.md` (v3'ün yer
 - **Aşama 0 kayıtları:** 0.2 (0d0a303, 05.10): `health.source_limit_hours` KKTCarabam 14→8 saat (cron-job.org 2 saatlik dispatch 04.10 20:01 UTC'den beri 7/7 düzenli doğrulandı); test `test_kktcarabam_has_longer_limit` güncellendi. 0.1 (05.10): hafıza dosyası, spec §2 / 3b / 3c eskimiş cümleleri, DEGER_MOTORU (masraf £300, 🟡 özet kapalı, güncel kurallar bölüm 9), `settings.py` RULES_VERSION yorumu eşitlendi.
 - 30 günlük başarı ölçütleri (6 Ekim – 5 Kasım) ayrı bölümde yazılacak: §24.5 (v4 Aşama 2.1).
 
+### 24.5 30 günlük başarı ölçütleri (6 Ekim – 5 Kasım 2026; ÖNCEDEN yazıldı, sonradan DEĞİŞTİRİLMEZ)
+Sahip bu sayıları 05.10.2026'da plan v4'ün onayıyla kabul etti (öneri: Opus 2. danışma). Değerlendirme: **6 Kasım 2026** (kod yazılmaz; salt-okunur sorgu + sade rapor). Ölçüm tabanı: model anahtarı doldurması (v4 1.1) 8 Ekim'e kadar oturur; sonrası "tabana" göre kıyaslanır.
+| Ölçü | Bugünkü taban (05.10) | Başarı | Alarm / başarısızlık |
+|---|---|---|---|
+| Çalışma | son 12 saatte tüm tick'ler yeşil | tick'lerin ≥%97'si başarılı; sabah nabzı ≥29/30 gün; haber verilmeyen >2 saat kesinti 0 | haber verilmeyen 1 kesinti |
+| 🟢 FIRSAT sayısı | 2,6 günde 2 | 30 günde 6–40 | <4: "çok sıkı / kapsam dar" incelemesi; >60: kural bozuk olabilir |
+| Açık yanlış 🟢 (bozuk fiyat, yanlış model, satılmış ilan, kaçan engel kelime) | bilinmiyor | 0 (en çok 1) | ≥2: kök neden + altın dosyaya ekle |
+| 👎 oranı (oylanan 🟢'ler) | 21 mesaja 1 oy | ≤%25 | ≥%40 |
+| 👍 oranı | — | ≥%40 | <%20 |
+| Oy kapsamı | 1/21 | 🟢'lerin ≥%80'i, 🟠'ların ≥%50'si oylanmış | <%50 → sonuç "ölçülemedi" |
+| Gerçek kullanım | satış kaydı 0 | ≥2 ilanda "aradım / görmeye gittim" (sahip beyanı) | 0 |
+| Kaçan fırsat (haftalık rapordaki bildirilmemiş 🟢 + yakın-kaçan) | 9 bildirilmemiş 🟢 | "bunu anında isterdim" ≤%20 | >%40: tazelik/eşik incelemesi |
+| Model yoğunluğu | gönderilen 9 🟢'nin 5'i BMW 3/1 | tek model ≤%40 | aşarsa o modelin değerlemesi incelenir |
+| Maliyet / kota | ≈$0, DB 19,6 MB | <$5/ay; egress <4 GB | egress >4,5 GB |
+**30. gün kararı:** kırmızı çizgiler (açık yanlış 🟢, haber verilmeyen kesinti) temiz ve ölçütler tutuyorsa → **DEVAM**; 🟢 sayısı <4 ise → **KAPSAM** (BiArabacik, Sahibinden fizibilitesi, Adım 11 çerçevesi ilk yeni kaynakla); açık yanlış 🟢 ≥2 ise → **KURAL İNCELEMESİ**; oy kapsamı <%50 ise → **ÖLÇÜLEMEDİ** (oy düzeni sadeleştirilir). Dürüst not: tabandaki sayılar iki-üç gözleme dayanır; aralıklar geniştir.
+
