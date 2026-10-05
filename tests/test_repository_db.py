@@ -527,3 +527,94 @@ def test_market_pool_drops_listings_the_owner_marked_wrong_but_ignores_a_subscri
     for lid, note in ((owner_bad, "chat:o1"), (sub_bad, "chat:s1"), (no_note, None)):
         c.execute("INSERT INTO feedback (listing_id, action, note) VALUES (%s,'yanlis_fiyat',%s)", (lid, note))
     assert {str(r["id"]) for r in db.market_pool(days=120)} == {str(keep), str(sub_bad)}
+
+
+# --- abone oyu otomatik davranışı yönlendirmez (repository.OWNER_VOTE_SQL): her okuma için abone oyu sayılmaz, sahibinki sayılır ---
+def add_people(conn):
+    conn.execute("INSERT INTO subscribers (chat_id, name, status, is_owner) VALUES ('o1','sahip','onayli',TRUE), ('s1','abone','onayli',FALSE)")
+
+
+def vote(conn, listing_id, action, note):
+    conn.execute("INSERT INTO feedback (listing_id, action, note) VALUES (%s,%s,%s)", (listing_id, action, note))
+
+
+def test_every_automatic_feedback_read_uses_the_owner_vote_filter():
+    """Veritabanısız bekçi (yerelde de çalışır): otomatik davranışı besleyen her geri bildirim okuması aynı süzgeci kullanır."""
+    import inspect
+
+    from infrastructure.db.repository import Repository
+    for fn in (Repository.market_pool, Repository.feedback_votes, Repository.pas_count, Repository.est_feedback_by_model,
+               Repository.est_feedback_recent, Repository.sources_failing_feedback):
+        assert "OWNER_VOTE_SQL" in inspect.getsource(fn), fn.__name__
+
+
+def test_learning_gate_counts_owner_votes_only(db):
+    c, sid = db.conn, add_source(db.conn)
+    add_people(c)
+    lid = add_listing(c, sid, "a")
+    for action in ("ilgilendim", "pas", "yanlis_fiyat", "kusurlu"):
+        vote(c, lid, action, "chat:s1")
+    assert db.feedback_votes() == 0  # abonenin 4 oyu öğrenme kapısını açmaya saymaz
+    vote(c, lid, "pas", "chat:o1")
+    vote(c, lid, "ilgilendim", None)  # sahibi belli olmayan eski kayıt sahibin sayılır
+    assert db.feedback_votes() == 2
+
+
+def test_pas_count_counts_owner_passes_only(db):
+    c, sid = db.conn, add_source(db.conn)
+    add_people(c)
+    a, b, other_model = add_listing(c, sid, "a"), add_listing(c, sid, "b"), add_listing(c, sid, "c", model_norm="yaris")
+    vote(c, a, "pas", "chat:s1")
+    vote(c, b, "pas", "chat:s1")
+    assert db.pas_count(a) == ("Toyota", "vitz", 0)
+    vote(c, b, "pas", "chat:o1")
+    vote(c, other_model, "pas", "chat:o1")  # başka model sayılmaz
+    assert db.pas_count(a) == ("Toyota", "vitz", 1)
+
+
+def test_estimate_guard_by_model_counts_owner_wrong_votes_only(db):
+    c, sid = db.conn, add_source(db.conn)
+    add_people(c)
+    a, b = add_listing(c, sid, "a"), add_listing(c, sid, "b")
+    for lid in (a, b):
+        db.save_alert(lid, "o1", "tahmini", 1, evaluation_id=None, price_gbp=None)
+    vote(c, a, "yanlis_fiyat", "chat:s1")
+    vote(c, b, "kusurlu", "chat:s1")
+    assert db.est_feedback_by_model(30, 1) == []  # yalnız abone "yanlış" dedi: model 🟠'den çıkmaz
+    vote(c, a, "yanlis_fiyat", "chat:o1")
+    assert db.est_feedback_by_model(30, 2) == []  # b'nin tek "yanlış"ı abonenin: sayılmaz (süzgeçsiz 2 olurdu)
+    assert db.est_feedback_by_model(30, 1) == [{"brand_norm": "Toyota", "model_norm": "vitz", "bad_n": 1}]
+    vote(c, b, "kusurlu", None)
+    assert db.est_feedback_by_model(30, 2) == [{"brand_norm": "Toyota", "model_norm": "vitz", "bad_n": 2}]
+
+
+def test_estimate_guard_recent_window_counts_owner_feedback_only(db):
+    c, sid = db.conn, add_source(db.conn)
+    add_people(c)
+    a, b = add_listing(c, sid, "a"), add_listing(c, sid, "b")
+    for lid in (a, b):
+        db.save_alert(lid, "o1", "tahmini", 1, evaluation_id=None, price_gbp=None)
+    vote(c, a, "yanlis_fiyat", "chat:s1")
+    assert db.est_feedback_recent(10) == []  # yalnız abone oyu almış 🟠 pencereye hiç girmez
+    vote(c, b, "ilgilendim", "chat:o1")
+    vote(c, b, "yanlis_fiyat", "chat:s1")
+    assert db.est_feedback_recent(10) == [False]  # sahip "ilgilendim" dedi; abonenin "yanlış"ı ilanı kötü yapmaz
+    vote(c, a, "kusurlu", "chat:o1")
+    assert sorted(db.est_feedback_recent(10)) == [False, True]
+
+
+def test_source_guard_counts_owner_wrong_votes_only(db):
+    c, sid = db.conn, add_source(db.conn)
+    c.execute("UPDATE sources SET alert_level='yesil' WHERE id=%s", (sid,))
+    add_people(c)
+    lids = [add_listing(c, sid, f"g{i}") for i in range(3)]
+    for lid in lids:
+        db.save_alert(lid, "o1", "guclu", 1, evaluation_id=None, price_gbp=None)
+        vote(c, lid, "yanlis_fiyat", "chat:s1")
+    assert db.sources_failing_feedback(10, 3) == []  # abonenin 3 "yanlış"ı kaynağı düşürmez
+    vote(c, lids[0], "yanlis_fiyat", "chat:o1")
+    vote(c, lids[1], "kusurlu", "chat:o1")
+    assert db.sources_failing_feedback(10, 3) == []  # sahipten yalnız 2
+    vote(c, lids[2], "yanlis_fiyat", None)  # sahibi belli olmayan eski kayıt sahibin sayılır
+    (row,) = db.sources_failing_feedback(10, 3)
+    assert row["id"] == sid and row["n"] == 3 and row["bad_n"] == 3

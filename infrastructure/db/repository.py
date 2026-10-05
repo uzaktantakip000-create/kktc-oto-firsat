@@ -23,6 +23,10 @@ def _tiers_blocking(tier: str) -> list[str]:
 
 UNSAVED_ALERT_PREFIX = "sent:unsaved:"  # 'alert:' öneki sahip-uyarı zaman damgaları için (alert_recent) ayrılmış: karışmasın
 
+# Abonenin (sahip olmayan) düğme oyu otomatik davranışı yönlendirmez (emsal, öğrenme kapısı, 🟠/kaynak koruması, 'pas' sayısı):
+# yalnız sahibin oyu ve sahibi belli olmayan kayıt (note boş: denetim, eski satır) sayılır. Oy satırı 'feedback f' takma adıyla okunmalı.
+OWNER_VOTE_SQL = "NOT EXISTS (SELECT 1 FROM subscribers voter WHERE NOT voter.is_owner AND f.note = 'chat:' || voter.chat_id)"
+
 
 def unsaved_alert_key(listing_id, chat_id: str) -> str:
     """Telegram'a GİTMİŞ ama `alerts` kaydı yazılamamış 🟢/🟠 bildirimin yedek izi (bot_state anahtarı; bkz. notify._record_alert)."""
@@ -155,7 +159,7 @@ class Repository:
             key_sql = " AND concat_ws('|', brand_norm, COALESCE(model_norm, '')) = ANY(%s)"
             args.append([f"{b}|{m or ''}" for b, m in keys])
         return self.conn.execute(
-            """SELECT id, brand_norm, model_norm, year, km, steering, transmission, fuel, engine_l::float8 AS engine_l,
+            f"""SELECT id, brand_norm, model_norm, year, km, steering, transmission, fuel, engine_l::float8 AS engine_l,
                       price_gbp::float8 AS price_gbp, currency,
                       currency_guess, first_seen_at, is_active, duplicate_of, url, seller_phone, seller_handle, urgency_signals,
                       COALESCE(posted_at, data_as_of, first_seen_at) AS ref_date
@@ -166,7 +170,7 @@ class Repository:
                  AND NOT EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = listings.id
                                  AND f.action IN ('yanlis_fiyat','kusurlu','audit_yanlis')
                                  -- abonenin (sahip olmayan) yanlış basışı emsali herkes için bozmasın: yalnız sahip/sistem oyu dışlar
-                                 AND NOT EXISTS (SELECT 1 FROM subscribers s WHERE NOT s.is_owner AND f.note = 'chat:' || s.chat_id))""" + key_sql,
+                                 AND {OWNER_VOTE_SQL})""" + key_sql,
             args,
         ).fetchall()
 
@@ -386,13 +390,14 @@ class Repository:
         return [r["phone"] for r in self.conn.execute("SELECT phone FROM blocked_sellers").fetchall()]
 
     def pas_count(self, listing_id, days: int = 90) -> tuple[str | None, str | None, int]:
-        """Bu ilanla aynı marka+modele son 'days' günde kaç ilanda 'pas' denmiş? (brand_norm, model_norm, adet)"""
+        """Bu ilanla aynı marka+modele son 'days' günde kaç ilanda (sahip) 'pas' demiş? (brand_norm, model_norm, adet)"""
         row = self.conn.execute("SELECT brand_norm, model_norm FROM listings WHERE id=%s", (listing_id,)).fetchone()
         if not row or not row["brand_norm"] or not row["model_norm"]:
             return None, None, 0
         n = self.conn.execute(
-            """SELECT count(DISTINCT f.listing_id) AS n FROM feedback f JOIN listings l ON l.id = f.listing_id
-               WHERE f.action='pas' AND l.brand_norm=%s AND l.model_norm=%s AND f.created_at > NOW() - make_interval(days => %s)""",
+            f"""SELECT count(DISTINCT f.listing_id) AS n FROM feedback f JOIN listings l ON l.id = f.listing_id
+               WHERE f.action='pas' AND l.brand_norm=%s AND l.model_norm=%s AND f.created_at > NOW() - make_interval(days => %s)
+                 AND {OWNER_VOTE_SQL}""",
             (row["brand_norm"], row["model_norm"], days)).fetchone()["n"]
         return row["brand_norm"], row["model_norm"], n
 
@@ -466,27 +471,31 @@ class Repository:
                                  (tier, hours)).fetchone()["n"]
 
     def feedback_votes(self) -> int:
-        """Fırsat mesajlarındaki düğme oyları (denetim ve "satılmış" bildirimi hariç): öğrenme kapısı bunu sayar (application/learning.py)."""
-        return self.conn.execute("SELECT count(*) AS n FROM feedback WHERE action IN ('ilgilendim','pas','yanlis_fiyat','kusurlu')").fetchone()["n"]
+        """Fırsat mesajlarındaki SAHİP düğme oyları (denetim ve "satılmış" bildirimi hariç): öğrenme kapısı bunu sayar (application/learning.py)."""
+        return self.conn.execute(
+            f"SELECT count(*) AS n FROM feedback f WHERE f.action IN ('ilgilendim','pas','yanlis_fiyat','kusurlu') AND {OWNER_VOTE_SQL}"
+        ).fetchone()["n"]
 
     def est_feedback_by_model(self, days: int = 30, min_bad: int = 2) -> list[dict]:
-        """🟠 bildirilen ilanlarda 'yanlış fiyat/kusurlu' denen DISTINCT ilan sayısı, model bazında (en az 'min_bad')."""
+        """🟠 bildirilen ilanlarda (sahip tarafından) 'yanlış fiyat/kusurlu' denen DISTINCT ilan sayısı, model bazında (en az 'min_bad')."""
         return self.conn.execute(
-            """SELECT l.brand_norm, l.model_norm, count(DISTINCT l.id) AS bad_n
+            f"""SELECT l.brand_norm, l.model_norm, count(DISTINCT l.id) AS bad_n
                FROM feedback f JOIN listings l ON l.id = f.listing_id
                WHERE f.action IN ('yanlis_fiyat','kusurlu') AND f.created_at > NOW() - make_interval(days => %s)
+                 AND {OWNER_VOTE_SQL}
                  AND l.brand_norm IS NOT NULL AND l.model_norm IS NOT NULL
                  AND EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.tier = 'tahmini')
                GROUP BY l.brand_norm, l.model_norm HAVING count(DISTINCT l.id) >= %s""",
             (days, min_bad)).fetchall()
 
     def est_feedback_recent(self, limit: int = 10, after: str | None = None) -> list[bool]:
-        """Geri bildirim almış son 'limit' adet 🟠 ilan (en yeni önce): True = 'yanlış fiyat/kusurlu' denmiş.
+        """Sahipten geri bildirim almış son 'limit' adet 🟠 ilan (en yeni önce): True = 'yanlış fiyat/kusurlu' denmiş.
         'after' (zaman damgası metni) verilirse yalnızca ondan sonraki geri bildirimler sayılır."""
         rows = self.conn.execute(
-            """SELECT bool_or(f.action IN ('yanlis_fiyat','kusurlu')) AS bad
+            f"""SELECT bool_or(f.action IN ('yanlis_fiyat','kusurlu')) AS bad
                FROM feedback f
                WHERE f.created_at > COALESCE(%s::timestamptz, '-infinity'::timestamptz)
+                 AND {OWNER_VOTE_SQL}
                  AND EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = f.listing_id AND a.tier = 'tahmini')
                GROUP BY f.listing_id ORDER BY max(f.created_at) DESC LIMIT %s""",
             (after, limit)).fetchall()
@@ -541,11 +550,12 @@ class Repository:
         ).fetchall()
 
     def sources_failing_feedback(self, window: int = 10, max_bad: int = 3) -> list[dict]:
-        """Anlık bildirim veren kaynaklardan, SON 'window' 🟢'sinin en az 'max_bad' tanesine 'yanlış fiyat/kusurlu' denenler."""
+        """Anlık bildirim veren kaynaklardan, SON 'window' 🟢'sinin en az 'max_bad' tanesine (sahip) 'yanlış fiyat/kusurlu' denenler."""
         return self.conn.execute(
-            """SELECT sid AS id, name, count(*) AS n, count(*) FILTER (WHERE bad) AS bad_n FROM (
+            f"""SELECT sid AS id, name, count(*) AS n, count(*) FILTER (WHERE bad) AS bad_n FROM (
                    SELECT s.id AS sid, s.name, l.id AS lid,
-                          EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = l.id AND f.action IN ('yanlis_fiyat','kusurlu')) AS bad,
+                          EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = l.id AND f.action IN ('yanlis_fiyat','kusurlu')
+                                  AND {OWNER_VOTE_SQL}) AS bad,
                           ROW_NUMBER() OVER (PARTITION BY s.id ORDER BY MAX(a.sent_at) DESC) AS rn
                    FROM alerts a JOIN listings l ON l.id = a.listing_id JOIN sources s ON s.id = l.source_id
                    WHERE a.tier = 'guclu' AND s.alert_level = 'yesil'

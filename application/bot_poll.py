@@ -39,6 +39,15 @@ WELCOME_SUBSCRIBER = ("✅ Onaylandın! Fırsat bildirimleri bu sohbete gelecek.
 OWNER_ONLY_REPLY = "Bu komut yalnız sahip içindir. Senin için /yardim, /dur ve /basla çalışır."
 UNKNOWN_OWNER_REPLY = "Bu komutu tanımıyorum. Komut listesi için /yardim."
 NOT_APPROVED_REPLY = "Bu komut için önce başvurunun onaylanması gerekir. Başvurmak için /start yaz."
+# Onaylı olmayan kişinin yazısı/görüntüsü: sessiz kalınmaz ama ilan kontrolü (kota + yapay zekâ maliyeti) de çalışmaz
+GUEST_REPLY = "İlan kontrolü için önce başvurunun onaylanması gerekir. Başvurmak için /start yaz."
+PENDING_REPLY = "Başvurun onay bekliyor; onaylanınca ilan kontrolü de açılır."
+STOPPED_REPLY = "Bildirimlerin kapalı. İlan kontrolü için önce /basla yaz."
+REJECTED_REPLY = "Bu bot şu an yalnızca onaylı aboneler için açık."  # reddedilene nötr cevap: yeniden başvuru daveti yok
+HELP_GUEST = ("Bu bot KKTC'deki ikinci el araç ilanlarını tarar; piyasanın belirgin altında kalan fırsatları onaylı abonelere yazar. "
+              "Yalnızca öneridir: satıcıyla görüşmek ve karar vermek sana aittir.")
+CALLBACK_ERROR_REPLY = "⚠️ İşlem yapılamadı, düğmeye tekrar bas."
+APPLY_PING_HOURS = 6  # onay bekleyenin tekrar /start'ı sahibe en çok bu aralıkla yeniden sorulur (ilk soru kaybolmuş olabilir)
 CHATTER_REPLY = ("Bunu bir ilan olarak okuyamadım. İlanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü gönder. "
                  "Komutlar için /yardim.")
 LINK_REPLY = ("Linkleri açamıyorum. İlanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü gönder. "
@@ -56,6 +65,22 @@ def _looks_like_ad(raw: str) -> bool:
 
 def _is_bare_link(raw: str) -> bool:
     return raw.lower().startswith(("http://", "https://")) and len(raw.split()) == 1
+
+
+def _guest_reply(status_now: str | None) -> str:
+    """Onaylı olmayan kişinin (bekleyen, durdurmuş, reddedilmiş, tanımsız) yazı/görüntüsüne tek cevap."""
+    return {"bekliyor": PENDING_REPLY, "durduruldu": STOPPED_REPLY, "reddedildi": REJECTED_REPLY}.get(status_now, GUEST_REPLY)
+
+
+def _help_text(status_now: str | None) -> str:
+    """Sahip olmayan için /yardim: ilan kontrolü yalnız onaylı aboneye vaat edilir."""
+    if status_now == "onayli":
+        return HELP_SUBSCRIBER
+    if status_now == "durduruldu":
+        return HELP_SUBSCRIBER + "\n\n" + STOPPED_REPLY
+    if status_now == "reddedildi":
+        return REJECTED_REPLY
+    return HELP_GUEST + "\n\n" + _guest_reply(status_now)
 
 
 def _answer(token: str, callback_id: str, text: str | None = None) -> None:
@@ -104,21 +129,28 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
             api(token, "sendMessage", chat_id=chat_id, text="Zaten onaylısın, fırsatlar bu sohbete gelecek. Komutlar için /yardim.")
         elif status_now == "durduruldu":
             api(token, "sendMessage", chat_id=chat_id, text="Bildirimlerin durdurulmuş. /basla ile yeniden açabilirsin.")
-        elif status_now == "bekliyor":  # tekrar /start sahibi yeniden rahatsız etmesin
-            api(token, "sendMessage", chat_id=chat_id, text="Başvurun onay bekliyor; onaylanınca haber vereceğim.")
-        else:
-            repo.conn.execute(
-                "INSERT INTO subscribers (chat_id,name,status) VALUES (%s,%s,'bekliyor') "
-                "ON CONFLICT (chat_id) DO UPDATE SET name=EXCLUDED.name",
-                (chat_id, name),
-            )
-            api(token, "sendMessage", chat_id=chat_id, text="Başvurun alındı. Onaylanınca haber vereceğim.")
-            api(token, "sendMessage", chat_id=owner, text=f"👤 {name} bildirim almak istiyor.",
-                reply_markup={"inline_keyboard": [[
-                    {"text": "✅ Onayla", "callback_data": f"sub:onayli:{chat_id}"},
-                    {"text": "⛔ Reddet", "callback_data": f"sub:reddedildi:{chat_id}"}]]})
+        elif status_now == "reddedildi":  # sahip reddetti: her /start sahibi yeniden rahatsız etmesin; "alındı" demek de yanlış olur
+            api(token, "sendMessage", chat_id=chat_id, text=REJECTED_REPLY)
+        else:  # yeni başvuru ya da onay bekleyen
+            new = status_now is None
+            if new:
+                repo.conn.execute(
+                    "INSERT INTO subscribers (chat_id,name,status) VALUES (%s,%s,'bekliyor') "
+                    "ON CONFLICT (chat_id) DO UPDATE SET name=EXCLUDED.name",
+                    (chat_id, name),
+                )
+            # Önce sahibe sorulur, sonra başvurana cevap verilir: sahibe giden mesaj düşerse (ör. 429) başvurana hata cevabı gider ve
+            # tekrar /start sahibe yeniden sorar. Bekleyenin tekrar /start'ı sahibi en çok APPLY_PING_HOURS saatte bir rahatsız eder.
+            if new or not repo.alert_recent(f"basvuru:{chat_id}", APPLY_PING_HOURS):
+                api(token, "sendMessage", chat_id=owner, text=f"👤 {name} bildirim almak istiyor.",
+                    reply_markup={"inline_keyboard": [[
+                        {"text": "✅ Onayla", "callback_data": f"sub:onayli:{chat_id}"},
+                        {"text": "⛔ Reddet", "callback_data": f"sub:reddedildi:{chat_id}"}]]})
+                repo.mark_alerted(f"basvuru:{chat_id}")
+            api(token, "sendMessage", chat_id=chat_id,
+                text="Başvurun alındı. Onaylanınca haber vereceğim." if new else "Başvurun onay bekliyor; onaylanınca haber vereceğim.")
     elif cmd == "/yardim":
-        api(token, "sendMessage", chat_id=chat_id, text=HELP_OWNER if chat_id == owner else HELP_SUBSCRIBER, disable_web_page_preview=True)
+        api(token, "sendMessage", chat_id=chat_id, text=HELP_OWNER if chat_id == owner else _help_text(status_now), disable_web_page_preview=True)
     elif chat_id == owner and text.startswith("/durum"):
         api(token, "sendMessage", chat_id=chat_id, text=status.build_status(repo), disable_web_page_preview=True)
     elif chat_id == owner and text.split()[:1] == ["/son"]:
@@ -179,6 +211,8 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
         else:
             reply = ad_check.handle(repo, raw, None, llm_reader.from_env(repo), **extra)
         api(token, "sendMessage", chat_id=chat_id, text=reply[:3900], disable_web_page_preview=True)
+    elif msg.get("photo") or (raw and not raw.startswith("/")):  # buraya yalnız onaylı OLMAYAN kişi gelir: ilan kontrolü yok, sessizlik de yok
+        api(token, "sendMessage", chat_id=chat_id, text=_guest_reply(status_now))
     elif chat_id == owner and cmd:  # yazım hatası/bilinmeyen komut sessiz kalmasın
         api(token, "sendMessage", chat_id=chat_id, text=UNKNOWN_OWNER_REPLY)
 
@@ -233,7 +267,9 @@ def _handle_callback(repo: Repository, token: str, owner: str, cb: dict) -> None
         if not repo.conn.execute("SELECT 1 FROM feedback WHERE listing_id=%s AND action=%s AND note=%s", (target, action, note)).fetchone():
             repo.conn.execute("INSERT INTO feedback (listing_id, action, note) VALUES (%s,%s,%s)", (target, action, note))  # çift basış çift oy olmasın
         answer = "Not aldım 👍"
-        if sender == owner:  # tek abonenin yanlış basışı herkes için karar vermesin: kararları yalnızca sahip sisteme geri döner
+        # Abonenin oyu yalnız KAYIT: anlık eylemler yalnız sahibin basışıyla; sayımlar da (emsal, öğrenme kapısı, 🟠/kaynak koruması,
+        # 'pas' sayısı) abone oyunu saymaz (repository.OWNER_VOTE_SQL)
+        if sender == owner:
             if action == "satilmis":
                 repo.mark_sold(target)  # kapanır ve gerçek bir satış olarak emsale girer
             elif action == "kusurlu" and learning_open(repo) and repo.block_seller_of(target, "kusurlu"):  # 10 oydan önce yalnız KAYIT
@@ -245,13 +281,18 @@ def _handle_callback(repo: Repository, token: str, owner: str, cb: dict) -> None
         _answer(token, cb["id"])
 
 
-def _tell_error(token: str, update: dict) -> None:
-    """İşlenemeyen komutta sahibe/göndericiye sessiz kalma: kısa bir hata cevabı (en iyi çaba; hata metni sızdırılmaz)."""
-    chat = (update.get("message") or {}).get("chat", {}).get("id")
+def _tell_error(token: str, owner: str, update: dict) -> None:
+    """İşlenemeyen güncellemede sessiz kalma: kısa bir hata cevabı (en iyi çaba; hata metni sızdırılmaz). Komutta göndericiye;
+    düğmede yalnız SAHİBE (onay/ret, oy...: ofset ilerlediği için düğme kendiliğinden yeniden denenmez, "tekrar bas" denir)."""
+    if "callback_query" in update:
+        sender = str(((update.get("callback_query") or {}).get("from") or {}).get("id"))
+        chat, text = (owner, CALLBACK_ERROR_REPLY) if sender == owner else (None, "")
+    else:
+        chat, text = (update.get("message") or {}).get("chat", {}).get("id"), ERROR_REPLY
     if chat is None:
         return
     try:
-        api(token, "sendMessage", chat_id=str(chat), text=ERROR_REPLY)
+        api(token, "sendMessage", chat_id=str(chat), text=text)
     except Exception:
         pass
 
@@ -268,7 +309,7 @@ def poll_bot(repo: Repository, token: str, owner_chat_id: str) -> int:
                 _handle_callback(repo, token, owner_chat_id, u["callback_query"])
         except Exception as e:  # tek güncelleme hatası diğerlerini engellemesin
             print("bot güncellemesi işlenemedi:", type(e).__name__, str(e)[:100])
-            _tell_error(token, u)
+            _tell_error(token, owner_chat_id, u)
         offset = u["update_id"] + 1
         repo.set_state("tg_offset", str(offset))  # her güncellemeden sonra: yarıda kesilen tur aynı komutu ikinci kez çalıştırmasın
     return len(updates)
