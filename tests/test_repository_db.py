@@ -163,13 +163,16 @@ def test_retention_purges_personal_data_of_inactive_listings_only(db):
 
 def test_expire_unverifiable_closes_old_social_but_not_web_listings(db):
     c = db.conn
-    ig, web = add_source(c, "ig", "instagram"), add_source(c, "KKTCar", "web")
+    ig, fb, web = add_source(c, "ig", "instagram"), add_source(c, "fb", "facebook"), add_source(c, "KKTCar", "web")
     add_listing(c, ig, "old_ig", posted_at=ago(days=40))
     add_listing(c, ig, "new_ig", posted_at=ago(days=5))
+    add_listing(c, fb, "old_fb", posted_at=ago(days=40), seller_phone="905550000009")  # Facebook da 30 günde pasifleşir (telefon temizliğine girsin)
+    add_listing(c, fb, "new_fb", posted_at=ago(days=5))
     add_listing(c, web, "old_web", posted_at=ago(days=40))
-    assert db.expire_unverifiable() == 1
+    assert db.expire_unverifiable() == 2
     active = {r["source_item_id"] for r in c.execute("SELECT source_item_id FROM listings WHERE is_active").fetchall()}
-    assert active == {"new_ig", "old_web"}
+    assert active == {"new_ig", "new_fb", "old_web"}
+    assert c.execute("SELECT inactive_reason FROM listings WHERE source_item_id='old_fb'").fetchone()["inactive_reason"] == "belirsiz"
 
 
 def test_a_listing_is_sent_once_across_green_and_orange_but_the_digest_record_spends_no_right(db):

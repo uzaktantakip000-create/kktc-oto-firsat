@@ -213,10 +213,11 @@ class Repository:
                WHERE l.is_active AND last_ev.rv IS DISTINCT FROM %s""", (rules_version,)).fetchone()["n"]
 
     def expire_unverifiable(self, days: int = 30) -> int:
-        """Satıldı/silindi bilgisi izlenemeyen kaynaklarda (Instagram, kktcarabam) eski ilanı pasifleştirir."""
+        """Satıldı/silindi bilgisi izlenemeyen kaynaklarda (Instagram, Facebook, kktcarabam, Mezunum) eski ilanı pasifleştirir.
+        Facebook eskiden listede yoktu: ilanlar hiç pasifleşmediği için telefonları saklama temizliğine (yalnız pasif ilan) hiç girmiyordu."""
         cur = self.conn.execute(
             """UPDATE listings l SET is_active=FALSE, inactive_at=NOW(), inactive_reason=%s FROM sources s
-               WHERE s.id=l.source_id AND l.is_active AND (s.platform='instagram' OR s.url LIKE '%%kktcarabam.com%%' OR s.url LIKE '%%mezunumsatiyorumkibris%%')
+               WHERE s.id=l.source_id AND l.is_active AND (s.platform IN ('instagram', 'facebook') OR s.url LIKE '%%kktcarabam.com%%' OR s.url LIKE '%%mezunumsatiyorumkibris%%')
                  AND COALESCE(l.posted_at, l.first_seen_at) < NOW() - make_interval(days => %s)""",
             (UNKNOWN, days),
         )
