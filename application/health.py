@@ -33,7 +33,7 @@ def report_collect_errors(repo: Repository, errors: list[tuple[str, str]]) -> No
 def source_limit_hours(source: dict) -> int:
     """Bu süreyi aşan sessizlik arıza sayılır (çalışma aralığının yaklaşık 3-6 katı; tetikleyici/Actions gecikebilir)."""
     if "kktcarabam" in source["url"]:
-        return 14  # 6 saatte bir
+        return 8  # 2 saatte bir (cron-job.org dispatch; 04.10.2026 20:01'den beri düzenli doğrulandı); gecikme payı ~4 tur
     if "sahibindenarabakibris" in source["url"]:
         return 6  # gündüz 60 dk, gece 120 dk
     if source["platform"] == "facebook":

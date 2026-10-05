@@ -81,6 +81,7 @@ def test_heartbeat_mentions_delays_briefly_and_points_to_the_detailed_report():
 def test_source_limits_per_platform():
     assert health.source_limit_hours({"url": "https://www.facebook.com/groups/1", "platform": "facebook"}) == 12
     assert health.source_limit_hours({"url": "https://kibrisarabaal.com", "platform": "web"}) == 3
+    assert health.source_limit_hours({"url": "https://kktcarabam.com", "platform": "web"}) == 8  # 2 saatte bir tarama (eskiden 6 saat → 14)
 
 
 def test_status_uses_book_coverage_when_available(monkeypatch):

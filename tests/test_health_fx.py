@@ -39,9 +39,11 @@ def test_stale_and_silent_sources_flagged():
 
 
 def test_kktcarabam_has_longer_limit():
-    ok = health.source_problems(FakeRepo([src("k", hours=12, url="https://www.kktcarabam.com/x", platform="web")]))
-    bad = health.source_problems(FakeRepo([src("k", hours=7, url="https://kktcar.com/x", platform="web")]))
-    assert ok == [] and len(bad) == 1
+    """KKTCarabam 2 saatte bir taranır: 8 saate kadar sessizlik normal (4 tur payı), 9 saat arıza; diğer web kaynakları 3 saatte uyarır."""
+    ok = health.source_problems(FakeRepo([src("k", hours=7, url="https://www.kktcarabam.com/x", platform="web")]))
+    late = health.source_problems(FakeRepo([src("k", hours=9, url="https://www.kktcarabam.com/x", platform="web")]))
+    bad = health.source_problems(FakeRepo([src("k", hours=4, url="https://kktcar.com/x", platform="web")]))
+    assert ok == [] and len(late) == 1 and len(bad) == 1
 
 
 def test_alert_not_repeated(monkeypatch):
