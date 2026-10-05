@@ -252,6 +252,58 @@ def test_unevaluated_active_rules_version_branch_only_picks_notification_candida
     assert db.conn.execute("SELECT count(*) AS n FROM evaluations").fetchone()["n"] == 7  # HİÇBİR satır silinmedi
 
 
+def test_hourly_full_round_skips_only_the_old_unevaluated_backlog_and_keeps_every_alertable_listing(db):
+    """Çıkış kotası (Adım 2h devamı): saatlik tam tur (unevaluated_hours=72) hiç değerlendirilmemiş ESKİ birikimi (ilk görülme VE son fiyat
+    değişikliği >72 saat) okumaz; günlük tur (unevaluated_hours yok) bugünkü tam turla birebir aynıdır. Bildirim üretebilecek (notify.is_fresh)
+    her ilan saatlik turda da vardır; diğer dallar (3 günlük yeniden bakış, değerlendirmeden sonra fiyat değişimi, kural sürümü) değişmez."""
+    from application.evaluate import BACKLOG_AFTER_HOURS
+    from application.notify import is_fresh
+
+    c = db.conn
+    web, ig = add_source(c, "W"), add_source(c, "I", platform="instagram")
+
+    def repriced(lid, hours):
+        c.execute("INSERT INTO listing_history (listing_id, field, old_value, new_value, changed_at) VALUES (%s,'price_gbp','6000','5000',%s)",
+                  (lid, ago(hours=hours)))
+
+    # hiç değerlendirilmemiş (emsalsiz kalmış) ilanlar
+    add_listing(c, web, "new_1h", first_seen_at=ago(hours=1))
+    add_listing(c, web, "new_30h", first_seen_at=ago(hours=30))
+    add_listing(c, web, "new_30h_old_post", first_seen_at=ago(hours=30), posted_at=ago(days=10))  # taze değil ama 72 saat içinde: yine her saat
+    add_listing(c, ig, "ig_30h", first_seen_at=ago(hours=30), posted_at=ago(hours=30))
+    add_listing(c, web, "new_70h", first_seen_at=ago(hours=70))
+    add_listing(c, web, "old_80h", first_seen_at=ago(hours=80))  # birikim: günde bir
+    add_listing(c, web, "old_10d", first_seen_at=ago(days=10))  # birikim: günde bir
+    repriced(add_listing(c, web, "old_repriced_5h", first_seen_at=ago(days=10)), 5)  # eski ilan, fiyatı yeni değişti: TAZE, her saat
+    repriced(add_listing(c, web, "old_repriced_50h", first_seen_at=ago(days=10)), 50)  # 72 saat içinde: her saat
+    old_twice = add_listing(c, web, "old_repriced_100h", first_seen_at=ago(days=10))
+    repriced(old_twice, 200)
+    repriced(old_twice, 100)  # son değişiklik 100 saat önce: birikim
+    # değerlendirilmiş ilanlar: dalları değişmez
+    lid = add_listing(c, web, "stale", first_seen_at=ago(days=9))
+    add_eval(c, lid, ago(days=5))  # 3 günlük yeniden bakış
+    lid = add_listing(c, web, "repriced_after_eval", first_seen_at=ago(days=9))
+    add_eval(c, lid, ago(days=1))
+    repriced(lid, 2)
+    lid = add_listing(c, web, "fresh_old_version")
+    add_versioned_eval(c, lid, ago(hours=2), "eski")  # kural sürümü dalı
+    lid = add_listing(c, web, "done", first_seen_at=ago(days=5))
+    add_eval(c, lid, ago(days=1))  # hiçbir dala girmez
+
+    daily = items(db.unevaluated_active(rules_version="yeni"))  # = bugünkü tam tur
+    hourly = items(db.unevaluated_active(rules_version="yeni", unevaluated_hours=BACKLOG_AFTER_HOURS))
+    assert daily == {"new_1h", "new_30h", "new_30h_old_post", "ig_30h", "new_70h", "old_80h", "old_10d", "old_repriced_5h",
+                     "old_repriced_50h", "old_repriced_100h", "stale", "repriced_after_eval", "fresh_old_version"}
+    assert daily - hourly == {"old_80h", "old_10d", "old_repriced_100h"} and hourly <= daily  # yalnız eski birikim çıktı
+    rows = c.execute("""SELECT l.source_item_id, l.first_seen_at, l.posted_at, s.platform,
+                               (SELECT MAX(h.changed_at) FROM listing_history h WHERE h.listing_id=l.id AND h.field='price_gbp') AS pc
+                        FROM listings l JOIN sources s ON s.id=l.source_id""").fetchall()
+    alertable = {r["source_item_id"] for r in rows if is_fresh(r["first_seen_at"], r["posted_at"], price_changed_at=r["pc"], platform=r["platform"])}
+    assert {"new_1h", "new_30h", "ig_30h", "old_repriced_5h", "repriced_after_eval", "fresh_old_version"} <= alertable  # test gerçekten taze ilan içeriyor
+    assert alertable & daily <= hourly  # bildirim üretebilecek her aday saatlik turda da var
+    assert items(db.unevaluated_active(recent_hours=3, unevaluated_hours=BACKLOG_AFTER_HOURS)) == items(db.unevaluated_active(recent_hours=3))  # hızlı tur aynı
+
+
 def test_downgrade_evaluation_inserts_a_copy_and_never_changes_the_original(db):
     """Adım 5b dilim 2: düşürme UPDATE değil EKLEME: doğrulanan satırın kopyası (tüm sütunlar), tier 🟡, nedenler eklenir, 1 µs sonra."""
     c, sid = db.conn, add_source(db.conn)

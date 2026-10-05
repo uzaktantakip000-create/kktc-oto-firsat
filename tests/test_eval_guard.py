@@ -59,7 +59,7 @@ def wire(monkeypatch, evaluate_new):
 
 
 def test_successful_round_records_eval_last_and_reports_single_listing_failures(monkeypatch):
-    def evaluate_new(repo, settings, book=None, failures=None, quick=False):
+    def evaluate_new(repo, settings, book=None, failures=None, quick=False, backlog=True):
         failures.extend([("a1b2c3d4", "ValueError"), ("e5f6a7b8", "ValueError")])
         return []
 
@@ -72,7 +72,7 @@ def test_successful_round_records_eval_last_and_reports_single_listing_failures(
 
 
 def test_crashed_evaluation_still_runs_side_jobs_then_fails(monkeypatch):
-    def evaluate_new(repo, settings, book=None, failures=None, quick=False):
+    def evaluate_new(repo, settings, book=None, failures=None, quick=False, backlog=True):
         raise EvaluationFailure("10 ilandan 9'u değerlendirilemedi")
 
     side, _ = wire(monkeypatch, evaluate_new)
@@ -84,7 +84,7 @@ def test_crashed_evaluation_still_runs_side_jobs_then_fails(monkeypatch):
 
 
 def test_database_outage_propagates_immediately(monkeypatch):
-    def evaluate_new(repo, settings, book=None, failures=None, quick=False):
+    def evaluate_new(repo, settings, book=None, failures=None, quick=False, backlog=True):
         raise psycopg.OperationalError("sunucu yok")
 
     side, _ = wire(monkeypatch, evaluate_new)
@@ -115,7 +115,7 @@ def test_full_pass_due_hourly_and_safe_by_default():
 def test_runs_alternate_between_full_and_quick_and_failed_full_round_is_retried(monkeypatch):
     seen, dedupe_seen = [], []
 
-    def evaluate_new(repo, settings, book=None, failures=None, quick=False):
+    def evaluate_new(repo, settings, book=None, failures=None, quick=False, backlog=True):
         seen.append(quick)
         if seen[-1] is False and len(seen) == 3:
             raise EvaluationFailure("tam tur başarısız")
@@ -133,3 +133,40 @@ def test_runs_alternate_between_full_and_quick_and_failed_full_round_is_retried(
     with pytest.raises(EvaluationFailure):
         cron_evaluate.run(repo)  # 3: tam tur zamanı ama başarısız oldu
     assert repo.state["eval:full"] == marked  # başarısız tam tur "yapıldı" sayılmaz: sonraki tick yeniden dener
+
+
+def test_old_unevaluated_backlog_is_read_once_a_day_with_a_full_round_and_a_failed_backlog_round_is_retried(monkeypatch):
+    """Adım 2h devamı: saatlik tam tur eski "emsal yok" birikimini okumaz (backlog=False); birikim günde bir, bir tam turla birlikte
+    (eval:backlog). Hızlı turda hiç okunmaz. Başarısız birikim turu "yapıldı" sayılmaz."""
+    calls, fail = [], []
+
+    def evaluate_new(repo, settings, book=None, failures=None, quick=False, backlog=True):
+        calls.append((quick, backlog))
+        if fail:
+            raise EvaluationFailure("tam tur başarısız")
+        return []
+
+    wire(monkeypatch, evaluate_new)
+    ago = lambda **kw: (datetime.now(timezone.utc) - timedelta(**kw)).isoformat()  # noqa: E731
+    repo = Repo()
+    cron_evaluate.run(repo)  # kayıt yok: tam tur + birikim
+    assert calls == [(False, True)] and repo.state["eval:backlog"]
+    cron_evaluate.run(repo)  # hemen sonra: hızlı tur, birikim yok
+    assert calls[-1] == (True, False)
+    repo.state["eval:full"] = ago(minutes=70)
+    cron_evaluate.run(repo)  # saatlik tam tur: birikim yok (son birikim turu 1 saat önce)
+    assert calls[-1] == (False, False)
+    repo.state["eval:full"], repo.state["eval:backlog"] = ago(minutes=70), ago(hours=23, minutes=50)
+    cron_evaluate.run(repo)  # 24 saat dolmadı: yine birikimsiz
+    assert calls[-1] == (False, False)
+    repo.state["eval:full"], repo.state["eval:backlog"] = ago(minutes=70), ago(hours=24)
+    marked = repo.state["eval:backlog"]
+    fail.append(True)
+    with pytest.raises(EvaluationFailure):
+        cron_evaluate.run(repo)  # günlük birikim turu başarısız
+    assert calls[-1] == (False, True) and repo.state["eval:backlog"] == marked  # "yapıldı" sayılmadı
+    fail.clear()
+    cron_evaluate.run(repo)  # sonraki tick yeniden dener
+    assert calls[-1] == (False, True) and repo.state["eval:backlog"] != marked
+    cron_evaluate.run(repo)
+    assert calls[-1] == (True, False)

@@ -30,7 +30,8 @@ from infrastructure.llm.openrouter import check_deal
 LOCK = "evaluate"
 EVAL_LAST_KEY = "eval:last"  # son BAŞARILI değerlendirme zamanı: tick başında bayatlarsa sahibe haber (entrypoints/tick.py)
 FULL_PASS_MINUTES = 55  # tam değerlendirme/mükerrer taraması saatte bir; aradaki turlar yalnız yeni ilanlara bakar (veritabanı okuma hacmi)
-EVAL_FULL_KEY, DEDUPE_FULL_KEY = "eval:full", "dedupe:full"
+BACKLOG_PASS_MINUTES = 24 * 60 - 5  # hiç değerlendirilemeyen ESKİ ilan birikimi (bildirim üretemez) günde bir, bir tam turla birlikte
+EVAL_FULL_KEY, DEDUPE_FULL_KEY, EVAL_BACKLOG_KEY = "eval:full", "dedupe:full", "eval:backlog"
 
 
 def main() -> None:
@@ -58,14 +59,15 @@ def apply_rules_version(repo: Repository) -> int:
     n = repo.count_stale_rules(RULES_VERSION)
     repo.set_state("rules_version", RULES_VERSION)
     repo.set_state(EVAL_FULL_KEY, "")  # sürüm dalı yalnız tam turda: saatlik turu beklemesin, hemen yenilensin
+    repo.set_state(EVAL_BACKLOG_KEY, "")  # eski birikim de yeni kurallarla hemen bir kez denensin (günlük turu beklemesin)
     return n
 
 
-def full_pass_due(repo: Repository, key: str, now: datetime) -> bool:
-    """Saatlik TAM tur zamanı geldi mi? Kayıt yoksa/okunamazsa True (en güvenli: tam tur)."""
+def full_pass_due(repo: Repository, key: str, now: datetime, minutes: int = FULL_PASS_MINUTES) -> bool:
+    """Saatlik TAM tur (ya da `minutes` ile günlük birikim turu) zamanı geldi mi? Kayıt yoksa/okunamazsa True (en güvenli: tam tur)."""
     try:
         raw = repo.get_state(key)
-        return not raw or now - datetime.fromisoformat(raw) >= timedelta(minutes=FULL_PASS_MINUTES)
+        return not raw or now - datetime.fromisoformat(raw) >= timedelta(minutes=minutes)
     except Exception:
         return True
 
@@ -148,11 +150,16 @@ def run(repo: Repository) -> None:
     failures: list[tuple[str, str]] = []
     eval_error: Exception | None = None
     eval_full = full_pass_due(repo, EVAL_FULL_KEY, now)
+    # Tam turda bildirim üretebilecek her ilan (yeni / fiyatı değişmiş / sürümü eski aday / 3 günlük yeniden bakış) her saat değerlendirilir;
+    # hiç değerlendirilemeyen ESKİ birikim (ilk görülme ve fiyat değişikliği >72 saat: tazelik kapısı yüzünden bildirim üretemez) günde bir.
+    eval_backlog = eval_full and full_pass_due(repo, EVAL_BACKLOG_KEY, now, BACKLOG_PASS_MINUTES)
     try:
-        evaluated = evaluate_new(repo, settings, book=book, failures=failures, quick=not eval_full)
+        evaluated = evaluate_new(repo, settings, book=book, failures=failures, quick=not eval_full, backlog=eval_backlog)
         mark_evaluated(repo)
         if eval_full:
             mark_full(repo, EVAL_FULL_KEY, now)
+        if eval_backlog:
+            mark_full(repo, EVAL_BACKLOG_KEY, now)
     except DatabaseDown:
         raise  # veritabanı yoksa yan işler de çalışamaz: tur zaten hata verir
     except Exception as e:  # turun çoğu patladı: yan işler (alarm, rapor) yine çalışsın, tur sonunda hata verilir

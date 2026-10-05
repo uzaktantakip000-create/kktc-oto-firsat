@@ -20,7 +20,7 @@ from infrastructure.collectors import kktcar
 
 NOW = datetime.now(timezone.utc)
 BOOK = object()
-TIME_KEYS = {"eval:last", "eval:full", "dedupe:full"}  # değerlendirme öncesi zaman damgaları: kapıyla ilgisi yok, izde gösterilmez
+TIME_KEYS = {"eval:last", "eval:full", "dedupe:full", "eval:backlog"}  # değerlendirme öncesi zaman damgaları: kapıyla ilgisi yok, izde gösterilmez
 
 
 def kk(i):

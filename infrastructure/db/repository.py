@@ -174,11 +174,15 @@ class Repository:
             args,
         ).fetchall()
 
-    def unevaluated_active(self, recheck_days: int = 3, recent_hours: int | None = None, rules_version: str | None = None) -> list[dict]:
+    def unevaluated_active(self, recheck_days: int = 3, recent_hours: int | None = None, rules_version: str | None = None,
+                           unevaluated_hours: int | None = None) -> list[dict]:
         """Değerlendirilecek aktif ilanlar: hiç değerlendirilmemiş, fiyatı değişmiş ya da değerlendirmesi 'recheck_days'
         günden eski (piyasa/emsal havuzu değişmiş olabilir). Mükerrer ilanlar atlanır.
         `recent_hours` verilirse HIZLI tur: yalnız son 'recent_hours' saatte görülüp hiç değerlendirilmemiş ya da fiyatı değişmiş
         ilanlar (eski "emsal yok" birikimi, 'recheck' ve kural sürümü dalları tam turda, saatte bir bakılır).
+        `unevaluated_hours` verilirse (yalnız TAM tur): HİÇ değerlendirilmemiş ilanlardan yalnız ilk görülmesi ya da son fiyat değişikliği
+        son 'unevaluated_hours' saatte olanlar gelir (bildirim üretebilecekler; tazelik kapısı 36 saat). Daha eski "emsal yok" birikimi
+        (nadir model, emsalsiz: her saat yeniden okunup yine sonuçsuz kalıyordu) yalnız `unevaluated_hours=None` çağrısında (günlük tur) gelir.
         `rules_version` verilirse (yalnız TAM tur): son değerlendirmesi BAŞKA kural sürümüyle yapılmış (NULL dahil: IS DISTINCT FROM) ve
         bildirime ADAY ilanlar da yeniden değerlendirilir: ilk görülmesi ≤48 saat, ≤48 saatte fiyatı değişmiş ya da son satırı 🟢/🟠 ≤36 saat.
         (Eski ilanın yeniden değerlendirmesi bildirim üretemez: tazelik kapısı; kalanı zaten 3 günlük yeniden bakışla yenilenir.)
@@ -189,13 +193,19 @@ class Repository:
         if recent_hours is not None:
             stale_sql, args = "", [recent_hours]
             new_sql = "(last_ev.at IS NULL AND l.first_seen_at > NOW() - make_interval(hours => %s))"
-        elif rules_version is not None:
-            version_sql = """OR (last_ev.at IS NOT NULL AND last_ev.rv IS DISTINCT FROM %s
-                          AND (l.first_seen_at > NOW() - interval '48 hours'
-                               OR EXISTS (SELECT 1 FROM listing_history h2 WHERE h2.listing_id=l.id AND h2.field='price_gbp'
-                                          AND h2.changed_at > NOW() - interval '48 hours')
-                               OR (last_ev.tier IN ('guclu','tahmini') AND last_ev.at > NOW() - interval '36 hours')))"""
-            args.append(rules_version)
+        else:
+            if unevaluated_hours is not None:
+                new_sql = """(last_ev.at IS NULL AND (l.first_seen_at > NOW() - make_interval(hours => %s)
+                              OR EXISTS (SELECT 1 FROM listing_history h3 WHERE h3.listing_id=l.id AND h3.field='price_gbp'
+                                         AND h3.changed_at > NOW() - make_interval(hours => %s))))"""
+                args = [unevaluated_hours, unevaluated_hours, *args]  # new_sql'in parametreleri SQL'de stale_sql'inkinden önce gelir
+            if rules_version is not None:
+                version_sql = """OR (last_ev.at IS NOT NULL AND last_ev.rv IS DISTINCT FROM %s
+                              AND (l.first_seen_at > NOW() - interval '48 hours'
+                                   OR EXISTS (SELECT 1 FROM listing_history h2 WHERE h2.listing_id=l.id AND h2.field='price_gbp'
+                                              AND h2.changed_at > NOW() - interval '48 hours')
+                                   OR (last_ev.tier IN ('guclu','tahmini') AND last_ev.at > NOW() - interval '36 hours')))"""
+                args.append(rules_version)
         return self.conn.execute(
             f"""SELECT l.*, l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform
                FROM listings l JOIN sources s ON s.id=l.source_id
