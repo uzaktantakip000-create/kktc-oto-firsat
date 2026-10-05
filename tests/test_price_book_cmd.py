@@ -42,11 +42,24 @@ class FakeStore:
 class FakeRepo:
     conn = None
 
-    def __init__(self, pool=()):
-        self.pool = list(pool)
+    def __init__(self, pool=(), decisions=(), fail=False):
+        self.pool, self.decisions, self.fail, self.asked = list(pool), list(decisions), fail, []
 
     def market_pool(self, days=120):
         return self.pool
+
+    def current_decisions(self, brand, model, year, limit=3):
+        self.asked.append((brand, model, year))
+        if self.fail:
+            raise RuntimeError("db yok")
+        rows = [d for d in self.decisions if (d["brand"], d["model"], d["year"]) == (brand, model, year)]
+        return [{**d, "total": len(rows)} for d in rows[:limit]]
+
+
+def dec(price, km, median, n=10, method="A", year=2014, brand="Toyota", model="corolla"):
+    """Bir ilanın son kararı (evaluations): bildirim mesajındaki 'piyasa ortası' market_median_gbp'dir."""
+    return {"brand": brand, "model": model, "year": year, "km": km, "price_gbp": price, "market_median_gbp": median,
+            "comparables_n": n, "method": method, "tier": "guclu"}
 
 
 def listing(year, km, price, url, **kw):
@@ -108,6 +121,56 @@ def test_fiyat_caps_lines():
     for y in range(1990, 2012):
         FakeStore.book.rows[("Toyota", "corolla", "", y)] = row("Toyota", "corolla", y, 3000)
     assert cmd.fiyat_reply(FakeRepo(), "corolla").count("📘") == 12
+
+
+# --- 2.6: /fiyat bildirimdeki "piyasa ortası"nı AYNI karar kaydından gösterir ---
+REASON = ("ℹ️ Fark nedeni: 📘 tablo bütün sürümleri ve TL ilanları sayar, hepsini aynı yıla ve 120 bin km'ye çevirir; 📊 yalnız o ilana "
+          "benzeyenlere (aynı vites/yakıt/motor, yakın km) bakar, emsal azsa ±2 yıla açılıp iki hesaptan düşüğünü alır. Fırsatı 📊 belirler.")
+
+
+def test_fiyat_shows_the_alert_median_from_the_same_decision_and_explains_a_big_gap():
+    repo = FakeRepo(POOL, [dec(6000, 120_000, 8600), dec(6400, None, 8300, n=9), dec(7000, 90_000, 6700, n=12), dec(7100, 1, 1)])
+    out = cmd.fiyat_reply(repo, "corolla 2014")
+    assert out.startswith("📘 Değer tablosu (her gece hesaplanır):\n📘 Toyota Corolla 2013")
+    block = out.split("📊 ")[1]
+    assert block.startswith("Bildirim hesabı (şu an ilanda 4 tane 2014 Toyota Corolla var; 3'ü aşağıda):\n")
+    # tablo 7.600: her ilan kendi piyasasıyla; %10'dan çok ayrışana fark yazılır (8.600 = +%13, 6.700 = -%12, 8.300 = +%9 yazılmaz)
+    assert "• £6.000 · 120.000 km → piyasa ortası £8.600 (10 emsal) · tablodan %13 yüksek\n" in block
+    assert "• £6.400 · km yok → piyasa ortası £8.300 (9 emsal)\n" in block
+    assert "• £7.000 · 90.000 km → piyasa ortası £6.700 (12 emsal) · tablodan %12 düşük\n" in block
+    assert "£7.100" not in block  # en çok 3 ilan
+    assert REASON in out and out.count("ℹ️") == 1  # tek satır neden; hangi rakamın fırsatı belirlediği yazılır
+    assert out.index("📊") < out.index(REASON) < out.index("En yakın 3 ilan:")  # mevcut bölümler yerinde
+    assert "📘 Toyota Corolla 2014 — £7.600 (aralık £7.220–8.132) · 120 bin km için" in out and repo.asked == [("Toyota", "corolla", 2014)]
+
+
+def test_fiyat_no_reason_line_when_table_and_decision_agree_within_ten_percent():
+    out = cmd.fiyat_reply(FakeRepo(POOL, [dec(6000, 120_000, 8360), dec(6100, 120_000, 6840)]), "corolla 2014")  # 7.600'e göre +%10 / -%10
+    assert "• £6.000 · 120.000 km → piyasa ortası £8.360 (10 emsal)\n" in out and "(şu an ilanda 2 tane 2014 Toyota Corolla var):" in out
+    assert "tablodan" not in out and "ℹ️" not in out
+
+
+def test_fiyat_estimate_decision_is_labelled_and_not_used_for_the_gap():
+    out = cmd.fiyat_reply(FakeRepo(POOL, [dec(5000, 100_000, 9900, n=6, method="B")]), "corolla 2014")
+    assert "• £5.000 · 100.000 km → tablo eğrisi ~£9.900 (az emsal)" in out
+    assert "piyasa ortası" not in out and "ℹ️" not in out  # eğri tahmini "piyasa ortası" diye gösterilmez, fark satırı yazılmaz
+
+
+def test_fiyat_without_current_listings_or_with_db_error_is_unchanged_table_reply():
+    plain = cmd.fiyat_reply(FakeRepo(POOL), "corolla 2014")
+    assert "📊" not in plain and "ℹ️" not in plain and "En yakın 3 ilan:" in plain
+    broken = FakeRepo(POOL, [dec(6000, 120_000, 8600)], fail=True)
+    assert cmd.fiyat_reply(broken, "corolla 2014") == plain  # karar kaydı okunamazsa tablo cevabı yine gider
+    no_year = FakeRepo(POOL, [dec(6000, 120_000, 8600)])
+    out = cmd.fiyat_reply(no_year, "toyota corolla")
+    assert no_year.asked == [] and "📊" not in out and "Değer tablosu" not in out  # yıl yoksa eski liste aynen
+
+
+def test_fiyat_year_missing_in_table_still_shows_decisions_without_gap_line():
+    out = cmd.fiyat_reply(FakeRepo((), [dec(2500, 200_000, 3100, n=8, year=2005)]), "corolla 2005")
+    assert "2005 için tabloda satır yok" in out
+    assert "📊 Bildirim hesabı (şu an ilanda 1 tane 2005 Toyota Corolla var):\n• £2.500 · 200.000 km → piyasa ortası £3.100 (8 emsal)" in out
+    assert "ℹ️" not in out  # o yılın tablo satırı yok: kıyas yapılmaz
 
 
 # --- /satti ---

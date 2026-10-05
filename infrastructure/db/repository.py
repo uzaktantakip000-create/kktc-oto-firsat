@@ -578,6 +578,20 @@ class Repository:
                                   ORDER BY evaluated_at DESC LIMIT 1) e ON TRUE
                ORDER BY x.sent_at DESC LIMIT %s""", (limit,)).fetchall()
 
+    def current_decisions(self, brand_norm: str, model_norm: str, year: int, limit: int = 3) -> list[dict]:
+        """/fiyat için: bu marka-model-yıldaki şu an ilanda olan araçların SON kararı (bildirim mesajındaki "piyasa ortası" bu kayıttan
+        gelir: evaluations.market_median_gbp). Önce 🟢/🟡, sonra en yeni ilan. `total`: eşleşen ilan sayısı (LIMIT'ten önce)."""
+        return self.conn.execute(
+            """SELECT l.id, l.km, l.price_gbp::float8 AS price_gbp, e.tier, e.comparables_n,
+                      e.market_median_gbp::float8 AS market_median_gbp, COALESCE(to_jsonb(e) ->> 'method', 'A') AS method,
+                      count(*) OVER () AS total
+               FROM listings l
+               JOIN LATERAL (SELECT * FROM evaluations e WHERE e.listing_id = l.id ORDER BY evaluated_at DESC LIMIT 1) e ON TRUE
+               WHERE l.brand_norm = %s AND l.model_norm = %s AND l.year = %s AND l.is_active AND l.duplicate_of IS NULL
+                 AND l.karantina_nedeni IS NULL AND l.price_gbp IS NOT NULL AND e.market_median_gbp IS NOT NULL
+               ORDER BY CASE e.tier WHEN 'guclu' THEN 0 WHEN 'pazarlik' THEN 1 ELSE 2 END, l.first_seen_at DESC
+               LIMIT %s""", (brand_norm, model_norm, year, limit)).fetchall()
+
     def week_alert_counts(self, days: int = 7) -> dict[str, int]:
         """Son 'days' günde gönderilen fırsat sayısı (ilan bazında): {'guclu': n, 'tahmini': n}."""
         rows = self.conn.execute(

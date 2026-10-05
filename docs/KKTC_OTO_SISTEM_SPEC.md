@@ -376,6 +376,7 @@ Kullanıcı isteği: Facebook'ta Kuzey Kıbrıs araç satış grupları (Marketp
 Sahibin kararları:
 - Değerden %30+ ucuz ilan hemen gelir, 🟠 etiketiyle. Günlük sınır yok; yalnızca arıza freni var: bir turda 15'ten fazla 🟠 çıkarsa tek özet mesaj gider.
 - Tablo Telegram'dan sorulur: `/fiyat corolla 2014`.
+  - **2.6 (05.10.2026, sahibe örnek gösterilmeden yayınlanmaz):** yıl yazılınca cevap iki rakamı AYRI etiketle verir: "📘 Değer tablosu" ve "📊 Bildirim hesabı" = o model-yılda şu an ilanda olan en çok 3 aracın SON kararındaki piyasa ortası (`Repository.current_decisions` → `evaluations.market_median_gbp`; bildirim mesajı aynı kayıttan okur). Tablodan yuvarlanmış %10'dan çok ayrışan satıra "tablodan %x yüksek/düşük", altına tek satır neden (tablo bütün sürümleri ve TL ilanları sayıp aynı yıl/km'ye çevirir; bildirim yalnız ilana benzeyenlere bakar, emsal azsa ±2 yıla açılıp iki hesabın düşüğünü alır). Fırsatı 📊 belirler. Kural/eşik/bildirim metni değişmedi. Ölçüm (05.10, 12 aktif 🟢): tablo/medyan farkı 7'sinde ≤%5, 2'sinde %7–10, 3'ünde %11–12 (Fit ×2, Polo); tablo değeriyle hesaplansa 12 🟢'nin 6'sı %20 kârın altında görünürdü (sahibin şaşırma nedeni).
 - Varyant ayrımı otomatiktir.
 - Gerçek satışlar `/satti` ile girilir; eğride 3 kat ağırlık alır.
 - Değer bir gecede %15'ten fazla değişirse satır şüpheli olur, 2 gece aynı kalırsa kabul edilir.

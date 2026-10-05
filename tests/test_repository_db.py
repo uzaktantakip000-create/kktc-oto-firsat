@@ -618,3 +618,32 @@ def test_source_guard_counts_owner_wrong_votes_only(db):
     vote(c, lids[2], "yanlis_fiyat", None)  # sahibi belli olmayan eski kayıt sahibin sayılır
     (row,) = db.sources_failing_feedback(10, 3)
     assert row["id"] == sid and row["n"] == 3 and row["bad_n"] == 3
+
+
+def test_current_decisions_reads_the_latest_evaluation_of_active_listings_for_fiyat(db):
+    """2.6: /fiyat'taki "piyasa ortası" bildirim mesajıyla AYNI kayıttan (son değerlendirmenin market_median_gbp'si) okunur.
+    Yalnız aynı marka-model-yıl, aktif, mükerrer/karantina olmayan ilan; medyansız kayıt (fiyat geçersiz) atlanır; önce 🟢/🟡."""
+    c, sid = db.conn, add_source(db.conn)
+
+    def ev(lid, median, tier="yok", hours=1, method=None):
+        c.execute("INSERT INTO evaluations (listing_id, evaluated_at, comparables_n, market_median_gbp, confidence, tier, method) "
+                  "VALUES (%s, now() - make_interval(hours => %s), 9, %s, 'orta', %s, %s)", (lid, hours, median, tier, method))
+
+    plain = add_listing(c, sid, "plain", model_norm="corolla", year=2014, price_gbp=6000)
+    ev(plain, 7000)
+    green = add_listing(c, sid, "green", model_norm="corolla", year=2014, price_gbp=5000, km=None)
+    ev(green, 9000, "yok", hours=5)
+    ev(green, 8600, "guclu", hours=1)  # son kayıt bu
+    est = add_listing(c, sid, "est", model_norm="corolla", year=2014, price_gbp=4000)
+    ev(est, 9900, "tahmini", method="B")
+    for item, cols in (("inactive", {"is_active": False}), ("dup", {"duplicate_of": plain}), ("quar", {"karantina_nedeni": "test"}),
+                       ("year", {"year": 2015}), ("model", {"model_norm": "yaris"})):
+        ev(add_listing(c, sid, item, **{"model_norm": "corolla", "year": 2014, **cols}), 7500)
+    ev(add_listing(c, sid, "nomedian", model_norm="corolla", year=2014), None)
+    rows = db.current_decisions("Toyota", "corolla", 2014)
+    assert rows[0]["id"] == green and {r["id"] for r in rows} == {green, plain, est}  # 🟢 önce
+    by = {r["id"]: r for r in rows}
+    assert by[green]["market_median_gbp"] == 8600 and by[green]["km"] is None and by[green]["price_gbp"] == 5000
+    assert by[green]["comparables_n"] == 9 and by[green]["total"] == 3
+    assert by[est]["method"] == "B" and by[plain]["method"] == "A"  # NULL yöntem = A (kolon varsayılanı)
+    assert len(db.current_decisions("Toyota", "corolla", 2014, limit=1)) == 1
