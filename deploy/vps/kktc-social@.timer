@@ -1,0 +1,17 @@
+# deploy/vps/kktc-social@.timer — kktc-social@%i.service'i 20 dakikada bir (+0–5 dk rastgele) uyandırır.
+# Açmak:   sudo systemctl enable --now kktc-social@instagram.timer   (facebook için aynı)
+# Kapatmak: sudo systemctl disable --now kktc-social@instagram.timer
+# Kurulum zamanlayıcıyı KENDİLİĞİNDEN AÇMAZ. Asıl sıklığı (~2 saat, KKTC gündüz penceresi) okuyucu kendisi uygular.
+[Unit]
+Description=KKTC sosyal okuyucu zamanlayıcısı (%i)
+Documentation=file:///opt/kktc-social/app/deploy/vps/README.md
+
+[Timer]
+OnCalendar=*:0/20
+RandomizedDelaySec=300
+AccuracySec=1min
+# Kapalıyken kaçırılan turlar sonradan toplu çalıştırılmaz.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

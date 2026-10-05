@@ -1,0 +1,34 @@
+# deploy/vps/kktc-xvfb.service — sanal ekran :99 (Xvfb). Facebook'un görünür tarayıcısı ve uzak masaüstü bunu kullanır.
+# Ayrıca açmak gerekmez: kktc-social@*.service ve kktc-novnc.service gerekince kendisi başlatır.
+# Ekran yalnız yerel Unix soketinden (/tmp/.X11-unix/X99) erişilir; ağdan (TCP) dinlemez.
+[Unit]
+Description=KKTC sanal ekran (Xvfb :99)
+Documentation=file:///opt/kktc-social/app/deploy/vps/README.md
+
+[Service]
+Type=simple
+User=kktc-social
+Group=kktc-social
+Environment=HOME=/var/lib/kktc-social
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1366x768x24 -nolisten tcp -noreset
+# Soket oluşana kadar bekle (en çok 10 sn); ancak ondan sonra "hazır" sayılır ve ona bağlı birimler başlar.
+ExecStartPost=/bin/sh -c 'i=0; while [ ! -S /tmp/.X11-unix/X99 ]; do i=$$((i+1)); if [ $$i -ge 100 ]; then echo "Xvfb soketi 10 sn icinde olusmadi" >&2; exit 1; fi; sleep 0.1; done'
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+# Xvfb soketini ve kilidini /tmp'ye yazar (paylaşılan /tmp; PrivateTmp bilerek kapalı, yoksa okuyucu ekranı göremez)
+ReadWritePaths=/tmp
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

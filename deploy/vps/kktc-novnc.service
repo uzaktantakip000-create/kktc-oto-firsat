@@ -1,0 +1,32 @@
+# deploy/vps/kktc-novnc.service — uzak masaüstü: x11vnc (127.0.0.1:5900) + noVNC/websockify (127.0.0.1:6080).
+# İKİSİ DE YALNIZ 127.0.0.1'de dinler; internete açık değildir. Erişim yalnız SSH tüneliyle:
+#   kendi bilgisayarında:  ssh -N -L 6080:127.0.0.1:6080 <kullanici>@<VPS_IP>   sonra tarayıcıda http://localhost:6080/vnc.html
+# VNC şifresi de gerekir (/etc/kktc-social/vnc.passwd; README "VNC şifresi" adımı).
+# Yalnız giriş yaparken aç:  sudo systemctl start kktc-novnc   ·   bitince: sudo systemctl stop kktc-novnc
+# Açılışta kendiliğinden BAŞLAMAZ ([Install] bilerek yok).
+[Unit]
+Description=KKTC uzak masaüstü (noVNC 127.0.0.1:6080, yalnız SSH tüneliyle)
+Documentation=file:///opt/kktc-social/app/deploy/vps/README.md
+Requires=kktc-xvfb.service
+After=kktc-xvfb.service
+
+[Service]
+Type=simple
+User=kktc-social
+Group=kktc-social
+Environment=HOME=/var/lib/kktc-social
+ExecStartPre=/bin/sh -c 'test -s /etc/kktc-social/vnc.passwd || { echo "VNC sifresi yok. Once: sudo x11vnc -storepasswd /etc/kktc-social/vnc.passwd (README)" >&2; exit 1; }'
+# İki süreç birlikte: biri durursa ikisi de durur (wait -n), birim "failed" olur.
+ExecStart=/bin/bash -c '/usr/bin/x11vnc -display :99 -localhost -rfbport 5900 -rfbauth /etc/kktc-social/vnc.passwd -forever -shared -noxdamage & /usr/bin/websockify --web /usr/share/novnc 127.0.0.1:6080 127.0.0.1:5900 & wait -n; exit 1'
+Restart=no
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=full
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

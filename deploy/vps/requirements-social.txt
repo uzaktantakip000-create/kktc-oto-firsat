@@ -1,0 +1,15 @@
+# Sosyal okuyucunun ek paketleri — YALNIZ VPS'te kurulur (pyproject.toml'a girmez).
+# Kurulum (deploy.sh yapar):  pip install -c constraints.txt -r deploy/vps/requirements-social.txt .
+#
+# Sürümler PyPI'de 05.10.2026'da kontrol edildi (o gün en son kararlı sürümler):
+#   playwright   1.63.0  (PyPI'ye yüklenme 15.09.2026) — constraints.txt'deki sürümle AYNI olmalı (scrapling de playwright
+#                         kullanıyor; farklı yazılırsa pip "çakışma" hatası verir). Yükseltirken ikisini birlikte değiştir.
+#   instaloader  4.15.3  (26.07.2026)
+# instaloader'ın alt paketleri constraints.txt'de yok; sabitlenmezse her kurulumda başka sürüm gelebilir:
+#   requests 2.34.2 (14.05.2026), urllib3 2.8.0 (15.09.2026), charset-normalizer 3.5.2 (30.09.2026)
+#   (idna, certifi, greenlet, pyee zaten constraints.txt'de sabit.)
+playwright==1.63.0
+instaloader==4.15.3
+requests==2.34.2
+urllib3==2.8.0
+charset-normalizer==3.5.2

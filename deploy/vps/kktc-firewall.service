@@ -1,0 +1,22 @@
+# deploy/vps/kktc-firewall.service — kktc-social kullanıcısının güvenlik duvarını açılışta yükler.
+# Kural dosyası /etc/kktc-social/firewall.nft'yi `sudo kktc-firewall apply` üretir ve bu birimi etkinleştirir.
+# Okuyucu birimleri (kktc-social@*.service) bu birimi Requires= ile ister: kural yüklenemezse okuyucu BAŞLAMAZ.
+# ExecStop BİLEREK YOK: birim durdurulsa da kural yerinde kalır (fail-closed). Kuralı kaldırmanın tek yolu: sudo kktc-firewall off
+[Unit]
+Description=KKTC sosyal okuyucu guvenlik duvari (kktc-social yalniz proxylere cikar)
+Documentation=file:///opt/kktc-social/app/deploy/vps/README.md
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target shutdown.target
+# nftables.service açılışta "flush ruleset" yapar: bizim tablo ONDAN SONRA yüklenmeli.
+After=local-fs.target nftables.service ufw.service
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/kktc-social/firewall.nft
+ExecReload=/usr/sbin/nft -f /etc/kktc-social/firewall.nft
+
+[Install]
+WantedBy=sysinit.target
