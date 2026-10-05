@@ -3,13 +3,20 @@ Sabit +3 kışın saatleri 1 saat ileri gösterir ve KKTC saatine göre kurulan 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from application import digest, health, history_cmd, maintenance, price_book_job, status
+import pytest
+
+from application import digest, health, history_cmd, maintenance, notify, price_book_job, report, status
 from domain.kktc_time import KKTC, kktc_hour, to_kktc
+from domain.profit import Tier
+from domain.settings import Settings
 from entrypoints.tick import due_jobs
 from infrastructure.collectors.mezunum import parse_detail
+from tests.test_estimated import est_ev
 from tests.test_history_alarm_card import FakeRepo as HistoryRepo, opp
+from tests.test_notify import FakeRepo as NotifyRepo, ev as notify_ev
 from tests.test_quality import PEERS, Repo as QualityRepo
 from tests.test_status import FakeRepo as StatusRepo, src
+from tests.test_weekly_report import FakeRepo as ReportRepo, vote_row
 
 
 def utc(*a):
@@ -146,3 +153,109 @@ def test_night_jobs_stay_on_utc_window_all_year():
         assert maintenance.run_maintenance(QualityRepo(list(PEERS)), night) is not None
     last_night_hour = utc(2027, 1, 15, 3, 59)  # kışın KKTC 05:59: sabah nabzı (KKTC 08:00) penceresinden önce
     assert kktc_hour(last_night_hour) < status.MORNING_HOURS_KKTC.start
+
+
+# --- fırsat mesajı sessiz saatleri: KKTC 00:00–06:59 (yaz-kış aynı; yalnız 🟢/🟠 fırsat mesajı) ---
+def _deal_alert(monkeypatch, now, evs=None, tier=Tier.STRONG):
+    """`now` anında gönderilen TEK fırsat mesajının sendMessage alanları (mesaj her saatte hemen gider: tam bir çağrı beklenir)."""
+    sent = []
+    monkeypatch.setattr(notify, "api", lambda token, method, **kw: sent.append((method, kw)) or {"message_id": 1})
+    assert notify.send_alerts(NotifyRepo(["a"]), "t", evs or [notify_ev(1)], tier=tier, now=now) == 1
+    ((method, params),) = sent
+    assert method == "sendMessage" and params["chat_id"] == "a"
+    return params
+
+
+def test_quiet_window_is_one_named_constant_midnight_to_seven():
+    assert notify.QUIET_HOURS_KKTC == range(0, 7)
+
+
+def test_a_deal_alert_at_three_in_the_morning_still_arrives_at_once_but_silently(monkeypatch):
+    params = _deal_alert(monkeypatch, utc(2026, 7, 15, 0, 0))  # KKTC 03:00
+    assert params["disable_notification"] is True
+    assert params["text"].startswith("🟢 FIRSAT") and params["reply_markup"]["inline_keyboard"]  # içerik ve düğmeler aynı
+    assert params["disable_web_page_preview"] is True
+
+
+QUIET_CASES = [
+    # yaz (UTC+3)
+    (utc(2026, 7, 15, 20, 59), False, "yaz KKTC 23:59"), (utc(2026, 7, 15, 21, 0), True, "yaz KKTC 00:00"),
+    (utc(2026, 7, 15, 21, 30), True, "yaz KKTC 00:30"), (utc(2026, 7, 15, 3, 59), True, "yaz KKTC 06:59"),
+    (utc(2026, 7, 15, 4, 0), False, "yaz KKTC 07:00"), (utc(2026, 7, 15, 5, 30), False, "yaz KKTC 08:30"),
+    # kış (UTC+2): sabit +3 olsaydı 21:30 UTC'yi 00:30 sanıp sustururdu, 04:30 UTC'yi 07:30 sanıp susturmazdı
+    (utc(2027, 1, 15, 21, 30), False, "kış KKTC 23:30"), (utc(2027, 1, 15, 21, 59), False, "kış KKTC 23:59"),
+    (utc(2027, 1, 15, 22, 0), True, "kış KKTC 00:00"), (utc(2027, 1, 15, 4, 30), True, "kış KKTC 06:30"),
+    (utc(2027, 1, 15, 4, 59), True, "kış KKTC 06:59"), (utc(2027, 1, 15, 5, 0), False, "kış KKTC 07:00"),
+    # geçiş günü 25.10.2026 (01:00 UTC'de 04:00 → 03:00): iki yanında da sınır doğru
+    (utc(2026, 10, 24, 21, 0), True, "25.10 KKTC 00:00 (+3)"), (utc(2026, 10, 25, 0, 59), True, "25.10 KKTC 03:59 (+3)"),
+    (utc(2026, 10, 25, 1, 0), True, "25.10 KKTC 03:00 (+2)"), (utc(2026, 10, 25, 4, 59), True, "25.10 KKTC 06:59 (+2)"),
+    (utc(2026, 10, 25, 5, 0), False, "25.10 KKTC 07:00 (+2)"),
+]
+
+
+@pytest.mark.parametrize("moment,silent,label", QUIET_CASES, ids=[c[2] for c in QUIET_CASES])
+def test_deal_alert_is_silent_exactly_between_midnight_and_seven_kktc_in_summer_and_winter(monkeypatch, moment, silent, label):
+    params = _deal_alert(monkeypatch, moment)
+    if silent:
+        assert params["disable_notification"] is True, label
+    else:
+        assert "disable_notification" not in params, label  # gündüz mesajı eskisiyle birebir aynı: alan hiç gönderilmez
+
+
+def test_estimated_deal_alert_is_silent_at_night_too_and_the_burst_summary_with_it(monkeypatch):
+    assert _deal_alert(monkeypatch, utc(2026, 7, 15, 21, 30), [est_ev(1)], Tier.ESTIMATED)["disable_notification"] is True  # 🟠, KKTC 00:30
+    assert "disable_notification" not in _deal_alert(monkeypatch, utc(2026, 7, 15, 5, 30), [est_ev(1)], Tier.ESTIMATED)  # KKTC 08:30
+
+    class OwnerRepo(NotifyRepo):  # sahibe uyarı için (health.notify_owner)
+        def alert_recent(self, key, hours):
+            return False
+
+        def mark_alerted(self, key):
+            pass
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "owner")
+    evs = [est_ev(i, price=5000 + i) for i in range(Settings().est_burst_limit + 1)]
+    for moment, silent in ((utc(2026, 7, 15, 0, 30), True), (utc(2026, 7, 15, 9, 0), False)):  # KKTC 03:30 / 12:00
+        subs, owner = [], []
+        monkeypatch.setattr(notify, "api", lambda token, method, **kw: subs.append(kw) or {"message_id": 1})
+        monkeypatch.setattr(health, "api", lambda token, method, **kw: owner.append(kw) or {})
+        assert notify.send_alerts(OwnerRepo(["a", "b"]), "t", evs, tier=Tier.ESTIMATED, now=moment) == len(evs)
+        assert [kw["chat_id"] for kw in subs] == ["a", "b"] and all(kw["text"].startswith(f"🟠 {len(evs)} tahmini") for kw in subs)
+        if silent:
+            assert all(kw["disable_notification"] is True for kw in subs)
+        else:
+            assert not any("disable_notification" in kw for kw in subs)
+        (warning,) = owner  # sahibe "arıza freni" uyarısı gece de SESLİ: sistem mesajı fırsat mesajı değil
+        assert warning["chat_id"] == "owner" and warning["text"].startswith("⚠️ 🟠 arıza freni") and "disable_notification" not in warning
+
+
+def test_the_weekly_report_and_owner_warnings_stay_audible_at_night(monkeypatch):
+    """Haftalık rapor ve sahibe sistem/hata uyarıları (sabah nabzı da aynı yoldan: health.notify_owner) gece de sesli gider."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "owner")
+    sent = []
+    monkeypatch.setattr(health, "api", lambda token, method, **kw: sent.append(kw) or {})
+    monkeypatch.setattr(report, "recheck_before_send", lambda repo, cands: cands)
+    monkeypatch.setattr(report, "late_sources", lambda repo, now=None: [])
+    night = utc(2026, 7, 15, 0, 30)  # KKTC 03:30
+    assert report.send_weekly_report(ReportRepo(votes=[vote_row(1)]), now=night) is True
+    assert health.notify_owner(ReportRepo(), "hata", "⚠️ sistem uyarısı") is True
+    assert len(sent) == 2 and sent[0]["text"].startswith("📊 Haftalık rapor") and sent[1]["text"].startswith("⚠️ sistem uyarısı")
+    assert not any("disable_notification" in kw for kw in sent)
+    assert _deal_alert(monkeypatch, night)["disable_notification"] is True  # aynı anda fırsat mesajı sessiz: fark yalnız onda
+
+
+def test_without_an_injected_time_the_current_time_decides(monkeypatch):
+    class Clock(datetime):
+        fixed = None
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.fixed
+
+    monkeypatch.setattr(notify, "datetime", Clock)
+    Clock.fixed = utc(2026, 7, 15, 0, 30)  # KKTC 03:30
+    assert notify.quiet_extra() == {"disable_notification": True}
+    Clock.fixed = utc(2027, 1, 15, 5, 30)  # KKTC 07:30
+    assert notify.quiet_extra() == {}

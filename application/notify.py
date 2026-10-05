@@ -5,6 +5,7 @@ from urllib.parse import quote
 import httpx
 
 from application.evaluate import Evaluated, confidence_label
+from domain.kktc_time import kktc_hour
 from domain.profit import Tier
 from domain.red_flags import customs_stated
 from domain.settings import Settings
@@ -12,6 +13,10 @@ from infrastructure.config import mask_chat, redact
 from infrastructure.db.repository import Repository, unsaved_alert_key
 
 SOCIAL = ("instagram", "facebook")
+# KKTC yerel saatiyle 00:00–06:59 arası gelen fırsat mesajları (🟢/🟠 ve 🟠 özeti) HEMEN gider ama sessiz (sesi/titreşimi kapalı): uyuyanı uyandırmasın
+# (sahip kararı 05.10.2026). Saat KKTC'ye göredir (yaz UTC+3, kış UTC+2: domain/kktc_time). Yalnız fırsat mesajları: sahibe sistem/hata uyarısı, sabah nabzı
+# ve haftalık rapor her zaman sesli gider.
+QUIET_HOURS_KKTC = range(0, 7)
 CURRENCY_NAMES = {"GBP": "STG", "TRY": "TL", "EUR": "EUR", "USD": "USD"}
 API = "https://api.telegram.org/bot{token}/{method}"
 
@@ -35,6 +40,12 @@ def api(token: str, method: str, **payload) -> dict:
             desc = None
         raise TelegramError(method, r.status_code, desc)
     return r.json()["result"]
+
+
+def quiet_extra(now: datetime | None = None) -> dict:
+    """Fırsat mesajının sendMessage'ine eklenecek alanlar: sessiz saatte (QUIET_HOURS_KKTC) {"disable_notification": True}, gün içinde {} (alan hiç
+    gönderilmez: gündüz mesajı eskisiyle birebir aynı). `now`: sınama için; verilmezse şimdiki an."""
+    return {"disable_notification": True} if kktc_hour(now or datetime.now(timezone.utc)) in QUIET_HOURS_KKTC else {}
 
 
 EST_HEAD = "🟠 KONTROL ET — az emsal, kendin de bak"
@@ -160,9 +171,10 @@ def _is_fresh_ev(ev: Evaluated) -> bool:
                     platform=ev.listing.get("platform"))
 
 
-def _burst_summary(repo: Repository, token: str, fresh: list[Evaluated], subs: list[dict], limit: int) -> int:
+def _burst_summary(repo: Repository, token: str, fresh: list[Evaluated], subs: list[dict], limit: int, now: datetime | None = None) -> int:
     """Arıza freni: bir turda sınırdan çok 🟠 çıktıysa büyük ihtimalle tablo/eşik bozuktur. Tek tek mesaj yerine her aboneye
-    TEK özet gider, ilanlar bildirilmiş sayılır (tekrarlanmaz), sahibe hata uyarısı düşer."""
+    TEK özet gider, ilanlar bildirilmiş sayılır (tekrarlanmaz), sahibe hata uyarısı düşer. Özet bir fırsat mesajıdır: gece sessiz gider
+    (`quiet_extra`); sahibe giden hata uyarısı her zaman sesli."""
     from application.health import notify_owner  # health notify'ı içe aktarır: döngüyü kırmak için burada
     best = sorted(fresh, key=lambda e: e.profit.profit_pct, reverse=True)[:5]
     lines = [f"🟠 {len(fresh)} tahmini fırsat çıktı; olağan dışı, kontrol ediyorum — en iyi {len(best)}:"]
@@ -172,13 +184,14 @@ def _burst_summary(repo: Repository, token: str, fresh: list[Evaluated], subs: l
                      f"~%{(1 - float(l['price_gbp']) / ev.market.median_gbp) * 100:.0f} ucuz"
                      + (f"\n  {l['url']}" if l.get("url") else ""))
     text = "\n".join(lines)
+    quiet = quiet_extra(now)
     done = 0
     for sub in subs:
         todo = [ev for ev in fresh if not repo.alert_exists(ev.listing["id"], sub["chat_id"], Tier.ESTIMATED.value)]
         if not todo:
             continue
         try:
-            res = api(token, "sendMessage", chat_id=sub["chat_id"], text=text, disable_web_page_preview=True)
+            res = api(token, "sendMessage", chat_id=sub["chat_id"], text=text, disable_web_page_preview=True, **quiet)
         except TelegramError as e:
             print(f"özet gönderilemedi ({mask_chat(sub['chat_id'])}): {e.status} {e.description}")
             continue
@@ -220,16 +233,18 @@ def _record_alert(repo: Repository, listing_id, chat_id: str, tier: str, msg_id,
 
 def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes: dict | None = None,
                 max_per_run: int = 10, tier: Tier = Tier.STRONG,
-                s: Settings | None = None) -> int:
+                s: Settings | None = None, now: datetime | None = None) -> int:
     """Verilen seviyedeki ilanlar anında gider (varsayılan 🟢; 🟠 ayrı çağrıyla; 🟡 günlük özetle). Tek aboneye gönderim
     hatası diğerlerini ve sonraki ilanları durdurmaz; gönderilemeyen ilan bir sonraki turda yeniden denenir (alerts kaydı
-    yalnızca başarılı gönderimde yazılır). 🟠'de bir turda s.est_burst_limit'ten çok ilan varsa tek özet gider."""
+    yalnızca başarılı gönderimde yazılır). 🟠'de bir turda s.est_burst_limit'ten çok ilan varsa tek özet gider. KKTC saatiyle 00:00–06:59
+    arasında mesajlar yine HEMEN gider ama sessiz (`QUIET_HOURS_KKTC`); `now` yalnız sınama için (verilmezse şimdiki an)."""
     s = s or Settings()
     subs = repo.approved_subscribers()
+    quiet = quiet_extra(now)
     if tier is Tier.ESTIMATED:
         fresh = [ev for ev in evaluated if ev.profit.tier is tier and _is_fresh_ev(ev)]
         if len(fresh) > s.est_burst_limit:
-            return _burst_summary(repo, token, fresh, subs, s.est_burst_limit)
+            return _burst_summary(repo, token, fresh, subs, s.est_burst_limit, now)
     if tier is Tier.ESTIMATED:  # günde en çok est_daily_limit tane 🟠 (sahibin kararı); sıra: pending_alerts'in kâr sıralaması (güven sırası)
         quota = s.est_daily_limit - repo.alerts_sent_since(Tier.ESTIMATED.value, 24)
         if quota <= 0:
@@ -252,7 +267,7 @@ def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes:
                 continue
             try:
                 res = api(token, "sendMessage", chat_id=sub["chat_id"], text=text, disable_web_page_preview=True,
-                          reply_markup=keyboard(ev.listing["id"], whatsapp_url(ev.listing["seller_phone"], greeting(ev.listing))))
+                          reply_markup=keyboard(ev.listing["id"], whatsapp_url(ev.listing["seller_phone"], greeting(ev.listing))), **quiet)
             except TelegramError as e:
                 if e.status == 429:  # hız sınırı: bu tur bırak, sonraki turda devam
                     rate_limited = True
