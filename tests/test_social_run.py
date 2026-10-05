@@ -7,7 +7,7 @@ import pytest
 from application import collect_facebook as cf
 from application import collect_instagram as ci
 from application import social_run as sr
-from application.social_port import Cursor, DailyCap, FetchResult, SocialPost, SocialSource, SocialStop, SourceError
+from application.social_port import Cursor, DailyCap, FetchResult, SocialPost, SocialSource, SocialStop, SourceError, Unreachable
 from domain.social_brake import Severity, Signal
 
 NOW = datetime(2026, 10, 5, 9, tzinfo=timezone.utc)  # 12:00 KKTC
@@ -257,3 +257,29 @@ def test_only_aliases_in_logs_and_report():
     for s in (src(1), src(2), src(3)):
         assert s.key not in text and s.slug not in text and s.url not in text
     assert "fb-2" in text and "facebook.com" not in text
+
+
+def test_proxy_down_ends_cycle_without_brake_and_without_reading():
+    class Down(Fetcher):
+        def check_egress(self):
+            raise Unreachable("çıkış IP'si okunamadı: ConnectError http://proxy.example.net:8000")
+
+    f = Down()
+    rep, store = run(f, [src(1), src(2)], store=started(Store()))
+    assert rep.status == sr.UNREACHABLE and rep.brake is None and f.calls == [] and f.closed == 1
+    assert not store.state.get("social:brake:facebook") and not store.state.get("social:paused_until:facebook")
+    assert "proxy.example.net" not in rep.note and "social:next_after:facebook" in store.state  # sık denemeye dönmez
+
+
+def test_three_source_errors_in_row_end_cycle_without_brake():
+    script = {f"90{i}": SourceError("okunamadı") for i in range(1, 5)}
+    f = Fetcher(script)
+    rep, store = run(f, [src(i) for i in range(1, 6)], store=started(Store()))
+    assert rep.status == sr.ERRORS_IN_ROW and rep.brake is None and len(f.calls) == sr.MAX_ERRORS_IN_ROW
+    assert not store.state.get("social:brake:facebook") and f.closed == 1
+
+
+def test_two_source_errors_never_end_the_cycle():
+    f = Fetcher({"901": SourceError("x"), "902": SourceError("y")})  # 4 kaynaktan yalnız 2'si hatalı: 3'lük seri olamaz
+    rep, _ = run(f, [src(1), src(2), src(3), src(4)], store=started(Store()))
+    assert rep.status == sr.OK and len(f.calls) == 4 and sum(1 for r in rep.sources if r.error) == 2

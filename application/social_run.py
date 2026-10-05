@@ -2,8 +2,9 @@
 
 Tur: fren ya da duraklama varsa hiç başlamaz -> çıkış IP'si beklenen sabit IP mi -> sıradaki kaynaklar (yavaş başlangıç, karışık sıra,
 aralarda 3–6 dk bekleme) -> her kaynakta imleçten yeni gönderiler okunur, ilana çevrilir, imleç ilerler.
-Platform uyarısı (SocialStop) turu hemen bitirir ve freni yazar; günlük tavan (DailyCap) turu sessizce bitirir; tek kaynağın hatası
-(SourceError) yalnız o kaynağı atlar. Okuyucu her durumda kapatılır; sonraki tur zamanı ve nabız her durumda yazılır.
+Platform uyarısı (SocialStop) turu hemen bitirir ve freni yazar; günlük tavan (DailyCap) ve proxy'nin geçici yanıtsızlığı (Unreachable)
+turu fren yazmadan bitirir; tek kaynağın hatası (SourceError) yalnız o kaynağı atlar, ama üst üste 3 kaynak hatası turu erken bitirir
+(proxy koptu ya da platform yapısı değişti: boşuna istek atılmaz). Okuyucu her durumda kapatılır; sonraki tur zamanı ve nabız her durumda yazılır.
 
 Durum anahtarları (StateStore, platform başına; yapılı değerler JSON):
   social:brake:<p>               HARD fren {signal, reason, at}; boş = yok. Yalnız `resume` açar
@@ -25,15 +26,16 @@ from random import Random
 from application.llm_reader import LlmReader
 from application.social_ingest import IngestStats, ReadBudget, ingest
 from application.social_port import (Cursor, DailyCap, ListingSink, SocialFetcher, SocialSource, SocialStop, SourceError,
-                                     StateStore)
+                                     StateStore, Unreachable)
 from domain.social_brake import SOFT_REPEAT_WINDOW, SOFT_SIGNALS, BrakeDecision, Severity, Signal, classify
 from domain.social_schedule import KKTC_TZ, SLOW_INTERVAL_H, between_sources_delay, due, next_after, plan_cycle
 
 MAX_POSTS = 25  # kaynak başına tek okumada en çok gönderi
+MAX_ERRORS_IN_ROW = 3  # turda üst üste bu kadar kaynak okunamazsa tur erken biter (fren değil)
 SOFT_HISTORY_KEEP = 20
 
 # CycleReport.status
-OK, CAPPED, STOPPED, ERROR = "tamam", "tavan", "fren", "hata"
+OK, CAPPED, STOPPED, ERROR, UNREACHABLE, ERRORS_IN_ROW = "tamam", "tavan", "fren", "hata", "ulasilamadi", "kaynak_hatalari"
 SKIP_BRAKE, SKIP_PAUSE = "atlandi_fren", "atlandi_duraklama"
 
 
@@ -181,6 +183,10 @@ class CycleReport:
             out.append(f"{p}: FREN {sev}: {self.brake.reason}")
         elif self.status == CAPPED:
             out.append(f"{p}: günlük istek tavanı doldu, tur erken bitti (fren değil)")
+        elif self.status == UNREACHABLE:
+            out.append(f"{p}: proxy yanıt vermedi, çıkış IP'si okunamadı; okumadan bitti, sonraki turda yeniden denenir (fren değil)")
+        elif self.status == ERRORS_IN_ROW:
+            out.append(f"{p}: üst üste {MAX_ERRORS_IN_ROW} kaynak okunamadı, tur erken bitti (fren değil)")
         seen = sum(r.seen for r in self.sources)
         new = sum(r.stats.new for r in self.sources if r.stats)
         errors = sum(1 for r in self.sources if r.error)
@@ -227,11 +233,16 @@ def _close(fetcher: SocialFetcher, log) -> None:
         log(f"{fetcher.platform}: okuyucu kapatılırken hata ({type(e).__name__})")
 
 
+class _ErrorsInRow(Exception):
+    """Üst üste MAX_ERRORS_IN_ROW kaynak hatası: tur erken biter (fren değil)."""
+
+
 def _read_sources(platform: str, fetcher: SocialFetcher, planned: list[SocialSource], store: StateStore, sink: ListingSink,
                   report: CycleReport, *, now: datetime, sleep, rng: Random, expected_ip: str, max_posts: int,
                   reader: LlmReader | None, log) -> None:
     """IP kontrolü + kaynaklar sırayla. SocialStop/DailyCap çağırana çıkar; SourceError ve işleme hatası yalnız o kaynağı atlar."""
     budget = ReadBudget()
+    errors_in_row = 0
     fetch_image = getattr(fetcher, "fetch_image", None)  # okuyucu görseli kendi bağlantısıyla indirebiliyorsa (yalnız okuyucu bağlıyken)
     _check_ip(fetcher, platform, expected_ip)
     for i, source in enumerate(planned):
@@ -246,7 +257,11 @@ def _read_sources(platform: str, fetcher: SocialFetcher, planned: list[SocialSou
             sr.error = scrub(str(e), source) or type(e).__name__
             _note_source_error(store, platform, source.key, sr.error, now)
             log(sr.line(platform))
+            errors_in_row += 1
+            if errors_in_row >= MAX_ERRORS_IN_ROW:
+                raise _ErrorsInRow() from None
             continue
+        errors_in_row = 0
         sr.seen, sr.requests = res.seen, res.requests
         try:
             sr.stats = ingest(platform, res.posts, source, sink, reader=reader, fetch_image=fetch_image, budget=budget)
@@ -290,6 +305,10 @@ def run_cycle(platform: str, fetcher: SocialFetcher, sources: list[SocialSource]
         report.status, report.brake = STOPPED, apply_brake(store, platform, e.signal, now)
     except DailyCap:
         report.status = CAPPED
+    except Unreachable as e:
+        report.status, report.note = UNREACHABLE, _URL.sub("<adres>", str(e))[:200]
+    except _ErrorsInRow:
+        report.status = ERRORS_IN_ROW
     except Exception:
         report.status = ERROR
         raise
@@ -357,6 +376,8 @@ def compare_feeds(fetcher: SocialFetcher, sources: list[SocialSource], store: St
         out["durum"], out["not"] = STOPPED, report.brake.reason
     except DailyCap:
         out["durum"] = report.status = CAPPED
+    except Unreachable:
+        out["durum"] = report.status = UNREACHABLE
     except Exception:
         report.status = ERROR
         raise

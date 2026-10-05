@@ -78,11 +78,17 @@ class DailyCap(Exception):
     """Hesabın günlük istek tavanı doldu: fren değildir, tur sessizce biter ve ertesi gün sürer."""
 
 
+class Unreachable(Exception):
+    """Proxy/ağ geçici olarak yanıt vermedi (çıkış IP'si okunamadı): fren değildir, tur okumadan biter, sonraki turda yeniden denenir.
+    IP okunup BEKLENENDEN FARKLI çıkarsa ya da proxy ayarı yoksa bu değil SocialStop(IP_CHANGED) fırlatılır."""
+
+
 class SocialFetcher(Protocol):
     platform: Platform
 
     def check_egress(self) -> str:
-        """Okuyucunun kendi bağlantısıyla (proxy üzerinden) görülen çıkış IP'si. Proxy ayarı yoksa SocialStop(IP_CHANGED)."""
+        """Okuyucunun kendi bağlantısıyla (proxy üzerinden) görülen çıkış IP'si. Proxy ayarı yoksa SocialStop(IP_CHANGED);
+        proxy/ağ yanıt vermezse Unreachable."""
         ...
 
     def fetch_new(self, source: SocialSource, cursor: Cursor, max_posts: int) -> FetchResult:
