@@ -5,11 +5,12 @@ sayfa açılmasın, yapay zekâ parası harcanmasın. Elenen ilana alerts kaydı
 from application import llm_reader
 from application.evaluate import Evaluated, apply_send_floor
 from application.liveness import recheck_before_send
-from application.notify import is_fresh
+from application.notify import is_fresh, resurfaced_ids
 from infrastructure.db.repository import Repository
 
 # Elenme nedenleri (kısa, makine okur): ileride "neden gitmedi" sayılabilsin (🟠 gölge raporu, haftalık rapor)
-TAZE_DEGIL = "taze_degil"  # 36 saatten önce görülmüş ya da yayını 4 günden eski (fiyatı son 36 saatte değişmediyse); sosyal medyada 48 saat
+TAZE_DEGIL = "taze_degil"  # 36 saatten önce görülmüş ya da yayını 4 günden eski (fiyatı son 36 saatte değişmediyse); sosyal medyada 48 saat;
+# ayrıca yeniden çıkmış eski KKTCarabam ilanı (tarihsiz ve numarası daha önce görülenlerden küçük: sitenin "en yeni" listesine geri ittiği eski ilan)
 EMSAL_AZ = "emsal_az"  # emsal kapısı: doğrudan emsal < 8 ya da yalnız değer tablosuyla bulunmuş (🟠 bugün hep burada kalır)
 CANLI_DEGIL = "canli_degil"  # sitede satılmış/kaldırılmış ya da fiyatı değişmiş (fiyat değiştiyse sonraki turda yeniden değerlenir)
 LLM_REDDETTI = "llm_reddetti"  # yapay zekâ uyuşmazlık/gizli sorun buldu ya da fiyatını yapay zekâ okumuş 🟠 doğrulanamadı (🟡'ye düştü)
@@ -20,6 +21,15 @@ def _fresh(ev: Evaluated) -> bool:
     return is_fresh(l["first_seen_at"], l["posted_at"], price_changed_at=l.get("price_changed_at"), platform=l.get("platform"))
 
 
+def _fresh_candidates(repo: Repository, candidates: list[Evaluated]) -> list[Evaluated]:
+    """Tazelik adımı: `is_fresh` + yeniden çıkmış eski KKTCarabam ilanı DEĞİL (`notify.resurfaced_ids`; tek sorgu, yalnız `is_fresh`'ten geçen ve
+    ilan tarihi bilinmeyen adaylar için). Tarihi biliniyorsa yalnız tarih karar verir. Yeniden çıkmış ilan taze sayılmaz ama emsal olarak
+    kalır ve değerlendirilmeye devam eder (burada yalnız gönderimden elenir)."""
+    fresh = [ev for ev in candidates if _fresh(ev)]
+    old = resurfaced_ids(repo, [ev.listing for ev in fresh])
+    return [ev for ev in fresh if ev.listing["id"] not in old]
+
+
 def _dropped(before: list[Evaluated], after: list[Evaluated], reason: str) -> list[tuple[Evaluated, str]]:
     kept = {id(ev) for ev in after}
     return [(ev, reason) for ev in before if id(ev) not in kept]
@@ -28,13 +38,13 @@ def _dropped(before: list[Evaluated], after: list[Evaluated], reason: str) -> li
 def gonderim_kontrol(repo: Repository, candidates: list[Evaluated],
                      label: str) -> tuple[list[Evaluated], list[tuple[Evaluated, str]]]:
     """Gönderime aday ilanları sırayla dört kontrolden geçirir; dönen: (gönderilebilenler, [(elenen, neden), ...]).
-    1) tazelik (`taze_degil`) → 2) emsal kapısı, emsal < 8 (`emsal_az`) → 3) sitede hâlâ yayında ve fiyatı aynı mı (`canli_degil`;
+    1) tazelik (`taze_degil`; yeniden çıkmış eski KKTCarabam ilanı da burada elenir) → 2) emsal kapısı, emsal < 8 (`emsal_az`) → 3) sitede hâlâ yayında ve fiyatı aynı mı (`canli_degil`;
     yalnız KKTCar/KibrisArabaAl, okunamayan sayfa engellemez) → 4) yapay zekâ bağımsız okuması (`llm_reddetti`): sosyal medya/serbest
     metin 🟢'leri ve tüm 🟠'ler okunur; okuyucu yoksa ya da okuyamazsa ilan notla geçer, yalnız fiyatını yapay zekâ okumuş 🟠 geçmez.
     Gönderilebilenlerin sırası aday sırasıdır. `label` ("🟢"/"🟠") yalnız log satırı içindir. Hata yutulmaz: çağıran karar verir
     (🟢'de tur durur, 🟠 kendi try'ında kalır)."""
     rejected: list[tuple[Evaluated, str]] = []
-    fresh = [ev for ev in candidates if _fresh(ev)]
+    fresh = _fresh_candidates(repo, candidates)
     rejected += _dropped(candidates, fresh, TAZE_DEGIL)
     enough = apply_send_floor(fresh, label)  # emsal < 8 ise gitmez (okuma/canlılık maliyeti de harcanmaz)
     rejected += _dropped(fresh, enough, EMSAL_AZ)

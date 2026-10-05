@@ -145,6 +145,16 @@ def is_fresh(first_seen_at, posted_at, now: datetime | None = None, fresh_hours:
     return posted_at is None or posted_at >= now - timedelta(days=max_post_days)
 
 
+def resurfaced_ids(repo: Repository, listings: list[dict]) -> set:
+    """Verilen ilanlardan "yeniden çıkmış eski ilan" olanların kimlikleri (`Repository.resurfaced_kktcarabam`): KKTCarabam ilanı, `posted_at`
+    boş ve daha önceki bir turda görülmüş daha büyük numaralı KKTCarabam ilanı var. Böyle ilan TAZE DEĞİLDİR (anlık bildirim almaz, haftalık
+    raporda da listelenmez) ama emsal olmayı ve değerlendirilmeyi sürdürür. İlan tarihi biliniyorsa (`posted_at` dolu) tarih karar verir, bu
+    kural uygulanmaz: sorgu yalnız tarihsiz adaylar için, tek seferde yapılır (aday yoksa sorgu da yok). Hata yutulmaz: çağıran karar verir
+    (🟢 yolunda tur durur: şüpheli ilan gitmez)."""
+    ids = [l["id"] for l in listings if l.get("posted_at") is None]
+    return repo.resurfaced_kktcarabam(ids) if ids else set()
+
+
 def _is_fresh_ev(ev: Evaluated) -> bool:
     return is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
                     platform=ev.listing.get("platform"))

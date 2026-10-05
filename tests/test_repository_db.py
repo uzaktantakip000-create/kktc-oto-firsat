@@ -932,3 +932,80 @@ def test_disappeared_counts_split_by_reason_and_listing_counts(db):
     assert got == {"satildi": (1, 1), "belirsiz": (2, 0), "kaldirildi": (1, 0)}
     assert dict(db.listing_counts(7)) == {"new_n": 8, "active_n": 2}
 
+
+# --- yeniden çıkmış eski KKTCarabam ilanı (Repository.resurfaced_kktcarabam): sitenin "en yeni" listesine geri ittiği eski ilan ---
+KKA_URL = "https://www.kktcarabam.com/kategori/ikinci-el-araclar"
+
+
+def test_resurfaced_kktcarabam_needs_a_larger_id_first_seen_in_an_earlier_run(db):
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", KKA_URL)
+    seen = add_listing(c, arabam, "264400", first_seen_at=ago(hours=5))  # önceki turda görüldü: büyük numara
+    old = add_listing(c, arabam, "264352", first_seen_at=ago(minutes=1))  # "yeni" görünür ama numarası küçük: yeniden çıkmış
+    new = add_listing(c, arabam, "264410", first_seen_at=ago(minutes=1))  # bilinen her numaradan büyük: gerçekten yeni
+    older = add_listing(c, arabam, "264001", first_seen_at=ago(days=3))  # kendisinden büyük numara sonradan görüldü, ama ÖNCE görülen ilan: yeniden çıkmış değil
+    assert db.resurfaced_kktcarabam([seen, old, new, older]) == {old}
+    assert db.resurfaced_kktcarabam([]) == set()
+    # yeniden çıkmış ilan emsal ve değerlendirme havuzunda KALIR (yalnız anlık bildirim almaz)
+    assert old in {r["id"] for r in db.unevaluated_active()} and old in {r["id"] for r in db.market_pool()}
+
+
+def test_resurfaced_kktcarabam_cards_of_the_same_run_are_not_compared_with_each_other(db):
+    """Aynı turun kartları saniyeler içinde yazılır; birbirinden küçük numaralı olması "daha önceki tur" değildir. Sınır: 10 dakikadan FAZLA önce."""
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", KKA_URL)
+    a = add_listing(c, arabam, "264700", first_seen_at=ago(minutes=3))
+    b = add_listing(c, arabam, "264690", first_seen_at=ago(minutes=2))  # a'dan küçük numara ama a ile AYNI tur
+    assert db.resurfaced_kktcarabam([a, b]) == set()
+    # tam 10 dakika önce: aynı tur sayılır; 10 dakika 1 saniye önce: önceki tur
+    exact = add_listing(c, arabam, "300001", first_seen_at=ago())
+    add_listing(c, arabam, "300500", first_seen_at=ago(minutes=10))
+    assert db.resurfaced_kktcarabam([exact]) == set()
+    late = add_listing(c, arabam, "200001", first_seen_at=ago())
+    add_listing(c, arabam, "200500", first_seen_at=ago(minutes=10, seconds=1))
+    assert db.resurfaced_kktcarabam([exact, late]) == {late}
+
+
+def test_resurfaced_kktcarabam_known_posting_date_decides_and_the_rule_is_not_applied(db):
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", KKA_URL)
+    add_listing(c, arabam, "264400", first_seen_at=ago(hours=5))
+    undated = add_listing(c, arabam, "264352", first_seen_at=ago(minutes=1))
+    dated_old = add_listing(c, arabam, "264351", first_seen_at=ago(minutes=1), posted_at=ago(days=60))  # tarih eski: is_fresh karar verir
+    dated_new = add_listing(c, arabam, "264350", first_seen_at=ago(minutes=1), posted_at=ago(hours=3))  # tarih taze: kural uygulanmaz
+    assert db.resurfaced_kktcarabam([undated, dated_old, dated_new]) == {undated}
+
+
+def test_resurfaced_kktcarabam_only_kktcarabam_listings_count_and_are_affected(db):
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", KKA_URL)
+    kaa = add_site(c, "KibrisArabaAl", "https://kibrisarabaal.com/")
+    kktcar = add_site(c, "KKTCar", "https://kktcar.com/")
+    add_listing(c, kaa, "999999", first_seen_at=ago(hours=5))  # başka sitenin büyük numarası KKTCarabam'ı etkilemez
+    add_listing(c, kktcar, "400000", first_seen_at=ago(hours=5))
+    mine = add_listing(c, arabam, "150001", first_seen_at=ago(minutes=1))
+    other_kktcar = add_listing(c, kktcar, "260000", first_seen_at=ago(minutes=1))  # numarası küçük ama KKTCarabam değil: etkilenmez
+    other_kaa = add_listing(c, kaa, "150002", first_seen_at=ago(minutes=1))
+    assert db.resurfaced_kktcarabam([mine, other_kktcar, other_kaa]) == set()
+    add_listing(c, arabam, "150900", first_seen_at=ago(hours=5))  # artık KKTCarabam'da da daha büyük, daha önce görülmüş numara var
+    assert db.resurfaced_kktcarabam([mine, other_kktcar, other_kaa]) == {mine}
+
+
+def test_resurfaced_kktcarabam_reads_the_leading_digits_and_survives_odd_ids(db):
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", KKA_URL)
+    add_listing(c, arabam, "264400-bmw-3", first_seen_at=ago(hours=5))  # numara = baştaki rakamlar (264400)
+    add_listing(c, arabam, "abc", first_seen_at=ago(hours=5))  # rakamla başlamıyor: karşılaştırmaya girmez, hata vermez
+    suffixed = add_listing(c, arabam, "264352-bmw-3", first_seen_at=ago(minutes=1))
+    bigger = add_listing(c, arabam, "264999-x", first_seen_at=ago(minutes=1))
+    odd = add_listing(c, arabam, "xyz", first_seen_at=ago(minutes=1))
+    assert db.resurfaced_kktcarabam([suffixed, bigger, odd]) == {suffixed}
+
+
+def test_resurfaced_kktcarabam_absurdly_long_ids_do_not_overflow_the_comparison(db):
+    c = db.conn
+    arabam = add_site(c, "KKTCarabam", KKA_URL)
+    add_listing(c, arabam, "99999999999999999999", first_seen_at=ago(hours=5))  # 20 hane: yalnız ilk 15 hane okunur, bigint taşmaz
+    small = add_listing(c, arabam, "7", first_seen_at=ago(minutes=1))
+    assert db.resurfaced_kktcarabam([small]) == {small}
+

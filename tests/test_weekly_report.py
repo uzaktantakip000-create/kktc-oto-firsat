@@ -32,8 +32,10 @@ def near_row(i, pct=18.0, nedenler=None):
 
 
 class FakeRepo:
-    def __init__(self, votes=(), strong=(), near=(), gone=(), sent=None, fb=None, counts=None, marks=None, names=(), state=None, due=True):
+    def __init__(self, votes=(), strong=(), near=(), gone=(), sent=None, fb=None, counts=None, marks=None, names=(), state=None, due=True,
+                 resurfaced=()):
         self.votes, self.strong, self.near, self.gone = list(votes), list(strong), list(near), list(gone)
+        self.resurfaced = set(resurfaced)  # sorgunun "yeniden çıkmış eski KKTCarabam ilanı" diyeceği ilan kimlikleri
         self.sent, self.fb = sent or {}, fb or {}
         self.counts = counts or {"new_n": 1234, "active_n": 3133}
         self.marks, self.names, self.state, self.due = marks or {}, list(names), state or {}, due
@@ -49,6 +51,11 @@ class FakeRepo:
     def unnotified_strong(self, rules_version, days=14, limit=50):
         self.calls["strong"] = (rules_version, days)
         return self.strong
+
+    def resurfaced_kktcarabam(self, listing_ids):
+        ids = list(listing_ids)
+        self.calls["resurfaced"] = ids  # yalnız tazelik süzgecinden geçemeyen (bayat) VE ilan tarihi bilinmeyen satırlar sorulur
+        return {i for i in ids if i in self.resurfaced}
 
     def near_misses(self, rules_version, days=7, min_comparables=8, skip_reasons=(), limit=5):
         self.calls["near"] = (rules_version, days, min_comparables, tuple(skip_reasons), limit)
@@ -148,6 +155,28 @@ def test_unnotified_keeps_send_floor_and_freshness_rules():
     assert not any(f"/{i}-honda-fit/" in text for i in (1, 2, 3))
     assert "~%30 kâr (piyasa ortası £7.900, 12 emsal)\n  KibrisArabaAl · ilan tarihi 25.09" in text
     assert "ilk görülme 10.10" in text  # ilan tarihi yoksa ilk görülme
+
+
+def test_unnotified_never_lists_a_resurfaced_old_kktcarabam_ad(capsys):
+    """Sitenin "en yeni" listesine geri ittiği eski KKTCarabam ilanı (tarihsiz, numarası daha önce görülenlerden küçük) bayat sayılır ama
+    raporda LİSTELENMEZ: yeni fırsat değil, eski ve belki satılmış ilan. İlan tarihi belli olanlara kural uygulanmaz (sorgulanmaz bile)."""
+    rows = [strong_row(1, pct=40, url="https://www.kktcarabam.com/264352-bmw-3-serisi"),  # yeniden çıkmış
+            strong_row(2, pct=35),  # bayat, tarihsiz, yeniden çıkmış değil: listelenir
+            strong_row(3, pct=30, posted=ago(days=20)),  # tarihi belli: tarih karar verir, sorgulanmaz, listelenir
+            strong_row(4, pct=25, first_seen=ago(hours=10))]  # taze: zaten raporda değil, sorgulanmaz
+    repo = FakeRepo(strong=rows, resurfaced={"S1"})
+    text, _ = build(repo)
+    assert repo.calls["resurfaced"] == ["S1", "S2"]
+    assert "(2 ilan)" in text and "/264352-bmw-3-serisi" not in text
+    assert "/2-honda-fit/" in text and "/3-honda-fit/" in text and "/4-honda-fit/" not in text
+    # hepsi yeniden çıkmışsa bölüm "yok" der
+    all_old = FakeRepo(strong=[strong_row(1, pct=40), strong_row(2, pct=35)], resurfaced={"S1", "S2"})
+    text, _ = build(all_old)
+    assert "🔎 Bildirmediğim fırsat yok (son 14 gün)." in text and "BİLDİRMEDİĞİM FIRSATLAR" not in text
+    # aday yoksa sorgu da yok
+    none = FakeRepo(strong=[strong_row(3, posted=ago(days=20))])
+    build(none)
+    assert "resurfaced" not in none.calls
 
 
 def test_preview_does_no_liveness_check_and_says_so():

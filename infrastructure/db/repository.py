@@ -21,6 +21,9 @@ def _tiers_blocking(tier: str) -> list[str]:
     return SENT_ONCE_TIERS if tier in SENT_ONCE_TIERS else [tier]
 
 
+RESURFACE_RUN_GAP_MINUTES = 10  # "önceki tur" = ilk görülme farkı bundan büyük (KKTCarabam toplayıcısı 2 saatte bir; bir turdaki kartlar saniyeler içinde yazılır)
+_KKA_NUMBER = "substring({a}.source_item_id from '^[0-9]{{1,15}}')::bigint"  # KKTCarabam ilan numarası: baştaki rakamlar (≤15 hane: bigint'e sığar)
+
 UNSAVED_ALERT_PREFIX = "sent:unsaved:"  # 'alert:' öneki sahip-uyarı zaman damgaları için (alert_recent) ayrılmış: karışmasın
 
 
@@ -503,6 +506,25 @@ class Repository:
                ORDER BY e.profit_pct DESC""",
             (tier, hours, *rv_args, _tiers_blocking(tier), UNSAVED_ALERT_PREFIX),
         ).fetchall()
+
+    def resurfaced_kktcarabam(self, listing_ids, gap_minutes: int = RESURFACE_RUN_GAP_MINUTES) -> set:
+        """Yeniden çıkmış eski KKTCarabam ilanları (verilen ilanlar arasından). Site eski ilanı "en yeni" listesine geri itince ilan bizim için
+        "yeni" görünür ama numarası daha önce gördüklerimizden KÜÇÜKTÜR (ilanlar numarayla, oluşturulma sırasıyla açılır). Kural: ilan KKTCarabam'dan
+        (`sources.url`), `posted_at` BOŞ (tarih biliniyorsa tarih karar verir, bu kural uygulanmaz) ve daha ÖNCEKİ bir turda ilk görülmüş
+        (`first_seen_at` bu ilanınkinden `gap_minutes` dakikadan fazla önce: aynı turun kartları birbirine karşılaştırılmaz) bir KKTCarabam ilanının
+        numarası bundan BÜYÜK. Numara = `source_item_id`'nin baştaki rakamları. Karşılaştırma havuzuna her KKTCarabam ilanı girer (pasif,
+        kopya, karantina dahil: numara sitenin sayacını gösterir). Yalnız bu çağrıdaki adaylar için çalışır (gönderim anı); yazma yok."""
+        ids = list(listing_ids)
+        if not ids:
+            return set()
+        return {r["id"] for r in self.conn.execute(
+            """SELECT l.id FROM listings l JOIN sources s ON s.id = l.source_id
+               WHERE l.id = ANY(%s) AND s.url LIKE '%%kktcarabam.com%%' AND l.posted_at IS NULL
+                 AND EXISTS (SELECT 1 FROM listings o JOIN sources os ON os.id = o.source_id
+                             WHERE os.url LIKE '%%kktcarabam.com%%'
+                               AND o.first_seen_at < l.first_seen_at - make_interval(mins => %s)
+                               AND """ + _KKA_NUMBER.format(a="o") + " > " + _KKA_NUMBER.format(a="l") + ")",
+            (ids, gap_minutes)).fetchall()}
 
     def first_seen_since(self, days: int) -> list[dict]:
         """Son 'days' günde ilk görülen (ve görüldüğünde taze sayılacak) ilanlar: 🟠 kuru deneme için, yalnızca okur."""

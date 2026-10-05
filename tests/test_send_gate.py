@@ -45,9 +45,10 @@ PRICE_WRONG = LlmRead(is_car=True, price=9999.0, currency="GBP")
 class World:
     """Sahte dış dünya + iz defteri."""
 
-    def __init__(self, green=(), orange=(), dead=(), price_changed=(), llm=None):
+    def __init__(self, green=(), orange=(), dead=(), price_changed=(), llm=None, resurfaced=()):
         self.cands = {Tier.STRONG: list(green), Tier.ESTIMATED: list(orange)}
         self.dead, self.changed, self.llm = set(dead), set(price_changed), llm or {}
+        self.resurfaced = set(resurfaced)  # sorgunun "yeniden çıkmış eski KKTCarabam ilanı" diyeceği ilan kimlikleri
         self.boom = {}  # patlama noktası -> hata: ("pending", seviye) aday listesi, ("site", n) n'inci sayfa istemcisi
         self.trace, self.clients = [], 0
 
@@ -87,6 +88,11 @@ class FakeRepo:
 
     def downgrade_evaluation(self, listing_id, flags, evaluation_id=None):
         self.w.log("repo.downgrade_evaluation", listing_id, list(flags), evaluation_id)
+
+    def resurfaced_kktcarabam(self, listing_ids):
+        ids = list(listing_ids)
+        self.w.log("repo.resurfaced_kktcarabam", ids)  # tazelik adımı: yalnız is_fresh'ten geçen VE ilan tarihi bilinmeyenler sorulur
+        return {i for i in ids if i in self.w.resurfaced}
 
     def expire_unverifiable(self):
         pass
@@ -211,6 +217,9 @@ OLD = {"price_amount": 5000.0, "currency": "GBP", "price_gbp": 5000.0}
 READ = {"price_amount": 5000, "currency": "GBP", "price_gbp": 5000.0}
 
 GOLDEN_GATE_TRACE = [
+    # tazelik: is_fresh'ten geçen ve ilan tarihi OLMAYAN adaylar tek sorguda "yeniden çıkmış eski KKTCarabam ilanı mı" diye sorulur
+    # (g2 bayat: sorulmaz; g6/g8 sosyal medya, ilan tarihleri belli: sorulmaz)
+    ("repo.resurfaced_kktcarabam", ["g1", "g3", "g4", "g5", "g7", "g9"]),
     # canlılık: yalnız taze VE emsali yeten KKTCar ilanları (g2 bayat, g3 az emsal: sayfası hiç açılmadı)
     ("site.new_client",),
     ("site.get", kk("g1")), ("repo.apply_refresh", "g1", OLD, READ), ("site.sleep",),
@@ -249,6 +258,7 @@ def test_golden_trace_green_and_orange(monkeypatch, capsys):
     cron_evaluate.run(wire(monkeypatch, w))
     assert w.trace == GOLDEN_GREEN_TRACE + [
         ("pending_alerts", "tahmini", True),
+        ("repo.resurfaced_kktcarabam", ["o1"]),  # o2 bayat: sorulmaz
         ("llm.from_env",),  # 🟠: o2 bayat, o1 emsal kapısında kaldı -> canlılık/okuma çağrısı yok (boş listeyle okuyucu yine kurulur)
         ("send_alerts", "tahmini", [], None, True),
         ("yan_isler",),
@@ -311,9 +321,11 @@ def test_llm_not_configured_passes_through_and_orange_path_after_the_floor(monke
     cron_evaluate.run(wire(monkeypatch, w, llm_configured=False, orange_floor_open=True))
     assert w.trace == [
         ("pending_alerts", "guclu", True),
+        ("repo.resurfaced_kktcarabam", ["s2"]),  # s1 sosyal medya: ilan tarihi belli, sorulmaz
         ("llm.from_env",),
         ("send_alerts", "guclu", [("s1", (), ()), ("s2", (), ())], [], False),
         ("pending_alerts", "tahmini", True),
+        ("repo.resurfaced_kktcarabam", ["o1", "o2", "o3"]),  # o4 bayat: sorulmaz
         ("site.new_client",),
         ("site.get", kk("o1")), ("repo.apply_refresh", "o1", OLD, READ), ("site.sleep",),
         ("site.get", kk("o3")), ("site.sleep",),  # 404: nazik hız bu dalda da bekler
@@ -390,7 +402,7 @@ def test_gate_returns_sendable_and_reason_per_rejected_listing_in_check_order(mo
     # bugünkü kural: taze 🟠'nin hepsi emsal kapısında kalır
     w.trace.clear()
     assert ids(gonderim_kontrol(repo, w.cands[Tier.ESTIMATED], "🟠")[1]) == [("o2", TAZE_DEGIL), ("o1", EMSAL_AZ)]
-    assert w.trace == [("llm.from_env",)]
+    assert w.trace == [("repo.resurfaced_kktcarabam", ["o1"]), ("llm.from_env",)]
     assert gonderim_kontrol(repo, [], "🟢") == ([], [])
 
 
@@ -401,6 +413,35 @@ def test_gate_orange_without_llm_reader_unverified_llm_priced_listing_counts_as_
     sendable, rejected = gonderim_kontrol(wire(monkeypatch, w, llm_configured=False, orange_floor_open=True), o, "🟠")
     assert [ev.listing["id"] for ev in sendable] == ["o1"] and sendable[0].warnings == [llm_reader.UNCHECKED]
     assert ids(rejected) == [("o4", TAZE_DEGIL), ("o3", CANLI_DEGIL), ("o2", LLM_REDDETTI)]
+
+
+def test_gate_treats_a_resurfaced_old_kktcarabam_ad_as_not_fresh_and_asks_only_about_undated_fresh_candidates(monkeypatch):
+    """Sitenin "en yeni" listesine geri ittiği eski ilan (KKTCarabam, tarihsiz, numarası daha önce görülenlerden küçük) taze DEĞİLDİR: tazelik
+    adımında `taze_degil` ile elenir, sonraki adımlara (canlılık, yapay zekâ) hiç girmez. İlan tarihi belliyse kural uygulanmaz (sorgulanmaz bile)."""
+    old, new, dated, stale = cand("r1", url=kk("r1")), cand("r2", url=kk("r2")), cand("r3", posted_h=3, url=kk("r3")), cand("r4", seen_h=40, url=kk("r4"))
+    w = World(green=[old, new, dated, stale], resurfaced={"r1", "r3", "r4"})  # r3 ve r4 sorulsaydı "eski" denirdi: sorulmamaları gerekir
+    sendable, rejected = gonderim_kontrol(wire(monkeypatch, w), [old, new, dated, stale], "🟢")
+    assert [ev.listing["id"] for ev in sendable] == ["r2", "r3"]  # tarihi belli r3 gider; r1 gitmez
+    assert ids(rejected) == [("r1", TAZE_DEGIL), ("r4", TAZE_DEGIL)]  # r1 yeniden çıkmış, r4 bayat (is_fresh): ikisi de taze_degil, aday sırasıyla
+    assert w.trace[0] == ("repo.resurfaced_kktcarabam", ["r1", "r2"])  # yalnız is_fresh'ten geçen VE tarihsiz olanlar, tek sorguda
+    assert ("site.get", kk("r1")) not in w.trace and ("site.get", kk("r2")) in w.trace  # elenen ilanın sayfası açılmadı
+    # hiç aday tarihsiz-taze değilse sorgu da yok
+    w.trace.clear()
+    gonderim_kontrol(wire(monkeypatch, w), [dated, stale], "🟢")
+    assert not any(e[0] == "repo.resurfaced_kktcarabam" for e in w.trace)
+    # 🟠 yolu aynı kapıdan geçer
+    o = cand("o9", tier=Tier.ESTIMATED, method="B", url=kk("o9"))
+    w9 = World(orange=[o], resurfaced={"o9"})
+    assert ids(gonderim_kontrol(wire(monkeypatch, w9), [o], "🟠")[1]) == [("o9", TAZE_DEGIL)]
+
+
+def test_gate_asks_about_an_undated_listing_even_when_its_price_just_changed(monkeypatch):
+    """Tarih BİLİNMİYORSA fiyatı yeni değişmiş ilan `is_fresh`'ten geçer ama yine "yeniden çıkmış mı" diye sorulur ve öyleyse elenir
+    (yeniden çıkmış ilan hiçbir koşulda taze sayılmaz)."""
+    changed = cand("c1", url=kk("c1"), seen_h=60, price_changed_h=2)  # eski ama fiyatı 2 saat önce değişmiş, tarihsiz
+    w = World(green=[changed], resurfaced={"c1"})
+    sendable, rejected = gonderim_kontrol(wire(monkeypatch, w), [changed], "🟢")
+    assert sendable == [] and ids(rejected) == [("c1", TAZE_DEGIL)] and w.trace == [("repo.resurfaced_kktcarabam", ["c1"]), ("llm.from_env",)]
 
 
 def test_cron_evaluate_has_no_scattered_send_checks_left():
