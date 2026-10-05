@@ -61,15 +61,19 @@ install_python_deps() {
 
 install_browser() {
   step "Chromium (Playwright) kuruluyor: $BROWSERS"
-  # İndiriciyi (Node) IPv4'e öncelik vermeye zorla: IPv6 rotası ilan edilip çalışmayan VPS'lerde (Servers.guru, 05.10.2026)
-  # cdn.playwright.dev'in IPv6 adresi 30 sn'de zaman aşımına uğruyor, IPv4 anında yanıt veriyor.
-  export NODE_OPTIONS="--dns-result-order=ipv4first${NODE_OPTIONS:+ $NODE_OPTIONS}"
+  local deps=
   if [ "$SETUP_MODE" = 1 ] || [ "$PW_BEFORE" != "$PW_AFTER" ] || [ ! -d "$BROWSERS" ]; then
     # --with-deps: Chromium'un ihtiyaç duyduğu sistem kütüphanelerini de apt ile kurar (yalnız ilk kurulumda / sürüm değişince)
-    "$VENV/bin/python" -m playwright install --with-deps chromium
-  else
-    "$VENV/bin/python" -m playwright install chromium
+    deps=--with-deps
   fi
+  # Playwright'ın indiricisi her bağlantıda ÖNCE IPv6'yı dener (kendi dualStackLookup'ı; gai.conf'u ve NODE_OPTIONS'ı dinlemez) ve
+  # her IPv6 denemesinde 5 sn bekler: IPv6'sı ilan edilip çalışmayan VPS'te (Servers.guru, 05.10.2026) indirme hep zaman aşımına uğrar.
+  # Bu yüzden kurulum IPv6 soketi AÇAMAYAN geçici bir systemd biriminde çalışır: IPv4'e anında geçer, sistem ayarı değişmez.
+  systemd-run --quiet --wait --pipe --collect \
+    --property=RestrictAddressFamilies="AF_UNIX AF_INET AF_NETLINK" \
+    --setenv=PLAYWRIGHT_BROWSERS_PATH="$BROWSERS" \
+    --setenv=DEBIAN_FRONTEND=noninteractive --setenv=NEEDRESTART_SUSPEND=1 \
+    "$VENV/bin/python" -m playwright install $deps chromium
   chmod -R a+rX "$BROWSERS"
 }
 
