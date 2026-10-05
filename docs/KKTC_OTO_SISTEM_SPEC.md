@@ -1,4 +1,6 @@
 # KKTC OTO FIRSAT SİSTEMİ — SİSTEM SPEC
+> **§1–§11 ilk tasarımdır (v0.2); güncel kurallar §24 ve DEĞER_MOTORU §9'dadır.** Eski bölümlerdeki bayat satırlar "ESKİ" ya da "GÜNCEL" notuyla işaretlendi (05.10.2026); çelişkide §24, DEĞER_MOTORU §9 ve kod doğrudur.
+
 > Versiyon: 0.2 — 30 Eylül 2026
 > v0.1'in yerine geçer. Kaynak: Research Raporu (Mayıs 2026), Kaynak Haritası v2, Kaynak Listesi v1, 30.09.2026 Instagram testi.
 
@@ -12,25 +14,27 @@ Sistem öneri verir, karar kullanıcınındır. Otomatik teklif, otomatik mesaj,
 ## 2. ALINAN KARARLAR (30.09.2026)
 | Karar | Değer |
 |---|---|
-| Fırsat eşiği | Tahmini kâr ≥ alışın %20'si → anında bildirim |
-| İkinci seviye | %12–20 → günlük "pazarlıkla fırsat" özeti |
-| Masraf | Kullanıcı: "neredeyse yok". Parametre olarak var, varsayılan £0 |
+| Fırsat eşiği | Tahmini kâr ≥ alışın %20'si → anında bildirim (GÜNCEL: masraf düşüldükten sonra, net kâr ≥ £750 ve ≥ 8 emsal şartıyla; bkz. DEĞER_MOTORU §1 ve §9) |
+| İkinci seviye | %12–20 → günlük "pazarlıkla fırsat" özeti. **GÜNCEL: özet KAPALI** (02.10.2026'dan beri, `digest.ENABLED = False`); 🟡 yalnız kayıt, mesaj gitmez |
+| Masraf | Kullanıcı: "neredeyse yok". Parametre olarak var, varsayılan £0. **ESKİ (£0). GÜNCEL: £300 sabit masraf** her araçtan düşülür, mesajda "masraf £300 düşüldü" yazar (`domain/settings.py`; bkz. §14) |
 | Yasal/go-no-go | Kullanıcının KKTC avukatı onayladı; bu konu kapandı |
 | Facebook ve Instagram | 30.09.2026: ilk aşamada ZORUNLU. **GÜNCEL (02.10.2026'dan beri): KAPALI / KONU DIŞI** (sahibin kararı; hiçbir adım açmaz, açılış ayrı onay + sağlayıcı/harcama kararı ister; bkz. §24.1, §24.4) |
-| Kaynak keşfi | Kullanıcı liste vermez; sistem kendi bulur (Kaynak Avcısı) |
+| Kaynak keşfi | Kullanıcı liste vermez; sistem kendi bulur (Kaynak Avcısı). **GÜNCEL: Kaynak Avcısı KAPALI** (`application/discovery.py` `ENABLED = False`, sahibin kararı 03.10.2026; kod geri açılabilsin diye duruyor). Sosyal medya toplama anahtarı da kapalı (`application/feed_switch.py`: `bot_state feed:<platform>` "on" değilse toplanmaz) |
 | Mimari | Değişmedi: Clean Architecture monolit (Domain / Application / Infrastructure / Entrypoints) |
 
 ## 3. RESEARCH'TEN ÇIKAN KRİTİK GERÇEKLER
 1. **Bireysel satıcının asıl yeri Instagram ilan sayfaları.** @kibris.car (133K), @arabam.kibris_ (107K), @arac.kibriis (79K) vb. ilanı sahibinden alıp yayınlıyor. 30.09.2026 testi: caption'lar sabit şablonlu (MARKA/MODEL, YIL, KM, VİTES, DÜMEN, KONUM, TELEFON, FİYAT); @arabam.kibris_ 2 saatte 8 ilan attı, ilan numarası sıralı (40343).
 2. **Web siteleri galeri ağırlıklı → fiyat referansı.** kktcarabam (~20K sayaç, sıralı ID), kktcar (7 günlük tazelik), kibrisarabaal ("Acil Satılık"), Mezunum Satıyorum (öğrenci), sahibindenarabakibris.
-3. **Taranmayacaklar:** kibrisaraba.com, galerimplus.com, illakiburada.com robots.txt ile otomatik erişimi reddediyor. Güney Kıbrıs kanalları (t.me/cypruscar, cypruscar_sale) kapsam dışı.
+3. **Taranmayacaklar:** kibrisaraba.com, galerimplus.com, illakiburada.com robots.txt ile otomatik erişimi reddediyor. Güney Kıbrıs kanalları (t.me/cypruscar, cypruscar_sale) kapsam dışı. **ESKİ: "robots.txt reddediyor" gerekçesi güncel değil** (GalerimPlus'ın robots.txt'i aslında izin veriyor; bkz. §16 "Doğrulanan bulgular"). **GÜNCEL (CLAUDE.md, sahibin kararı 02.10.2026):** bu üç site için kural "yalnızca herkese açık ilan sayfaları, nazik hızda okunur; giriş/CAPTCHA çözme yok". Bugün üçü de taranmıyor, çünkü erişilemiyor: kibrisaraba.com ve illakiburada.com açılmıyor, galerimplus.com Cloudflare ile engelli. `seeds/kaynaklar_v1.csv`'deki "robots.txt otomatik erişimi reddediyor" notu bu üç satırda eski kalmıştır (CSV'ye dokunulmadı).
 4. **Facebook:** Açık gruplar girişsiz taranabilir (Apify). Kapalı gruplar giriş ister → Bölüm 4.3.
 5. **Telegram:** Rusça KKTC kanalları büyük: t.me/cypruscars (9.3K), t.me/cyprusfleamarket (15K).
 6. **Rakip yok (doğrulandı):** kktcilan.com'da otomobil 0 ilan. KKTCar uygulamasında yeni ilan bildirimi var ama fırsat/kâr hesabı yok.
 7. **Fiyat formatı karışık:** Çoğu STG; bazıları TL ("600.000 TL"); bazıları para birimsiz ("Fiyat: 10.000" → STG varsayılır, düşük güven işaretlenir). Sol direksiyonlu (LHD) araçlar da var → ayrı değerlenir.
 
 ## 4. KAYNAKLAR VE ERİŞİM YÖNTEMİ
-Tam liste: `kaynaklar_v1.csv` (39 kaynak, durum + öncelik). Sistem ilk açılışta bu dosyayı `sources` tablosuna yükler.
+Başlangıç listesi: `seeds/kaynaklar_v1.csv` (38 satır; "39" başlık satırı dahil sayılmıştı). Aynı liste migration 002 (`002_seed_sources.sql`) ile veritabanına girdi; kod CSV dosyasını OKUMAZ. Sonradan eklenenler: KibrisCars ve PazarKibris (migration 014), BiArabacik (migration 018). **GÜNCEL kaynak listesi veritabanındaki `sources` tablosundadır ve sayısı değişti** (`/kaynaklar` komutu gösterir); CSV yalnızca tarihî başlangıç listesidir.
+
+> **GÜNCEL durum (05.10.2026) — 4.1–4.5:** 4.1 Instagram ve 4.3 Facebook KAPALI (sahibin kararı; açmak ayrı onay ister). 4.4 Telegram toplayıcısı HİÇ yazılmadı (Telethon kullanılmıyor). 4.5 Kaynak Avcısı KAPALI. Canlı olanlar 4.2'deki web siteleri: KKTCar, KibrisArabaAl, KKTCarabam, Mezunum, KibrisCars, SahibindenArabaKibris. PazarKibris için toplayıcı yazıldı ama kaynak "aday" durumunda (ilanların yalnız %5'inde fiyat var), taranmaz. LLM Claude Haiku değil, OpenRouter üzerinden GLM'dir (bkz. §6 ve §21).
 
 ### 4.1 Instagram (Öncelik 1)
 - Araç: Apify `apify/instagram-post-scraper` (test edildi, çalışıyor). Gönderi başı ~$0.0017.
@@ -91,25 +95,27 @@ Yaşam döngüsü: `aday → deneme (14 gün) → aktif` veya `→ pasif`. 30 g�
         ▼
 [Telegram Bot] 🟢 anında · 🟡 günlük özet · 📡 haftalık kaynak raporu
 ```
+**GÜNCEL akış (05.10.2026):** cron-job.org her 15 dakikada GitHub Actions `tick.yml`'i çalıştırır → `entrypoints/tick.py` sırası gelen site toplayıcılarını çalıştırır → okuyucu (önce kural, olmazsa OpenRouter/GLM) → Supabase → `domain/decision.py` (tek karar noktası) → gönderim koşulları (emsal ≥ 8, tazelik, canlılık kontrolü, gerekirse yapay zekâ ikinci okuması) → Telegram: 🟢 anında; 🟡 yalnız kayıt (özet kapalı); 🟠 hazır ama kapalı. Bot komutları aynı turda `getUpdates` ile işlenir (cevap ≤ 15 dk). Sonnet/Haiku aşaması yoktur.
 
 ## 6. TEKNOLOJİ
-| Bileşen | Seçim | Not |
+**GÜNCEL (05.10.2026).** Eski plan (30.09.2026) yan sütunda; neyin değiştiği açıkça görünsün diye bırakıldı.
+| Bileşen | GÜNCEL | ESKİ plan (kullanılmıyor) |
 |---|---|---|
-| Dil | Python 3.12 | |
-| Kod deposu | GitHub (private repo) | Railway buradan deploy eder |
-| Sunucu + zamanlayıcı | Railway (cron servisleri) | Ücretsiz plan yok; Hobby planı (yazım anında ~$5/ay, kurulumda kontrol et) |
-| Veritabanı | Supabase Postgres (Free) | 500 MB yeter; 7 gün işlem olmayan proje uyur (bizde her gün yazılım olacak) |
-| Sosyal medya toplama | Apify (hesap bağlı) | Instagram + Facebook actor'ları |
-| Web toplama | httpx + selectolax | |
-| Telegram okuma | Telethon | 2. hafta |
-| LLM | Claude Haiku 4.5 (okuma/çıkarım), Claude Sonnet 5.5 (aday son kontrol) | |
-| Bot | python-telegram-bot | |
-| Kur | Anahtarsız ECB tabanlı kaynak (ör. Frankfurter) — kurulumda doğrulanacak | exchangerate.host artık anahtar istiyor, ücretsiz planı ayda 100 istek → KULLANILMAYACAK |
-| Tip sistemi | Pydantic v2 | |
+| Dil | Python 3.12, Pydantic v2 | aynı |
+| Kod deposu | GitHub, **herkese açık** (kasıtlı: özel depoda 15 dakikalık tarama için Actions dakikası yaklaşık $85/ay tutardı, bkz. §20). Depoda sır yok; anahtarlar GitHub Secrets'ta. Yayın: `main` → testler (`ci.yml`) → geçerse `live` dalı | GitHub private repo, Railway deploy |
+| Sunucu + zamanlayıcı | **GitHub Actions**: `tick.yml` (cron-job.org 15 dk'da bir tetikler; GitHub'ın kendi cron'u 2 saatte bir yedek), `collect-browser.yml` (KKTCarabam, 2 saatte bir), `ci.yml` (test + yayın kapısı) | Railway (cron servisleri; ücretsiz planda kurulamadı, bırakıldı) |
+| Veritabanı | Supabase Postgres (ücretsiz plan); yalnız `DATABASE_URL` ile bağlanılır | aynı; `SUPABASE_URL` ve `SUPABASE_SERVICE_KEY` kodda kullanılmıyor |
+| Sosyal medya toplama | Apify; Instagram/Facebook şu an KAPALI (açılırsa `APIFY_TOKEN` gerekir) | Apify, açık |
+| Web toplama | httpx + selectolax; Scrapling: KibrisCars, Mezunum, SahibindenArabaKibris tarayıcı parmak izli istekle (`infrastructure/http/browserlike.py`, başsız tarayıcı yok); KKTCarabam gerçek başsız tarayıcı oturumuyla (`collect-browser.yml`) | httpx + selectolax |
+| Telegram okuma | YOK (hiç yazılmadı) | Telethon |
+| LLM | OpenRouter: GLM `z-ai/glm-5.3-flash` (okuyucu) ve `OPENROUTER_MODEL` ile ayarlanan model (🟢 için kısa fırsat notu). Anthropic API kullanılmıyor | Claude Haiku 4.5 (okuma), Claude Sonnet 5.5 (aday kontrol) |
+| Bot | Telegram Bot API'ye doğrudan `httpx` ile (`application/notify.py`). `python-telegram-bot` `pyproject.toml`'da listeli ama kodda kullanılmıyor. Komutlar 15 dk'da bir `getUpdates` ile (`application/bot_poll.py`) | python-telegram-bot, sürekli çalışan bot |
+| Kur | Frankfurter (anahtarsız, ECB tabanlı; `infrastructure/fx/frankfurter.py`) | aynı |
 
-Tahmini aylık maliyet: Railway ~$5–10 · Supabase $0 · Apify ~$30–60 (FB hacmine göre) · Claude API ~$5–20. **Toplam ~$40–90/ay** (tahmin; ilk ay gerçek rakamla güncellenecek).
+**Maliyet — ESKİ tahmin:** Railway ~$5–10 · Supabase $0 · Apify ~$30–60 · Claude API ~$5–20 = ~$40–90/ay. **GÜNCEL:** Actions ücretsiz (herkese açık depo), Supabase $0, OpenRouter günlük tavan $0,40 (pratikte ≈ $0), Apify yalnız sosyal medya açılırsa (aylık tavanlar: Facebook $60, Instagram $10; bkz. §20 ve §22). Sosyal kapalıyken gerçek harcama ≈ $0 (§24.5 tabanı: "≈$0").
 
 ## 7. VERİTABANI ŞEMASI (v0.2)
+> **ESKİ (ilk tasarım).** GÜNCEL şema `infrastructure/db/migrations/001–019` dosyalarındadır. İlk tasarımdan sonra eklenenler: `subscribers`, `bot_state`, `blocked_sellers`, `price_book`, `price_curves`, `owner_sales` tabloları; `listings.engine_l`, karantina (`karantina_nedeni`), kaybolma zamanı/nedeni (`inactive_at`, `inactive_reason`), `evaluations.rules_version` ve karar kaydı sütunları; `sources.alert_level`. Aşağıdaki blok güncel şemayı BİREBİR göstermez.
 ```sql
 CREATE TABLE sources (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -209,6 +215,7 @@ CREATE TABLE feedback (
 ```
 
 ## 8. KOD YAPISI
+> **ESKİ plan.** `cron_digest.py`, `cron_discover.py`, `bot.py`, `claude_client.py`, `facebook_apify.py` gibi dosyalar YAZILMADI. GÜNCEL yapı bu bloktan sonra.
 ```
 kktc-oto/
 ├── domain/            # saf iş mantığı: Listing, Evaluation, profit rule, normalizer kuralları
@@ -229,9 +236,25 @@ kktc-oto/
 ├── seeds/kaynaklar_v1.csv
 └── tests/
 ```
+**GÜNCEL yapı (05.10.2026):**
+```
+├── domain/            # saf iş mantığı, dış bağımlılık yok. TEK karar noktası: decision.py; kurallar: comparables, profit, red_flags, data_gate, alert_policy, settings, price_book...
+├── application/       # use case'ler: collect_<site>.py, evaluate.py, notify.py, ad_check.py (ilan ilet), bot_poll.py (komutlar), llm_reader.py, health.py, settings_store.py...
+├── infrastructure/
+│   ├── collectors/    # kktcar, kibrisarabaal, kktcarabam, mezunum, kibriscars, sahibindenarabakibris, pazarkibris (+ instagram_apify, facebook_groups: KAPALI)
+│   ├── llm/           # openrouter.py (GLM okuyucu + fırsat notu)
+│   ├── db/            # repository.py, price_book_store.py, migrations/001–019
+│   ├── telegram/ · fx/ · http/
+├── entrypoints/       # tick.py (tek zamanlayıcı girişi), cron_collect.py, cron_evaluate.py, admin_cli.py, backup.py, renormalize.py, golden_snapshot.py, backfill_kktcar.py
+├── .github/workflows/ # tick.yml, collect-browser.yml, ci.yml
+├── seeds/kaynaklar_v1.csv
+└── tests/
+```
 
 ## 9. TELEGRAM BOT
-Bildirim formatı:
+> **ESKİ (ilk tasarım):** aşağıdaki örnek mesaj ve komut listesi güncel değildir. `/analiz`, `/piyasa`, `/ozet` YOK (yerine: ilan yazısını bota göndermek, `/fiyat`, `/son`); 🔥 etiketi, "Güven" satırı, "İlgileniyorum/Pas/Yanlış fiyat" düğmeleri YOK. GÜNCEL biçim ve komutlar bu örnekten sonra; komut kodu `application/bot_poll.py`.
+
+ESKİ bildirim formatı:
 ```
 🟢 GÜÇLÜ FIRSAT — %27 kâr potansiyeli
 2017 Toyota Vitz · 58.000 km · Otomatik · RHD
@@ -243,9 +266,30 @@ Bildirim formatı:
 📞 0533 ... · 🔗 ilan linki
 [İlgileniyorum] [Pas] [Yanlış fiyat]
 ```
-Komutlar: `/analiz <link veya metin>` · `/piyasa <marka> <model> <yıl>` · `/ozet` · `/kaynaklar` · `/esik <yüzde>` · `/dur` · `/basla`
+ESKİ komutlar: `/analiz <link veya metin>` · `/piyasa <marka> <model> <yıl>` · `/ozet` · `/kaynaklar` · `/esik <yüzde>` · `/dur` · `/basla`
+
+**GÜNCEL bildirim formatı** (`application/notify.py` `format_alert`; örnek sayılar uydurmadır):
+```
+🟢 FIRSAT · %31 kâr potansiyeli
+2017 Toyota Vitz · £6.900
+📍 Gazimağusa · KKTCar · 58.000 km · Otomatik
+📊 Piyasa ortası £9.800 (14 emsal) → satılabilir ~£9.310 · kâr ~£2.110 (masraf £300 düşüldü)
+💡 Neden: fiyat benzer araçların en ucuz çeyreğinde
+🕒 İlan tarihi: 05.10.2026
+🔗 ilan linki
+[📲 WhatsApp'tan ulaş]   (yalnız satıcı telefonu biliniyorsa; mesajı sen yazarsın, sistem yazmaz)
+[👍 İşe yarar] [👎 Yanlış]
+```
+Varsa ayrıca "⚠️ Dikkat: ..." (km şüpheli, değişen var...), "⚠️ Yapay zekâ şüpheli buldu: ...", "✅ Yapay zekâ ilanı bağımsız okudu" satırları eklenir. Bir ilan aynı kişiye BİR KEZ gider; "fiyat düştü" diye ikinci mesaj henüz yok.
+
+**GÜNCEL komutlar** (cevap en geç ~15 dk; komutlar her tick'te `getUpdates` ile işlenir):
+- Sahip, menüde görünen 8: `/durum` · `/son` (son 10 fırsat) · `/fiyat corolla 2014` (değer tablosu) · `/satti corolla 2014 120000km 7200` (gerçek satış kaydı) · `/ayarlar` · `/yardim` · `/dur` · `/basla`
+- Sahip, menüde görünmeyen ama çalışan: `/esik 25` (🟢 eşiği, %15–50) · `/butce 20000` · `/istemiyorum fiat` · `/istiyorum fiat` · `/kaynaklar` · `/tahmini ac|kapat` (şu an etkisiz) · `/kaynak_ekle` · `/kaynak_ac` · `/kaynak_kapat` · `/kaynak_seviye`
+- Onaylı abone: `/yardim` · `/dur` · `/basla`; ayrıca ilan yazısı ya da ekran görüntüsü gönderip karşılaştırma alabilir (günde 15; sahip günde 30). Yeni kişi `/start` ile başvurur, sahip düğmeyle onaylar/reddeder.
+- "İlet → cevap al": bota ilan yazısı/ekran görüntüsü gönderilir, otomatik taranan ilanlarla AYNI kurala göre cevap gelir (§21.1, §24.6).
 
 ## 10. YOL HARİTASI
+> **ESKİ plan (30.09.2026).** Gerçekte yapılanlar sırayla §12–§24'te; kalan işler §24.4'te.
 | Zaman | İş | Kim |
 |---|---|---|
 | Oturum 1 (ilk 45 dk) | Hesap kurulumları — `KKTC_HESAP_KURULUMU.md` | Kullanıcı (Claude adım adım yönlendirir) |
@@ -256,6 +300,7 @@ Komutlar: `/analiz <link veya metin>` · `/piyasa <marka> <model> <yıl>` · `/o
 | Hafta 4+ | Geri bildirimle ayar, satış hızı öğrenme | Birlikte |
 
 ## 11. AÇIK NOKTALAR
+> **ESKİ liste (30.09.2026).** Hesaplar açıldı: GitHub, Supabase, Telegram bot, OpenRouter, Apify, cron-job.org (Railway ve Anthropic hesabı gerekmedi). Kur servisi doğrulandı (Frankfurter). Instagram/Facebook kapalı olduğundan ilgili maddeler konu dışı.
 - [ ] Hesaplar açılacak (Railway, Supabase, GitHub, Anthropic API, Telegram bot, Apify token)
 - [ ] @araba.kktc'nin yeni kullanıcı adı
 - [ ] FB grupların public/private durumu (ilk Apify denemesinde ortaya çıkar)
@@ -265,8 +310,8 @@ Komutlar: `/analiz <link veya metin>` · `/piyasa <marka> <model> <yıl>` · `/o
 ---
 
 ## 12. OTURUM 1 KARARLARI VE BULGULAR (01.10.2026)
-- **LLM sağlayıcısı: OpenRouter** (`OPENROUTER_API_KEY`). Geçici model: `stealth/space-bunny-alpha` (ücretsiz, görsel okur; `OPENROUTER_MODEL` ile değişir). Haiku 4.5 / Sonnet 5.5 hedefi duruyor (`anthropic/claude-haiku-4.5`, `anthropic/claude-sonnet-5.5`).
-- **Repo:** `uzaktantakip000-create/oto-research` (private). Veritabanına `DATABASE_URL` (session pooler) ile bağlanılır; `SUPABASE_SERVICE_KEY` kullanılmıyor.
+- **LLM sağlayıcısı: OpenRouter** (`OPENROUTER_API_KEY`). Geçici model: `stealth/space-bunny-alpha` (ücretsiz, görsel okur; `OPENROUTER_MODEL` ile değişir). Haiku 4.5 / Sonnet 5.5 hedefi duruyor (`anthropic/claude-haiku-4.5`, `anthropic/claude-sonnet-5.5`). **ESKİ — GÜNCEL:** Haiku/Sonnet hedefi bırakıldı; okuyucu GLM `z-ai/glm-5.3-flash` (§21), `OPENROUTER_MODEL` yalnız 🟢 için kısa "fırsat notu" modelidir.
+- **Repo:** `uzaktantakip000-create/oto-research` (private). Veritabanına `DATABASE_URL` (session pooler) ile bağlanılır; `SUPABASE_SERVICE_KEY` kullanılmıyor. **ESKİ — GÜNCEL:** repo adı `uzaktantakip000-create/kktc-oto-firsat` ve **HERKESE AÇIK** (bilerek, bkz. §20); `SUPABASE_URL` da kodda kullanılmıyor.
 - **Instagram:** Apify `apify/instagram-post-scraper` çalışıyor. İki ilan sayfasında iki farklı şablon var; kural tabanlı parser 40/40 ilanı çözdü.
 - **Para birimi:** Yazılmayan ve ≥ 60.000 olan fiyat TL tahmini sayılır (`currency_guess=true`). Kur: Frankfurter (anahtarsız, çalışıyor).
 - **kktcar.com:** sitemap'ten adres bulunur, ilan sayfası ayrıştırılır (robots izin veriyor, dürüst User-Agent ile 200). Sayfa türleri: aktif / "Satıldı" / "İlan arşivi" (süresi dolmuş; satıldığı kesin değil). Satıldı ve arşiv sayfalarındaki "son ilan fiyatı" gerçekleşen satış fiyatı DEĞİLDİR. Bu ilanlar `is_active=false` ve `urgency_signals` içinde `satildi` / `arsiv` ile saklanır; emsalde ağırlıkları düşük tutulacak.
@@ -275,7 +320,7 @@ Komutlar: `/analiz <link veya metin>` · `/piyasa <marka> <model> <yıl>` · `/o
 - **Veri merkezi engeli (GitHub Actions):** kibriscars.com (403), mezunumsatiyorumkibris.com.tr (403) ve sahibindenarabakibris.com (429) düz httpx isteğini GitHub IP'sinden reddediyordu (robots.txt üçünde de izin veriyor). Sahibin kararı: Scrapling `FetcherSession` (curl_cffi, Chrome parmak izi; başsız tarayıcı, CAPTCHA çözme, proxy, çerez YOK) — `infrastructure/http/browserlike.py`. Bağımlılık: `scrapling[fetchers]`, ek kurulum adımı gerekmez. Scrapling yoksa httpx'e düşer. Migration 015 kaynakları yeniden açar.
 
 ## 13. OTURUM 2 KARARLARI (01.10.2026) — değerleme sağlamlaştırma
-- **Sunucu/zamanlayıcı:** Railway yerine **GitHub Actions** (özel repo, ayda 2000 dk ücretsiz). `collect-light.yml` 2 saatte bir (kktcar + değerlendirme; Instagram her 2. turda yani 4 saatte bir); `collect-browser.yml` 6 saatte bir (kktcarabam). Sebep: ölçülen tur süresi ~3 dk; saatlik çalışma ayda ~2500 dk eder, ücretsiz sınır 2000 dk. Seçenek: repo herkese açılırsa dakika sınırsız olur (önce fixture'lardaki telefon/ilan metinleri temizlenmeli). Bot komutları 7/24 sunucu olmadığı için her çalıştırmada `getUpdates` ile işlenir (cevap gecikmesi en fazla ~1 saat).
+- **Sunucu/zamanlayıcı:** Railway yerine **GitHub Actions** (özel repo, ayda 2000 dk ücretsiz). `collect-light.yml` 2 saatte bir (kktcar + değerlendirme; Instagram her 2. turda yani 4 saatte bir); `collect-browser.yml` 6 saatte bir (kktcarabam). Sebep: ölçülen tur süresi ~3 dk; saatlik çalışma ayda ~2500 dk eder, ücretsiz sınır 2000 dk. Seçenek: repo herkese açılırsa dakika sınırsız olur (önce fixture'lardaki telefon/ilan metinleri temizlenmeli). Bot komutları 7/24 sunucu olmadığı için her çalıştırmada `getUpdates` ile işlenir (cevap gecikmesi en fazla ~1 saat). **ESKİ — GÜNCEL (§20):** repo herkese açık yapıldı; `collect-light.yml` kaldırıldı, yerine `tick.yml` (cron-job.org 15 dk'da bir); `collect-browser.yml` 6 saatte bir DEĞİL 2 saatte bir; bot cevabı en geç ~15 dk.
 - **LLM notu** sadece güçlü fırsatlara eklenir, ilanı aşağı çekmez (ücretsiz model fazla çekingen).
 - **Danışman incelemesi (Opus) sonrası düzeltmeler:**
   - Fiyat ayrıştırma: "15 bin", "7.5k" ölçeklenir; "1. el / 2.el" fiyat sayılmaz; para birimine bitişik sayı önceliklidir.
@@ -305,10 +350,10 @@ Hedef (kullanıcı): ilanlar güncel olsun ve sistemin "fırsat" dedikleri gerç
 - **Güncellik:** KKTCar 🟢'si göndermeden hemen önce sayfadan yeniden okunur (`application/liveness.py`); satılmış/arşivlenmiş ya da fiyatı değişmişse o tur gitmez (fiyat değiştiyse sonraki turda yeniden değerlendirilir). Okunamayan sayfa gönderimi engellemez. kktcarabam workflow'una değerlendirme adımı eklendi (8 saat gecikme kalktı); iki workflow aynı anda değerlendirip çift bildirim yollamasın diye `bot_state` içinde zaman damgalı kilit (`acquire_lock`, 20 dk sonra kendiliğinden düşer).
 - **Emsal temizliği:** "yanlış fiyat", "kusurlu/sahte" ve aylık denetimde "yanlış" bulunan ilanlar emsal havuzundan çıkar. "Zaten satılmış" düğmesi ilanı yalnızca **sahip** basarsa pasifleştirir (tek abonenin yanlış basışı herkes için kapatmasın; her basış kaydedilir).
 - **Motor hacmi** (`listings.engine_l`, migration 006): KKTCar "Motor Hacmi" alanından (litre) kaydedilir; iki ilan arasında fark >0,3 L ise emsal sayılmaz (316i ile 340i karışmaz). Bilinmeyen motor elenmez. Sınır: KKTCar arşiv/satıldı sayfalarında alan yok, Instagram metinlerinde ayrıştırılmıyor → kapsam kısmi.
-- **🟡 günlük özet** (`application/digest.py`): günde en fazla bir kez (KKTC 08:00–23:00), en çok 8 ilan, güveni orta/yüksek, taze (48 saat); "bu yüzden 🟢 değil" nedeni yazılır. Anlık bildirim yok.
-- **Görünürlük:** `/kaynaklar` (sadece sahip): taranan her kaynak için durum, son tarama, 7 günde yeni ilan, aktif ilan, 30 günde 🟢, okunma oranı; taranmayanlar ve Facebook durumu. `/kaynak_ekle <instagram bağlantısı>` (aday olarak ekler, taranmaz), `/kaynak_ac <ad>` (Instagram, 'deneme' = taranır, Apify maliyeti doğar), `/kaynak_kapat <ad>`. Botun cevabı en fazla ~2 saat gecikir (7/24 sunucu yok).
+- **🟡 günlük özet** (`application/digest.py`): günde en fazla bir kez (KKTC 08:00–23:00), en çok 8 ilan, güveni orta/yüksek, taze (48 saat); "bu yüzden 🟢 değil" nedeni yazılır. Anlık bildirim yok. **ESKİ — GÜNCEL: özet KAPALI** (02.10.2026'dan beri `digest.ENABLED = False`, bkz. §24 İş 2); 🟡 yalnız kayıt.
+- **Görünürlük:** `/kaynaklar` (sadece sahip): taranan her kaynak için durum, son tarama, 7 günde yeni ilan, aktif ilan, 30 günde 🟢, okunma oranı; taranmayanlar ve Facebook durumu. `/kaynak_ekle <instagram bağlantısı>` (aday olarak ekler, taranmaz), `/kaynak_ac <ad>` (Instagram, 'deneme' = taranır, Apify maliyeti doğar), `/kaynak_kapat <ad>`. Botun cevabı en fazla ~2 saat gecikir (7/24 sunucu yok). **ESKİ — GÜNCEL:** cevap en geç ~15 dk (tick içinde).
 - **Doğruluk kontrolü:** haftalık rapora "Veri karnesi" (aktif ilan, 7+ gün doğrulanmayan, eksik veri oranları, emsalsiz ilan, şüpheli fiyat, 3+ gün önceki 🟢'lerin kaçı kalkmış, denetim sonucu). **Aylık denetim** (`application/audit.py`): her 30 günde bot sahibe rastgele 10 ilan gönderir (kaynaklar dönüşümlü), sahip ilanı açıp ✅ Doğru / ❌ Yanlış der; hiçbir şey otomatik düzeltilmez.
-- **Yapılmadı (bilinçli, sıradaki):** Instagram'da 48 saatlik yeniden okuma ve "satıldı" tespiti (Apify maliyeti ölçülecek); korkuluklu LLM ile okunamayan gönderileri okuma (asal.otogaleri); silme/telefon saklama politikası (kullanıcı onayı); eşik ayarı ve satış hızı (≥30 geri bildirim); Kaynak Avcısı (karne 3 hafta temiz olunca); repo public/private kararı.
+- **Yapılmadı (bilinçli, sıradaki):** Instagram'da 48 saatlik yeniden okuma ve "satıldı" tespiti (Apify maliyeti ölçülecek); korkuluklu LLM ile okunamayan gönderileri okuma (asal.otogaleri); silme/telefon saklama politikası (kullanıcı onayı); eşik ayarı ve satış hızı (≥30 geri bildirim); Kaynak Avcısı (karne 3 hafta temiz olunca); repo public/private kararı (**ÇÖZÜLDÜ: herkese açık**, bkz. §20).
 
 ## 16. OTURUM 3 — VERİ KAYNAĞI GENİŞLETME (01.10.2026, Opus danışmanlığı + doğrulama)
 Sebep (kullanıcı): "çok az veri kaynağı var, Facebook'u da ekleyelim." Aktif ilanların %47'sinde emsal bulunamıyordu; veri azlığı hem fırsat kaçırtıyor hem emsali zayıflatıyor.
@@ -330,31 +375,32 @@ Kullanıcı isteği: Facebook'ta Kuzey Kıbrıs araç satış grupları (Marketp
 ## 18. Kullanıcı kararları (01.10.2026, akşam)
 - **Saklama politikası ONAYLANDI ve uygulandı:** pasif ilanın telefonu son görülmeden 90 gün, ilan metni 180 gün sonra silinir (`Repository.purge_personal_data`, her değerlendirme turunda çalışır). Fiyat/yıl/km kalır.
 - kktcarabam ve kibrisarabaal sahiplerinden izin almak ve veri koruma kurumuna bildirim **gerekmiyor** (kullanıcı kararı); bu konular bir daha açılmaz.
-- Zamanlı çalışmalar (GitHub cron) kısa süre daha beklenecek; gelmezse dış tetikleyici kurulacak (cron-job.org + repository_dispatch, kullanıcının PAT'i).
+- Zamanlı çalışmalar (GitHub cron) kısa süre daha beklenecek; gelmezse dış tetikleyici kurulacak (cron-job.org + repository_dispatch, kullanıcının PAT'i). **(YAPILDI, §20: cron-job.org her 15 dk'da `tick.yml`'i `workflow_dispatch` ile çalıştırıyor.)**
 - Facebook grupları: toplama, Claude Code güvenlik denetimince (3 kez) reddedildi; kullanıcı izin kuralını ekleyecek (call-actor aracı için allow kuralı). `apify/facebook-posts-scraper` yalnızca sayfa/profil içindir, grup değil.
 
 ## 19. Facebook grupları: toplama canlıya alındı (01.10.2026)
 - İzin kuralı eklendi (`.claude/settings.local.json`); deneme çalıştırması başarılı. Aktör: `memo23/facebook-public-group-posts-scraper` (girişsiz). `apify/facebook-posts-scraper` yalnızca sayfa/profil içindir.
-- 6 herkese açık Kuzey grubu `deneme` + `golge` (bildirim yok). Her 8 saatte bir (collect-light), `onlyPostsNewerThanHours` penceresi (2–14 saat), grup başına en çok 40 gönderi.
+- 6 herkese açık Kuzey grubu `deneme` + `golge` (bildirim yok). Her 8 saatte bir (collect-light), `onlyPostsNewerThanHours` penceresi (2–14 saat), grup başına en çok 40 gönderi. **ESKİ — GÜNCEL:** `collect-light.yml` yok; Facebook `tick.yml` içinde gündüz 2 saatte bir, gece 8 saatte bir çalışacak biçimde ayarlı (`entrypoints/tick.py`) ama şu an KAPALI (sosyal medya anahtarı); bildirim seviyesi artık "gölge" değil (migration 009: tüm kaynaklar `yesil`).
 - Gönderiler SERBEST metin: `domain/freetext_parser.py` — yalnızca marka + yıl + AÇIK para birimli TEK fiyat varsa ilan olur; tramer/taksit/peşinat tutarı fiyat sayılmaz; "mil" km'ye çevrilmez (bilinmiyor → en fazla 🟡); kiralık/aranıyor/jant/tekne atlanır. Ayrıştırılamayan gönderi HİÇ saklanmaz.
 - Gizlilik: yazar adı/kimliği, yorum, profil bağlantısı saklanmaz (`parse_item` bunları okumaz). Telefon metinden alınır; saklama politikası §18.
-- Gözlem: bir grupta saatte ~10 gönderi (en büyük grup), çoğu galeri/fiyatsız; fiyatlı ilan oranı düşük. Maliyet: gönderi başına $0,0015 + çalıştırma başına $0,008. İlk tahmin ($3–6/ay) düşük çıktı; gerçek tam kapsama ≈ $15–25/ay olabilir. Aylık tavan: `MONTHLY_BUDGET_USD = 15` (`bot_state` anahtarı `fb_spend:YYYY-MM`); aşılırsa toplama durur ve sağlık uyarısı gider.
+- Gözlem: bir grupta saatte ~10 gönderi (en büyük grup), çoğu galeri/fiyatsız; fiyatlı ilan oranı düşük. Maliyet: gönderi başına $0,0015 + çalıştırma başına $0,008. İlk tahmin ($3–6/ay) düşük çıktı; gerçek tam kapsama ≈ $15–25/ay olabilir. Aylık tavan: `MONTHLY_BUDGET_USD = 15` (`bot_state` anahtarı `fb_spend:YYYY-MM`); aşılırsa toplama durur ve sağlık uyarısı gider. **ESKİ sayı: GÜNCEL Facebook tavanı $60** (`application/collect_facebook.py:15`).
 
 ## 20. Kalite kuralları ve hızlı zamanlayıcı (02.10.2026)
-**Kullanıcı kararları:** Instagram/Facebook gönderisi için anlık 🟢 sınırı 48 saat. Gümrük/plaka kelime listesi geliştiricinin takdirinde. Repo herkese açık (temiz geçmişle yeni repo); neden: sınırsız Actions dakikası, 15 dakikalık tarama. Sır/telefon sızıntısı olmamalı.
-**Emsal kuralları (`domain/comparables.py`):** aktif ilan 60 günden eskiyse emsal değil (satılamamış); pasif ilan yalnızca "satıldı" ise sayılır (belirsiz "arşiv" sayfaları atılır, 90 gün pencere); emsaller en az 3 FARKLI satıcıdan (telefon; telefonsuz her ilan ayrı satıcı) gelmeli; `Market.p25_gbp` alt çeyrek.
-**🟢 koşulları (`application/evaluate.py`):** medyandan ≥%20 ucuz VE fiyat ≤ alt çeyrek (aksi hâlde 🟡, işaret `ucuz_ceyrek_degil`); "TR/yabancı plaka" yazıyorsa en fazla 🟡 (`plaka_uyari`).
-**Kesin engel (`domain/red_flags.py`):** gümrüksüz, gümrük borcu/ödenmedi, evraksız/evrakı yok/eksik, haciz, icralık, mahkeme. "plakasız/kayıtsız/ruhsatsız" BİLEREK engel DEĞİL: KibrisArabaAl ilanlarının yarısında geçiyor (plakası henüz alınmamış ithal araç, normal satış). TL fiyat tek başına engel DEĞİL (TR plaka bağlantısı doğrulanmadı). Mesajda gümrük/evrak olumlu yazılmamışsa "satıcıya sor" satırı çıkar (`customs_stated`).
+**Kullanıcı kararları:** Instagram/Facebook gönderisi için anlık 🟢 sınırı 48 saat. Gümrük/plaka kelime listesi geliştiricinin takdirinde. Repo herkese açık (temiz geçmişle yeni repo); neden: sınırsız Actions dakikası, 15 dakikalık tarama. Sır/telefon sızıntısı olmamalı. (Özel depoda aynı tarama ayda yaklaşık $85 Actions dakikası tutardı: tahmin. Depoda sır yok: anahtarlar GitHub Secrets'ta, `.env` gitignore'da.)
+**Emsal kuralları (`domain/comparables.py`):** aktif ilan 60 günden eskiyse emsal değil (satılamamış); pasif ilan yalnızca "satıldı" ise sayılır (belirsiz "arşiv" sayfaları atılır, 90 gün pencere); emsaller en az 3 FARKLI satıcıdan (telefon; telefonsuz her ilan ayrı satıcı) gelmeli; `Market.p25_gbp` alt çeyrek. **ESKİ sayı: "3 farklı satıcı". GÜNCEL: en az 2 farklı satıcı ve satıcı başına en fazla 2 emsal** (`min_distinct_sellers = 2`, `max_comparables_per_seller = 2`; sahip kararı, bkz. §24.3 ve DEĞER_MOTORU §9).
+**🟢 koşulları (`application/evaluate.py`):** medyandan ≥%20 ucuz VE fiyat ≤ alt çeyrek (aksi hâlde 🟡, işaret `ucuz_ceyrek_degil`); "TR/yabancı plaka" yazıyorsa en fazla 🟡 (`plaka_uyari`). **GÜNCEL:** karar artık `domain/decision.py`'de (tek karar noktası); tam 🟢 kapı listesi DEĞER_MOTORU §9'da.
+**Kesin engel (`domain/red_flags.py`):** gümrüksüz, gümrük borcu/ödenmedi, evraksız/evrakı yok/eksik, haciz, icralık, mahkeme. "plakasız/kayıtsız/ruhsatsız" BİLEREK engel DEĞİL: KibrisArabaAl ilanlarının yarısında geçiyor (plakası henüz alınmamış ithal araç, normal satış). TL fiyat tek başına engel DEĞİL (TR plaka bağlantısı doğrulanmadı). **GÜNCEL: TL fiyatlı ilan en fazla 🟡** (`tl_fiyat` kapısı; TL ilanlar £ ilanlara göre ~%12–23 ucuz görünüyor). Mesajda gümrük/evrak olumlu yazılmamışsa "satıcıya sor" satırı çıkar (`customs_stated`). **ESKİ: bu hatırlatma satırı 03.10.2026'dan beri mesajda YOK** (mesaj kısaltıldı; fonksiyon kodda duruyor ama kullanılmıyor).
 **Tazelik:** Instagram/Facebook'ta gönderi >48 saat ise anlık 🟢 gitmez; günlük özette "paylaşım 48 saatten eski" notuyla yer alır. Mesajda "X saat önce paylaşıldı" (siteler için ilan tarihi).
 **Etki ölçümü (aktif 1.549 ilan, 594 emsalli):** eski 19🟢+31🟡 → yeni 6🟢+12🟡. Yani sıkı: piyasa verimli, çoğu ilan fırsat değil.
 **Zamanlayıcı (`entrypoints/tick.py`, `.github/workflows/tick.yml`):** dış tetikleyici (cron-job.org) 15 dakikada bir `workflow_dispatch`; her tetiklemede `bot_state tick:<iş>` ile sırası gelen iş çalışır: KKTCar 15/30 dk, KibrisArabaAl 15/30, Instagram 30/120, Facebook 480 (gündüz/gece). Ardından değerlendirme + bot komutları. 45 dk+ kesintide sahibine Telegram uyarısı. GitHub kendi cron'u 2 saatte bir yedek. kktcarabam ayrı iş akışında (tarayıcı gerekir, 6 saat).
-**Harcama tavanları:** Facebook grupları $15/ay, Instagram $8/ay (gönderi başına $0,0017); aşılırsa o ay toplama durur, sağlık uyarısı gider.
+**ESKİ sayılar — GÜNCEL aralıklar** (`entrypoints/tick.py` `SCHEDULE`; gündüz = KKTC 08:00–24:00 / gece, dakika): KKTCar 15/30 · KibrisArabaAl 15/30 · Mezunum 30/60 · KibrisCars 30/60 · PazarKibris 30/60 (kaynak "aday", taranmaz) · SahibindenArabaKibris 60/120 · Instagram **15**/120 · Facebook **120**/480 (gündüz 2 saat, gece 8 saat; Instagram/Facebook şu an KAPALI). **KKTCarabam ayrı iş akışında (`collect-browser.yml`, tarayıcı gerekir) 6 saatte DEĞİL 2 saatte bir** (03.10.2026 sahip kararı).
+**Harcama tavanları:** Facebook grupları $15/ay, Instagram $8/ay (gönderi başına $0,0017); aşılırsa o ay toplama durur, sağlık uyarısı gider. **ESKİ sayılar. GÜNCEL tavanlar: Facebook $60 (`application/collect_facebook.py:15`), Instagram $10 (`application/collect_instagram.py:12`).**
 
 
 ## 21. Plan v2: sade ve sağlam sistem (02.10.2026)
 **Neden:** kaynak seviyeleri/karne/14 gün gözlem düzeni kullanıcının asıl isteğinden (çok kaynak, çok hızlı haber, kararlarıma göre öğrenen sistem) saptırdı; kaldırıldı. Opus iki bağımsız incelemesinin ortak sonucu: asıl zarar yanlış okunan UCUZ ilanın sahte 🟢 olması; 🟢 çok az olduğundan her adayı göndermeden okutmak neredeyse bedava.
-**Kullanıcı kararları:** aylık toplam ≈60 $ (Facebook ≤45, Instagram ≤10 (kod: 8, ihtiyaçta artır), yapay zekâ ≈5); yapay zekâ kontrol edemezse ilan "kontrol edilmedi" notuyla yine gelir; yeni kaynak ilk günden anlık, 🆕 etiketiyle; Facebook gündüz 2 saatte bir; bot cevabı ≤15 dk (tick içinde); okuyucu modeli OpenRouter `z-ai/glm-5.3-flash` (metin+görsel, $0.15/$0.50 /1M; ilan başına ≈$0.0002); kapalı/gizli gruplara otomatik girilmez (hesap kapanma riski) → çözüm "ilet → cevap al" (3. taş); öğrenme ≥100 geri bildirimden sonra yalnızca öneri.
-**Yapay zekâ okuyucu (`application/llm_reader.py`, `domain/llm_read.py`, `infrastructure/llm/openrouter.py`):** ilan metni telefon/e-posta maskelenip ayraçlı veri olarak gönderilir (talimat enjeksiyonu denendi, uymadı); her sayı için metinde birebir alıntı zorunlu, para birimini model değil alıntıdan kendi kodumuz okur; yapay zekâ ASLA 🟢 üretmez: (i) parser'ın okuyamadığı Instagram/Facebook gönderisini okur → `extraction_by='llm'`, en fazla 🟡 (`llm_okudu` işareti), emsale girmez; (ii) sosyal medyadan gelen 🟢 adayını okutur → fiyat/yıl/km/marka/direksiyon/peşinat-kredi/satıldı uyuşmazsa 🟡 (`Repository.downgrade_evaluation`, işaretler `okuma_*`); hata/bütçe → "⚠️ kontrol edilmedi". Günlük tavan $0.15 (`bot_state llm_spend:<gün>`). Gerçek ilanlarda ölçüm (45 Instagram/Facebook ilanı): 40'ında fiyat bağımsız okumayla doğrulandı, 5'inde doğrulanamadı, fiyat/yıl/km uyuşmazlığı 0 (1 marka yazımı farkı bulundu ve düzeltildi).
+**Kullanıcı kararları:** aylık toplam ≈60 $ (Facebook ≤45, Instagram ≤10 (kod: 8, ihtiyaçta artır), yapay zekâ ≈5) **[ESKİ sayılar; GÜNCEL tavanlar Facebook $60, Instagram $10: kodda `collect_facebook.py:15`, `collect_instagram.py:12`]**; yapay zekâ kontrol edemezse ilan "kontrol edilmedi" notuyla yine gelir; yeni kaynak ilk günden anlık, 🆕 etiketiyle (**ESKİ: 🆕 etiketi kaldırıldı**, §24 İş 2); Facebook gündüz 2 saatte bir; bot cevabı ≤15 dk (tick içinde); okuyucu modeli OpenRouter `z-ai/glm-5.3-flash` (metin+görsel, $0.15/$0.50 /1M; ilan başına ≈$0.0002); kapalı/gizli gruplara otomatik girilmez (hesap kapanma riski) → çözüm "ilet → cevap al" (3. taş); öğrenme ≥100 geri bildirimden sonra yalnızca öneri.
+**Yapay zekâ okuyucu (`application/llm_reader.py`, `domain/llm_read.py`, `infrastructure/llm/openrouter.py`):** ilan metni telefon/e-posta maskelenip ayraçlı veri olarak gönderilir (talimat enjeksiyonu denendi, uymadı); her sayı için metinde birebir alıntı zorunlu, para birimini model değil alıntıdan kendi kodumuz okur; yapay zekâ ASLA 🟢 üretmez: (i) parser'ın okuyamadığı Instagram/Facebook gönderisini okur → `extraction_by='llm'`, en fazla 🟡 (`llm_okudu` işareti), emsale girmez; (ii) sosyal medyadan gelen 🟢 adayını okutur → fiyat/yıl/km/marka/direksiyon/peşinat-kredi/satıldı uyuşmazsa 🟡 (`Repository.downgrade_evaluation`, işaretler `okuma_*`); hata/bütçe → "⚠️ kontrol edilmedi". Günlük tavan $0.15 (`bot_state llm_spend:<gün>`) **[ESKİ; GÜNCEL günlük tavan $0,40: `application/llm_reader.py:16`]**. Gerçek ilanlarda ölçüm (45 Instagram/Facebook ilanı): 40'ında fiyat bağımsız okumayla doğrulandı, 5'inde doğrulanamadı, fiyat/yıl/km uyuşmazlığı 0 (1 marka yazımı farkı bulundu ve düzeltildi).
 **Sessiz arıza korumaları (`application/safeguards.py`):** KibrisArabaAl: yalnızca 404/410 ya da ilan sayfası olmayan yönlendirme "kaldırıldı" sayılır; 200 ama JSON-LD yoksa okunamadı (tekrar denenir). Site haritası önceki turun %70'inin altına inerse toplu pasifleştirme yapılmaz + uyarı; bir turda çekilenlerin yarısı okunamıyorsa "şablon değişmiş olabilir" uyarısı (KKTCar da).
 **Değerleme düzeltmeleri (veriyle bulundu):** 3-7 emsalli ilan 🟢 olmaz (en fazla 🟡; `Settings.low_confidence_can_alert=False`) — gölgedeki 16 KibrisArabaAl 🟢 adayının 14'ü bu gruptaydı ve çoğu sahte (küçük havuz); 🟡 özet artık düşük güvenlileri de gösterir ("DÜŞÜK — kontrol et"). Eski araçta <1000 km "bilinmiyor" sayılır (`effective_km`: 370 = 370.000; KibrisArabaAl'da 76 ilan) → km_yok ⇒ en fazla 🟡. `Mercedes - Benz` yazımı normalleşmiyordu (304 ilan ayrı havuzdaydı): düzeltildi ve veritabanında yeniden anahtarlandı. Motosiklet/tekne/karavan/ticari kategoriler (`NON_CAR_BRANDS`) değerlendirilmez, emsale girmez.
 **Kaynak seviyeleri:** migration 009 ile taranan tüm kaynaklar `yesil` (anlık); `sari` = özete düşmüş. Otomatik düşürme (`application/source_guard.py`): son 10 🟢'nin ≥3'üne "yanlış fiyat/kusurlu" denmişse kaynak `sari` olur ve sahibe haber gider; geri açma `/kaynak_seviye <ad> yesil`. Not: geri bildirim şu an 0; asıl koruma yapay zekâ okumasıdır.
@@ -362,19 +408,19 @@ Kullanıcı isteği: Facebook'ta Kuzey Kıbrıs araç satış grupları (Marketp
 **Yapılmayacak:** 14 gün gölge/terfi karnesi, pHash, Marketplace, ML fiyat tahmini, kapalı grupları otomatik tarama.
 
 ### 21.1 Uygulanan taşlar (02.10.2026)
-- **İlet → cevap al (`application/ad_check.py`):** sahibin bota yazdığı ilan metni ya da ekran görüntüsü, otomatik taranan ilanlarla AYNI kurallarla (`application.evaluate.assess_listing`) değerlendirilir; kural ayrıştırıcı okuyamazsa GLM okur; ekran görüntüsü önce GLM ile metne çevrilir (`read_image_text`, "yalnızca yazıyı aktar") sonra aynı yoldan geçer. Hiçbir şey saklanmaz, emsale girmez; günde ≤30 istek, görüntü ≤5 MB, yalnız sahip. Cevap bir sonraki tick'te (≤15 dk). Kapalı gruplar için ana yol budur.
-- **Kararlar sisteme döner:** `Settings` artık kullanıcı alanları taşır (`max_buy_gbp`, `blocked_brands`, `muted_models`, `blocked_phones`); `application/settings_store.py` bunları `bot_state cfg:*` + `blocked_sellers` tablosundan yükler. Komutlar: `/ayarlar`, `/esik 25` (15–50), `/butce 20000`, `/istemiyorum fiat`, `/istiyorum fiat`. Düğmeler (yalnızca sahip): "satılmış" → ilan kapanır VE `satildi` işareti (emsale gerçek satış olarak girer); "kusurlu/sahte" → satıcı telefonu kara listede (migration 010); aynı marka-modele 3 "pas" → "özete alayım mı?" sorusu. Kâr eşiği değişikliği yeni/yenilenen değerlendirmelere uygulanır.
+- **İlet → cevap al (`application/ad_check.py`):** sahibin bota yazdığı ilan metni ya da ekran görüntüsü, otomatik taranan ilanlarla AYNI kurallarla (`application.evaluate.assess_listing`) değerlendirilir; kural ayrıştırıcı okuyamazsa GLM okur; ekran görüntüsü önce GLM ile metne çevrilir (`read_image_text`, "yalnızca yazıyı aktar") sonra aynı yoldan geçer. Hiçbir şey saklanmaz, emsale girmez; günde ≤30 istek, görüntü ≤5 MB, yalnız sahip. Cevap bir sonraki tick'te (≤15 dk). **ESKİ: "yalnız sahip". GÜNCEL (05.10.2026):** sahip günde 30, onaylı abone günde 15 istek (ayrı sayılır; `application/ad_check.py:20-21`, bkz. §24.6); onaylı olmayan kullanamaz. Kapalı gruplar için ana yol budur.
+- **Kararlar sisteme döner:** `Settings` artık kullanıcı alanları taşır (`max_buy_gbp`, `blocked_brands`, `muted_models`, `blocked_phones`); `application/settings_store.py` bunları `bot_state cfg:*` + `blocked_sellers` tablosundan yükler. Komutlar: `/ayarlar`, `/esik 25` (15–50), `/butce 20000`, `/istemiyorum fiat`, `/istiyorum fiat`. Düğmeler (yalnızca sahip): "satılmış" → ilan kapanır VE `satildi` işareti (emsale gerçek satış olarak girer); "kusurlu/sahte" → satıcı telefonu kara listede (migration 010); aynı marka-modele 3 "pas" → "özete alayım mı?" sorusu. Kâr eşiği değişikliği yeni/yenilenen değerlendirmelere uygulanır. **ESKİ — GÜNCEL:** 03.10.2026'dan beri yeni mesajlarda yalnız 2 düğme var (👍 İşe yarar / 👎 Yanlış); "satılmış / kusurlu / pas" düğmeleri yeni mesajlarda yok, eski mesajlardakiler çalışır; 10 oydan önce otomatik eylem yok (`application/learning.py`).
 - **Gece bakımı (`application/maintenance.py`, `domain/quality.py`, migration 011):** günde bir (gece) şüpheli ilanlar karantinaya (`listings.karantina_nedeni`): benzerlerinin %40'ından ucuz / 2,5 katından pahalı (≥8 benzer), makul olmayan yıl (<1970) veya km (>600 B ya da yıllık >80 B). Silinmez; emsalden, değerlendirmeden ve bildirimden çıkar, her gece baştan hesaplanır. İlk önizleme: 4.083 ilanda 47 şüpheli (1 £ fiyatlar, 1900 yılı, 1,7 M km). Sabah `/durum` mesajında tek satır.
 - **Mezunum Satıyorum (`infrastructure/collectors/mezunum.py`, `application/collect_mezunum.py`, migration 012):** genel ilan sitesi (robots izinli); fiyat+para birimi JSON-LD `Product`tan kesin, marka/model/yıl/km serbest metinden (`parse_freetext(known_price=...)`, okunamazsa GLM, fiyat sitenin kesin değeriyle aynı olmalı); araç olmayan ilan "arac_degil" işaretiyle pasif kaydedilir (tekrar çekilmez). 30 dk (gündüz)/60 dk. Serbest metinden okunan ilanlar (site olsa da) 🟢 öncesi bağımsız okumadan geçer. Kuru deneme: 8 ilanın 5'i okundu.
 - **Serbest metin ayrıştırıcı:** "kiralık/aranıyor/alınır" yalnızca ilk 150 karakterde, "jant/lastik/yedek parça…" yalnızca ilk satırda aranır (satış ilanı içinde "lastikler yeni", "takas alınır" geçebilir).
-- **Kaynak keşfi (`application/discovery.py`, ücretsiz):** ilan metinlerinde ≥2 ilanda anılan @hesaplar haftada bir "Ekle / Geç" düğmeleriyle sahibe önerilir; onay olmadan hiçbir hesap taranmaz. (Apify hashtag keşfi YAPILMADI.)
-- **Instagram maliyet hatası (düzeltildi):** imleçsiz yeni iki hesap yüzünden her tur tüm hesapların son 3 günü yeniden çekiliyordu (80 gönderi ≈ $0,136/tur; 15 dk'da günde ≈$8) ve sabitlenmiş gönderiler her çağrıda ücretleniyordu. Şimdi `skipPinnedPosts`, her tur yalnızca önceki turdan (`ig_watermark` − 20 dk) sonrası, imleçsiz hesaplar ayrı tek seferlik çağrı (gönderi yoksa imleç verilir). Gerçek Apify ölçümü (02.10): Facebook 2 saatlik pencere ≈100 gönderi ≈ $0,24/çalıştırma → gündüz 2 saatte bir **≈$50–60/ay** (tavan $45: ay sonuna doğru Facebook durabilir; karar kullanıcıda).
+- **Kaynak keşfi (`application/discovery.py`, ücretsiz):** ilan metinlerinde ≥2 ilanda anılan @hesaplar haftada bir "Ekle / Geç" düğmeleriyle sahibe önerilir; onay olmadan hiçbir hesap taranmaz. (Apify hashtag keşfi YAPILMADI.) **ESKİ — GÜNCEL: KAPALI** (`application/discovery.py` `ENABLED = False`, sahibin kararı 03.10.2026).
+- **Instagram maliyet hatası (düzeltildi):** imleçsiz yeni iki hesap yüzünden her tur tüm hesapların son 3 günü yeniden çekiliyordu (80 gönderi ≈ $0,136/tur; 15 dk'da günde ≈$8) ve sabitlenmiş gönderiler her çağrıda ücretleniyordu. Şimdi `skipPinnedPosts`, her tur yalnızca önceki turdan (`ig_watermark` − 20 dk) sonrası, imleçsiz hesaplar ayrı tek seferlik çağrı (gönderi yoksa imleç verilir). Gerçek Apify ölçümü (02.10): Facebook 2 saatlik pencere ≈100 gönderi ≈ $0,24/çalıştırma → gündüz 2 saatte bir **≈$50–60/ay** (tavan $45: ay sonuna doğru Facebook durabilir; karar kullanıcıda). **ESKİ tavan: karar sonradan verildi, GÜNCEL Facebook tavanı $60** (§22, `collect_facebook.py:15`).
 - **Ölçümler:** satılan ilanların son istenen fiyatı / aktif medyan ≈ 0,99 (67 ilan) → ilanlar zaten piyasa fiyatından çıkıyor, pazarlık payı bu veriyle ölçülemez; %5 çarpanı korunur, gerçek alış/satış bilgisi gerekir.
 
 ## 22. Değer tablosu ve 🟠 tahmini fırsat (02.10.2026)
 
 Sahibin kararları:
-- Değerden %30+ ucuz ilan hemen gelir, 🟠 etiketiyle. Günlük sınır yok; yalnızca arıza freni var: bir turda 15'ten fazla 🟠 çıkarsa tek özet mesaj gider.
+- Değerden %30+ ucuz ilan hemen gelir, 🟠 etiketiyle. Günlük sınır yok; yalnızca arıza freni var: bir turda 15'ten fazla 🟠 çıkarsa tek özet mesaj gider. **ESKİ: "günlük sınır yok". GÜNCEL: 🟠 günde en çok 3** (`est_daily_limit = 3`, sahip kararı 03.10.2026; arıza freni 15 aynen duruyor). Üstelik 🟠 şu an hiç gönderilmiyor: gönderim kapısı (`domain/alert_policy.py`) 🟠'yı geçirmiyor.
 - Tablo Telegram'dan sorulur: `/fiyat corolla 2014`.
   - **2.6 (05.10.2026, sahibe örnek gösterilmeden yayınlanmaz):** yıl yazılınca cevap iki rakamı AYRI etiketle verir: "📘 Değer tablosu" ve "📊 Bildirim hesabı" = o model-yılda şu an ilanda olan en çok 3 aracın SON kararındaki piyasa ortası (`Repository.current_decisions` → `evaluations.market_median_gbp`; bildirim mesajı aynı kayıttan okur). Tablodan yuvarlanmış %10'dan çok ayrışan satıra "tablodan %x yüksek/düşük", altına tek satır neden (tablo bütün sürümleri ve TL ilanları sayıp aynı yıl/km'ye çevirir; bildirim yalnız ilana benzeyenlere bakar, emsal azsa ±2 yıla açılıp iki hesabın düşüğünü alır). Fırsatı 📊 belirler. Kural/eşik/bildirim metni değişmedi. Ölçüm (05.10, 12 aktif 🟢): tablo/medyan farkı 7'sinde ≤%5, 2'sinde %7–10, 3'ünde %11–12 (Fit ×2, Polo); tablo değeriyle hesaplansa 12 🟢'nin 6'sı %20 kârın altında görünürdü (sahibin şaşırma nedeni).
 - Varyant ayrımı otomatiktir.

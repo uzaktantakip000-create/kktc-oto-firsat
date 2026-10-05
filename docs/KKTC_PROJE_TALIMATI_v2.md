@@ -1,4 +1,6 @@
 # KKTC OTO — PROJE TALİMATI v2 + DOSYA YÖNETİMİ
+> **GEÇERSİZ (tarihsel belge): güncel durum için CLAUDE.md ve SPEC §24.** Aşağıdaki metin 30.09.2026'dan kalmadır (Railway, Anthropic API, özel repo, Instagram/Facebook zorunlu, %12–20 günlük özet gibi eski kararları içerir). İçeriği güncellenmedi; kullanma.
+
 > 30 Eylül 2026. Aşağıdaki metin Claude Project'teki "Custom instructions" alanındaki eski metnin YERİNE yapıştırılacak.
 
 ---
