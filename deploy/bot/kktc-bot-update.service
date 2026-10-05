@@ -1,0 +1,15 @@
+[Unit]
+Description=KKTC Oto Fırsat - dinleyici kod güncellemesi (yalnız live dalı)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# root'a ait kopya (setup.sh kurar); ağdan gelen her şey içinde kktc-bot kullanıcısıyla çalışır
+ExecStart=/usr/local/sbin/kktc-bot-update
+# pip kurulumu + dinleyicinin düzgün durması (en çok ~75 sn) için geniş süre
+TimeoutStartSec=20min
+Nice=10
+PrivateTmp=yes
+ProtectHome=yes
+NoNewPrivileges=yes

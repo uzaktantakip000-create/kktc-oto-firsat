@@ -1,0 +1,12 @@
+[Unit]
+Description=KKTC Oto Fırsat - dinleyici güncellemesini 10 dakikada bir kontrol et
+
+[Timer]
+# Her saatin 0, 10, 20, 30, 40, 50. dakikası; VPS kapalıyken kaçan çalışma açılışta hemen yapılır
+OnCalendar=*:0/10
+Persistent=true
+RandomizedDelaySec=60
+Unit=kktc-bot-update.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,45 @@
+[Unit]
+Description=KKTC Oto Fırsat - Telegram anında dinleyici (entrypoints.bot_listen)
+After=network-online.target
+Wants=network-online.target
+# bot.env yoksa ya da boşsa hiç başlatma (kurulumda dosya doldurulmadan başlamasın)
+ConditionFileNotEmpty=/etc/kktc-bot/bot.env
+
+[Service]
+Type=simple
+User=kktc-bot
+Group=kktc-bot
+WorkingDirectory=/opt/kktc-bot/app
+EnvironmentFile=/etc/kktc-bot/bot.env
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=UTC
+ExecStart=/opt/kktc-bot/venv/bin/python -m entrypoints.bot_listen
+Restart=always
+RestartSec=10
+# 78 = ayar eksik (bot.env'de boş zorunlu değer): yeniden denemek boşuna, döngüye girme
+RestartPreventExitStatus=78
+# SIGTERM'de süreç devam eden yoklamayı (en çok ~50 sn) bitirip 0 ile çıkar; bu süre dolmadan SIGKILL gönderilmesin
+TimeoutStopSec=75
+KillSignal=SIGTERM
+
+# Sertleştirme: süreç yalnızca dışarı bağlanır (Telegram, veritabanı); gelen bağlantı/port yok, diske yazmaz
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+UMask=0077
+# Ev klasörü (/var/lib/kktc-bot) tek yazılabilir yer: bir kütüphane ~/.cache'e yazmak isterse çökmesin
+ReadWritePaths=/var/lib/kktc-bot
+MemoryMax=400M
+
+[Install]
+WantedBy=multi-user.target
