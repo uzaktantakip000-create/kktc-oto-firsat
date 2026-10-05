@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from application.audit import send_monthly_audit
 from application.bot_menu import ensure_menu
-from application.bot_poll import poll_bot
+from application.bot_poll import listener_running, poll_bot
 from application.maintenance import run_maintenance
 from application.dedupe import mark_duplicates
 from application.digest import send_daily_digest
@@ -109,7 +109,14 @@ def run(repo: Repository) -> None:
     except Exception as e:  # sürüm işi değerlendirmeyi engellemesin
         print("kural sürümü uygulanamadı:", type(e).__name__, redact(str(e))[:150])
     try:
-        poll_bot(repo, token, owner_chat_id=owner)  # önce abone onayları ve komutlar
+        try:
+            listening = listener_running(repo)  # VPS'teki anında dinleyici ayakta mı (kalp atışı taze mi)?
+        except Exception:  # kalp atışı okunamadı: ayakta saymayız, eskisi gibi yoklarız
+            listening = False
+        if listening:  # iki getUpdates çakışmasın (409); dinleyici durursa 3 dk içinde bu yol yeniden devreye girer
+            print("bot: anında dinleyici çalışıyor, bu turda yoklama atlandı")
+        else:
+            poll_bot(repo, token, owner_chat_id=owner)  # önce abone onayları ve komutlar
     except Exception as e:  # bot komutları değerlendirmeyi engellemesin
         print("bot güncellemeleri alınamadı:", type(e).__name__, redact(str(e))[:150])
     try:

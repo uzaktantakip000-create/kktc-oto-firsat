@@ -1,5 +1,7 @@
-"""Bot komutlarını Actions çalışması sırasında getUpdates ile işler (7/24 açık sunucu gerektirmez)."""
+"""Bot komutlarını getUpdates ile işler. İki yol: GitHub turu 15 dakikada bir kısa yoklar (timeout=0; her zaman çalışan yedek);
+VPS'teki sürekli dinleyici (entrypoints/bot_listen) uzun yoklamayla anında yanıtlar ve çalıştığını `bot_state` kalp atışıyla bildirir."""
 import re
+from datetime import datetime, timezone
 
 import httpx
 
@@ -9,6 +11,9 @@ from application.notify import TelegramError, api
 from infrastructure.config import redact
 from infrastructure.db.repository import Repository
 
+LISTENER_STATE_KEY = "bot_listen_seen"  # VPS dinleyicisinin son görüldüğü an (UTC ISO); yalnız entrypoints/bot_listen yazar
+LISTENER_FRESH_SECONDS = 180  # kalp atışı bundan tazeyse dinleyici ayakta sayılır: GitHub turu yoklamayı atlar (iki getUpdates çakışmasın)
+LISTENER_SKEW_SECONDS = 60  # saatler arası fark payı: kalp atışı bundan fazla "gelecekte" ise güvenilmez (yoklama atlanmaz)
 FEEDBACK_ACTIONS = ("ilgilendim", "pas", "yanlis_fiyat", "satilmis", "kusurlu", "audit_dogru", "audit_yanlis")
 SAVED_ACTION = "kayitli"  # oydan sonra oy düğmelerinin yerine konan "✅ Kaydedildi" düğmesi (fb:kayitli:<ilan>); FEEDBACK_ACTIONS'ta DEĞİL: basınca kayıt yok
 SAVED_ANSWER = "Zaten kaydedildi"
@@ -348,10 +353,40 @@ def _tell_error(token: str, owner: str, update: dict) -> None:
         pass
 
 
-def poll_bot(repo: Repository, token: str, owner_chat_id: str) -> int:
+def listener_alive(seen_iso: str | None, now: datetime) -> bool:
+    """Dinleyicinin kalp atışı taze mi? Kayıt yok/okunamıyor/saat dilimsiz/çok ileri tarihli ise False (güvenli taraf: GitHub turu yoklar)."""
+    if not seen_iso:
+        return False
+    try:
+        seen = datetime.fromisoformat(seen_iso)
+    except (TypeError, ValueError):
+        return False
+    if seen.tzinfo is None or now.tzinfo is None:
+        return False
+    age = (now - seen).total_seconds()
+    return -LISTENER_SKEW_SECONDS <= age < LISTENER_FRESH_SECONDS
+
+
+def listener_running(repo: Repository, now: datetime | None = None) -> bool:
+    """`listener_alive` + kalp atışını `bot_state`'ten okur. Okuma hatası yukarı çıkar (çağıran yakalar)."""
+    return listener_alive(repo.get_state(LISTENER_STATE_KEY), now or datetime.now(timezone.utc))
+
+
+def sync_owner(repo: Repository, owner_chat_id: str) -> None:
+    """Sahip kaydı (abone tablosunda sahip + onaylı). Cron yolu her yoklamada bunu `poll_bot` içinden yapar; dinleyici başlarken/bağlantı yenilenirken bir kez."""
     _upsert_owner(repo, owner_chat_id)
+
+
+def poll_bot(repo: Repository, token: str, owner_chat_id: str, timeout: int = 0, upsert_owner: bool = True, on_update=None) -> int:
+    """Bekleyen güncellemeleri işler; dönen: işlenen güncelleme sayısı. Varsayılanlar GitHub turunun eskisiyle aynı davranışıdır.
+    `timeout` > 0: Telegram'da o kadar saniye yeni güncelleme beklenir (uzun yoklama; yalnız dinleyici); HTTP okuma süresi buna göre uzatılır.
+    `upsert_owner`: dinleyici sahip kaydını başta bir kez yapar, her ~50 sn'lik yoklamada veritabanına yazmaz.
+    `on_update`: her güncelleme işlenip ofset yazıldıktan sonra çağrılır (dinleyici kalp atışı: uzun bir ilan kontrolü sırasında bayatlamasın)."""
+    if upsert_owner:
+        _upsert_owner(repo, owner_chat_id)
     offset = int(repo.get_state("tg_offset", "0") or 0)
-    updates = api(token, "getUpdates", offset=offset, timeout=0, allowed_updates=["message", "callback_query"])
+    wait = {"http_timeout": timeout + 15} if timeout > 0 else {}  # cron yolunda ek alan yok: çağrı eskisiyle birebir aynı
+    updates = api(token, "getUpdates", offset=offset, timeout=timeout, allowed_updates=["message", "callback_query"], **wait)
     for u in updates:
         try:
             if "message" in u:
@@ -363,4 +398,6 @@ def poll_bot(repo: Repository, token: str, owner_chat_id: str) -> int:
             _tell_error(token, owner_chat_id, u)
         offset = u["update_id"] + 1
         repo.set_state("tg_offset", str(offset))  # her güncellemeden sonra: yarıda kesilen tur aynı komutu ikinci kez çalıştırmasın
+        if on_update is not None:
+            on_update()
     return len(updates)

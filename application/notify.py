@@ -27,9 +27,10 @@ class TelegramError(RuntimeError):
         self.status, self.description = status, description
 
 
-def api(token: str, method: str, **payload) -> dict:
+def api(token: str, method: str, *, http_timeout: float = 20, **payload) -> dict:
+    """`http_timeout`: HTTP okuma süresi (sn); yalnız uzun yoklamada (getUpdates timeout>0) uzatılır: Telegram'ın bekleme süresinden büyük olmalı."""
     try:
-        r = httpx.post(API.format(token=token, method=method), json=payload, timeout=20)
+        r = httpx.post(API.format(token=token, method=method), json=payload, timeout=http_timeout)
     except httpx.HTTPError as e:  # httpx hata metni URL (yani token) taşıyabilir: sadece tür adı
         raise TelegramError(method, 0, type(e).__name__) from None
     if r.status_code != 200:

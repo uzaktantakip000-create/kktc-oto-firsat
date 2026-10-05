@@ -11,6 +11,11 @@ def use_store(repo) -> None:
     _store = repo
 
 
+def clear_cache() -> None:
+    """Süreç içi kur önbelleğini boşaltır: günlerce açık kalan süreç (bot dinleyicisi) kurları arada tazelesin; kısa ömürlü turlar buna ihtiyaç duymaz."""
+    _cache.clear()
+
+
 def _note_fallback(currency: str, fallback: bool) -> None:
     """Servis yanıt vermeyip yedek (son bilinen) kur kullanılıyorsa BAŞLANGIÇ zamanı `fx:fallback:<kur>` anahtarına yazılır; servis
     düzelince silinir. 24 saatten uzun süren yedek kullanımı sahibe haber verilir (application/health.check_fx). Asla kuru bozmaz."""
