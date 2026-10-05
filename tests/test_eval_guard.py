@@ -122,7 +122,7 @@ def test_runs_alternate_between_full_and_quick_and_failed_full_round_is_retried(
         return []
 
     wire(monkeypatch, evaluate_new)
-    monkeypatch.setattr(cron_evaluate, "mark_duplicates", lambda repo, quick=False: dedupe_seen.append(quick))
+    monkeypatch.setattr(cron_evaluate, "mark_duplicates", lambda repo, quick=False, now=None: dedupe_seen.append(quick))
     repo = Repo()
     cron_evaluate.run(repo)  # 1: kayıt yok → tam tur (ve tam mükerrer taraması)
     assert seen == [False] and dedupe_seen == [False] and "eval:full" in repo.state and "dedupe:full" in repo.state

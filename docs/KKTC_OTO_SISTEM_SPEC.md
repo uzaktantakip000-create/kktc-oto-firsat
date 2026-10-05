@@ -422,7 +422,7 @@ Sahibin kararları:
 - (Çözüldü, §24) Facebook görsel alanı `attachments[].photo_image.uri`.
 - Toyota Corolla eğrisi yok: veri 1993–99 ve 2020–25 olarak iki uca bölünmüş, σ 0,32 çıkıyor.
 - KKTCar'daki eski TL fiyatlı satılmış ilanlar bugünkü kurla ucuz görünüyor olabilir; kontrol edilecek.
-- `same_car` km karşılaştırmasında `effective_km` kullanmıyor.
+- (Çözüldü, plan v4 2.7 — 05.10.2026) `same_car` km'yi `effective_km` ile okur: şüpheli km (eski araçta "1", "107" = 107.000…) bilinmiyor sayılır; ne "aynı araç" ne "farklı araç" kanıtıdır, km'siz çiftte yalnız aynı telefon + ±%15 fiyat birleştirir. Canlı anlık görüntüde (6.230 aday): sıfırdan işaretlemede 14 bağ kalkar (hepsi iki tarafı da şüpheli km'li, telefonsuz; ör. 2019 E 220 "137" ↔ E-Class "180" km), 1 bağ eklenir (aynı satıcı aynı Swift'i "1 km" sonra "218.000 km" yazıp yeniden koymuş); mevcut bağlar kodla geri alınmaz. 🟢/🟡 sayısı, gönderilmiş bildirimler ve 🟢'lerin emsal sayısı DEĞİŞMEZ.
 
 ## 23. /son, anlık kaynak alarmı, haftalık karne (02.10.2026)
 - **/son** (`application/history_cmd.py`, `Repository.recent_opportunities`): gönderilmiş son 10 🟢/🟠, saat (KKTC), fiyat, medyana göre ucuzluk, sahibin düğme cevabı ve bağlantı.

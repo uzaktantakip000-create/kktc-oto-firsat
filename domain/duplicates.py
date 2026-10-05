@@ -1,12 +1,18 @@
 """Aynı aracın birden fazla ilanını (yeniden paylaşım, çoklu kaynak) tek araç olarak tanır."""
+from datetime import date
+
+from domain.comparables import effective_km
 
 
 def _km_close(a: int, b: int) -> bool:
     return abs(a - b) <= max(500, 0.02 * max(a, b))
 
 
-def same_car(a: dict, b: dict) -> bool:
-    """Aynı marka/model/yıl ön koşuludur (çağıran gruplar). Yanlış birleştirme, kaçan birleştirmeden kötüdür: temkinli."""
+def same_car(a: dict, b: dict, today: date | None = None) -> bool:
+    """Aynı marka/model/yıl ön koşuludur (çağıran gruplar). Yanlış birleştirme, kaçan birleştirmeden kötüdür: temkinli.
+    Km, değerlendirmedeki gibi `effective_km` ile okunur: şüpheli km (eski araçta 1.000 altı, 10+ yaşta 15.000 altı: "bin" eksik
+    yazılmış olabilir) BİLİNMİYOR sayılır; ne "aynı araç" kanıtı (iki ilanda da "1 km" yazması aynı araç demek değildir) ne de
+    "farklı araç" kanıtıdır. Km'si bilinmeyen çiftte yalnız aynı telefon + yakın fiyat birleştirir. `today`: karar günü (saatten bağımsızlık)."""
     if (a["brand_norm"], a["model_norm"], a["year"]) != (b["brand_norm"], b["model_norm"], b["year"]):
         return False
     pa, pb = a.get("price_gbp"), b.get("price_gbp")
@@ -14,7 +20,7 @@ def same_car(a: dict, b: dict) -> bool:
     phone_match = bool(a.get("seller_phone")) and a.get("seller_phone") == b.get("seller_phone")
     if a["model_norm"] is None and not phone_match:
         return False  # model bilinmiyorsa "ikisi de bilinmiyor" aynı model demek değildir; yalnızca aynı telefon ayırt eder
-    ka, kb = a.get("km"), b.get("km")
+    ka, kb = effective_km(a, today), effective_km(b, today)
     if ka and kb:
         # km farklıysa farklı araçtır; km aynıysa telefon ya da yakın fiyat da gerekir.
         # Yuvarlak km (150.000 gibi) çok araçta ortak olabilir: telefon yoksa fiyat da neredeyse aynı olmalı.

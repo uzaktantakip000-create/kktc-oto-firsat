@@ -121,7 +121,7 @@ def run(repo: Repository) -> None:
         if released:
             print(f"mükerrer: {released} ilan serbest bırakıldı (kanoniği pasifleşmiş ya da farklı model)")
         dedupe_full = full_pass_due(repo, DEDUPE_FULL_KEY, now)
-        mark_duplicates(repo, quick=not dedupe_full)  # saatte bir tam tarama, arada yalnız yeni ilanın değdiği gruplar
+        mark_duplicates(repo, quick=not dedupe_full, now=now)  # saatte bir tam tarama, arada yalnız yeni ilanın değdiği gruplar
         if dedupe_full:
             mark_full(repo, DEDUPE_FULL_KEY, now)
     except Exception as e:  # mükerrer işaretleme hatası değerlendirmeyi engellemesin
