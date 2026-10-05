@@ -107,19 +107,20 @@ def _msg(chat, text=None, photo=None):
     return {"chat": {"id": chat}, "from": {"first_name": "x"}, "text": text, **({"photo": photo} if photo else {})}
 
 
-def test_owner_plain_text_is_checked_but_friend_text_and_commands_are_not(monkeypatch):
+def test_owner_and_approved_subscriber_texts_are_checked_but_commands_are_not(monkeypatch):
     from application import bot_poll
     monkeypatch.setattr(bot_poll.sources_cmd, "sources_report", lambda repo: "rapor")
     sent, asked = [], []
     monkeypatch.setattr(bot_poll, "api", lambda token, method, **kw: sent.append((method, kw)))
-    monkeypatch.setattr(bot_poll.ad_check, "handle", lambda repo, raw, image, reader: asked.append((raw, image)) or "cevap")
+    monkeypatch.setattr(bot_poll.ad_check, "handle", lambda repo, raw, image, reader, **kw: asked.append((raw, image, kw)) or "cevap")
     monkeypatch.setattr(bot_poll.llm_reader, "from_env", lambda repo: None)
     repo = PollRepo()
     bot_poll._handle_message(repo, "tok", "1", _msg(1, "2015 Toyota Vitz 5000£"))
-    assert asked == [("2015 Toyota Vitz 5000£", None)] and sent[-1][1]["text"] == "cevap"
-    bot_poll._handle_message(repo, "tok", "1", _msg(2, "2015 Toyota Vitz 5000£"))  # arkadaş: değerlendirilmez
+    assert asked == [("2015 Toyota Vitz 5000£", None, {})] and sent[-1][1]["text"] == "cevap"
+    bot_poll._handle_message(repo, "tok", "1", _msg(2, "2015 Toyota Vitz 5000£"))  # onaylı abone: o da kontrol ettirir (kendi kotasıyla)
+    assert asked[-1] == ("2015 Toyota Vitz 5000£", None, {"subscriber": "2"}) and sent[-1][1]["text"] == "cevap"
     bot_poll._handle_message(repo, "tok", "1", _msg(1, "/kaynaklar"))                 # komut: ilan sayılmaz
-    assert len(asked) == 1
+    assert len(asked) == 2
 
 
 def test_owner_price_book_commands_are_routed(monkeypatch):
@@ -165,3 +166,23 @@ def test_a_different_car_with_the_same_model_is_still_a_comparable(monkeypatch):
     other = car("other", 8500, km=82_000)  # km farkı 2.000 (>%2): başka araç, emsal sayılır
     out = ad_check.handle(Repo(pool=pool_far_km() + [other]), ad, None, None)
     assert "9 emsal" in market_line(out)
+
+
+# --- abone ilan kontrolü: ayrı kota, sahibin kişisel ayarları uygulanmaz ---------------------------------------------
+def test_subscriber_has_a_separate_daily_quota_and_the_owners_is_untouched(monkeypatch):
+    monkeypatch.setattr(ad_check, "gbp_rate", lambda c: 1.0)
+    repo = Repo()
+    for _ in range(ad_check.MAX_PER_DAY_SUBSCRIBER):
+        assert "sınırına ulaşıldı" not in ad_check.handle(repo, AD, None, None, subscriber="77")
+    assert "sınırına ulaşıldı" in ad_check.handle(repo, AD, None, None, subscriber="77")
+    assert "sınırına ulaşıldı" not in ad_check.handle(repo, AD, None, None, subscriber="88")  # başka abone etkilenmez
+    assert "sınırına ulaşıldı" not in ad_check.handle(repo, AD, None, None)                   # sahibin kotası ayrı
+    assert sorted(v for k, v in repo.state.items() if k.count(":") == 1) == ["1"]  # sahibin sayacı yalnız kendi 1 kontrolü
+
+
+def test_owners_personal_settings_do_not_apply_to_a_subscribers_check(monkeypatch):
+    monkeypatch.setattr(ad_check, "gbp_rate", lambda c: 1.0)
+    repo = Repo()
+    repo.state["cfg:blocked_brands"] = "Toyota"  # sahip Toyota'yı istemiyor (kişisel tercih)
+    assert "🟢 GÜÇLÜ FIRSAT" not in ad_check.handle(repo, AD, None, None)                      # sahibin kontrolünde tercih uygulanır
+    assert "🟢 GÜÇLÜ FIRSAT" in ad_check.handle(repo, AD, None, None, subscriber="77")        # abonede standart kurallar

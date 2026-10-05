@@ -31,7 +31,11 @@ HELP_OWNER = ("📖 Komutlar (cevap en geç ~15 dk içinde gelir)\n\n"
 HELP_SUBSCRIBER = ("Bu bot KKTC'deki ikinci el araç ilanlarını tarar; piyasanın belirgin altında kalan fırsatları bu sohbete yazar. "
                    "Yalnızca öneridir: satıcıyla görüşmek ve karar vermek sana aittir.\n\n"
                    "/dur — bildirimleri durdur\n/basla — yeniden aç\n\n"
+                   "İlan kontrolü: bir ilanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü bana gönder; piyasayla karşılaştırıp "
+                   f"cevap veririm (günde en çok {ad_check.MAX_PER_DAY_SUBSCRIBER}).\n\n"
                    "Mesajlardaki 👍 İşe yarar / 👎 Yanlış düğmesine basarsan sistem gelişir. Cevaplar en geç ~15 dk içinde gelir.")
+WELCOME_SUBSCRIBER = ("✅ Onaylandın! Fırsat bildirimleri bu sohbete gelecek. Bir ilanı (yazı ya da ekran görüntüsü) bana gönderirsen "
+                      "piyasayla karşılaştırıp cevap veririm. Komutlar için /yardim.")
 OWNER_ONLY_REPLY = "Bu komut yalnız sahip içindir. Senin için /yardim, /dur ve /basla çalışır."
 UNKNOWN_OWNER_REPLY = "Bu komutu tanımıyorum. Komut listesi için /yardim."
 NOT_APPROVED_REPLY = "Bu komut için önce başvurunun onaylanması gerekir. Başvurmak için /start yaz."
@@ -160,18 +164,20 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
         api(token, "sendMessage", chat_id=chat_id, text=reply)
     elif cmd and chat_id != owner:  # sahip komutu: sessiz kalma, söyle
         api(token, "sendMessage", chat_id=chat_id, text=OWNER_ONLY_REPLY)
-    elif chat_id == owner and (msg.get("photo") or (raw and not raw.startswith("/"))):
-        # İlet → cevap al: kapalı gruptan/başka yerden gelen ilan; otomatik tarananlarla aynı kurallarla değerlendirilir
+    elif (chat_id == owner or status_now == "onayli") and (msg.get("photo") or (raw and not raw.startswith("/"))):
+        # İlet → cevap al: kapalı gruptan/başka yerden gelen ilan; otomatik tarananlarla aynı kurallarla değerlendirilir.
+        # Sahip ve onaylı aboneler kullanır; abonenin kendi günlük kotası vardır ve sahibin kişisel ayarları ona uygulanmaz.
+        extra = {} if chat_id == owner else {"subscriber": chat_id}
         if msg.get("photo"):
             image = _download_photo(token, msg["photo"])
             reply = ("Görüntüyü indiremedim (en çok 5 MB olmalı). İlanı yazı olarak da gönderebilirsin." if image is None
-                     else ad_check.handle(repo, raw, image, llm_reader.from_env(repo)))
+                     else ad_check.handle(repo, raw, image, llm_reader.from_env(repo), **extra))
         elif _is_bare_link(raw):  # link açılmaz; kota ve yapay zekâ çağrısı harcanmasın
             reply = LINK_REPLY
         elif not _looks_like_ad(raw):  # "tamam", "teşekkürler"...: ilan kontrolüne girmez
             reply = CHATTER_REPLY
         else:
-            reply = ad_check.handle(repo, raw, None, llm_reader.from_env(repo))
+            reply = ad_check.handle(repo, raw, None, llm_reader.from_env(repo), **extra)
         api(token, "sendMessage", chat_id=chat_id, text=reply[:3900], disable_web_page_preview=True)
     elif chat_id == owner and cmd:  # yazım hatası/bilinmeyen komut sessiz kalmasın
         api(token, "sendMessage", chat_id=chat_id, text=UNKNOWN_OWNER_REPLY)
@@ -197,9 +203,19 @@ def _handle_callback(repo: Repository, token: str, owner: str, cb: dict) -> None
     kind, action, target = (cb.get("data") or "::").split(":", 2)
     if kind == "sub" and sender == owner and action in ("onayli", "reddedildi"):
         repo.conn.execute("UPDATE subscribers SET status=%s WHERE chat_id=%s", (action, target))
-        _answer(token, cb["id"], "Kaydedildi")
+        _answer(token, cb["id"], "Kaydedildi")  # düğme cevabı geç kalırsa Telegram reddeder: asıl bildirim aşağıdaki mesajdır
+        who = repo.conn.execute("SELECT name FROM subscribers WHERE chat_id=%s", (target,)).fetchone()
+        name = (who or {}).get("name") or "Kişi"
         if action == "onayli":
-            api(token, "sendMessage", chat_id=target, text="✅ Onaylandın! Fırsat bildirimleri bu sohbete gelecek.")
+            try:
+                api(token, "sendMessage", chat_id=target, text=WELCOME_SUBSCRIBER)
+                note = f"✅ {name} onaylandı; ona hoş geldin mesajı gitti. Fırsat bildirimleri ona da gelecek, ilan kontrolü de yapabilir."
+            except TelegramError:
+                note = (f"⚠️ {name} onaylandı ama ona mesaj gönderemedim (botu hiç başlatmamış ya da engellemiş olabilir). "
+                        "Bana /start yazmasını söyle.")
+        else:
+            note = f"⛔ {name} reddedildi; ona bildirim gitmeyecek."
+        api(token, "sendMessage", chat_id=owner, text=note)
     elif kind == "disc" and sender == owner and action in ("ekle", "gec"):
         _answer(token, cb["id"], "Tamam")
         api(token, "sendMessage", chat_id=owner, text=discovery.decide(repo, action, target))

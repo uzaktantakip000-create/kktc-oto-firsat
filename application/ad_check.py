@@ -18,6 +18,7 @@ from infrastructure.db.repository import Repository
 from infrastructure.fx.frankfurter import gbp_rate
 
 MAX_PER_DAY = 30
+MAX_PER_DAY_SUBSCRIBER = 15  # onaylı abone başına; sahibin kotasından ayrı sayılır
 MAX_IMAGE_BYTES = 5_000_000
 EXAMPLE = "Örnek: 2016 Honda Fit, 53.000 km, otomatik, 7.500£"
 WHY = {
@@ -136,19 +137,23 @@ def analyze_text(repo: Repository, text: str, reader: LlmReader | None, s: Setti
     return build_reply(listing, by, a, comps, s)
 
 
-def _quota_ok(repo: Repository, now: datetime | None = None) -> bool:
-    key = f"adcheck:{(now or datetime.now(timezone.utc)):%Y-%m-%d}"
+def _quota_ok(repo: Repository, now: datetime | None = None, subscriber: str | None = None) -> bool:
+    day = f"{(now or datetime.now(timezone.utc)):%Y-%m-%d}"
+    key, limit = (f"adcheck:{day}", MAX_PER_DAY) if subscriber is None else (f"adcheck:{day}:{subscriber}", MAX_PER_DAY_SUBSCRIBER)
     n = int(repo.get_state(key, "0") or 0)
-    if n >= MAX_PER_DAY:
+    if n >= limit:
         return False
     repo.set_state(key, str(n + 1))
     return True
 
 
-def handle(repo: Repository, text: str, image: bytes | None, reader: LlmReader | None, now: datetime | None = None) -> str:
-    """Telegram'dan gelen metin ya da (ekran görüntüsü + isteğe bağlı açıklama) için cevap metni."""
-    if not _quota_ok(repo, now):
-        return f"Günlük {MAX_PER_DAY} ilan kontrol sınırına ulaşıldı; yarın tekrar dene."
+def handle(repo: Repository, text: str, image: bytes | None, reader: LlmReader | None, now: datetime | None = None,
+           subscriber: str | None = None) -> str:
+    """Telegram'dan gelen metin ya da (ekran görüntüsü + isteğe bağlı açıklama) için cevap metni.
+    subscriber: sahip olmayan onaylı abonenin sohbet kimliği. Kendi günlük kotası vardır ve sahibin kişisel ayarları
+    (eşik, bütçe, istenmeyen marka...) onun kontrolüne uygulanmaz: sistemin standart kuralları geçerlidir."""
+    if not _quota_ok(repo, now, subscriber):
+        return f"Günlük {MAX_PER_DAY if subscriber is None else MAX_PER_DAY_SUBSCRIBER} ilan kontrol sınırına ulaşıldı; yarın tekrar dene."
     if image is not None:
         if reader is None:
             return "Ekran görüntüsünü okumak için yapay zekâ anahtarı tanımlı değil. İlanı yazı olarak gönder."
@@ -158,4 +163,4 @@ def handle(repo: Repository, text: str, image: bytes | None, reader: LlmReader |
             return f"🤔 Görüntüden yazı okuyamadım{extra}. Daha net bir görüntü ya da yazı olarak gönder."
         text = (text + "\n" + seen).strip() if text else seen
     from application.settings_store import load_settings
-    return analyze_text(repo, text, reader, load_settings(repo), from_image=image is not None)
+    return analyze_text(repo, text, reader, load_settings(repo) if subscriber is None else Settings(), from_image=image is not None)

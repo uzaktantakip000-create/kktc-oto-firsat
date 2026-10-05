@@ -73,7 +73,7 @@ def bot(monkeypatch):
     monkeypatch.setattr(bot_poll.sources_cmd, "change_status", lambda repo, a, to: f"{to}{a}")
     monkeypatch.setattr(bot_poll.llm_reader, "from_env", lambda repo: None)
     ads = []
-    monkeypatch.setattr(bot_poll.ad_check, "handle", lambda repo, raw, image, reader: ads.append((raw, image)) or "ILAN-CEVABI")
+    monkeypatch.setattr(bot_poll.ad_check, "handle", lambda repo, raw, image, reader, **kw: ads.append((raw, image, kw)) or "ILAN-CEVABI")
 
     class Bot:
         def send(self, repo, chat, text):
@@ -185,9 +185,15 @@ def test_owner_free_text_unknown_commands_and_links(bot):
     assert bot.send(repo, OWNER, "teşekkürler 👍") == [bot_poll.CHATTER_REPLY]
     assert bot.send(repo, OWNER, "https://kibrisarabaal.com/ilan/3107-2012-model-otomatik-666946/") == [bot_poll.LINK_REPLY] and bot.ads == []
     assert bot.send(repo, OWNER, "/yanlis_komut") == [bot_poll.UNKNOWN_OWNER_REPLY]
-    assert bot.send(repo, OWNER, "2015 Toyota Vitz 5000£") == ["ILAN-CEVABI"] and bot.ads == [("2015 Toyota Vitz 5000£", None)]
+    assert bot.send(repo, OWNER, "2015 Toyota Vitz 5000£") == ["ILAN-CEVABI"] and bot.ads == [("2015 Toyota Vitz 5000£", None, {})]
     assert bot.send(repo, OWNER, "Satılık 2012 model araç 8500 stg 240000 km") == ["ILAN-CEVABI"]  # rakamlı gerçek ilan metni
-    assert bot.send(repo, FRIEND, "merhaba") == []  # abonenin sohbet mesajına cevap verilmez (ilan kontrolü yalnız sahibe)
+    assert bot.send(Repo({FRIEND: "onayli"}), FRIEND, "merhaba") == [bot_poll.CHATTER_REPLY]  # onaylı abone de ilan kontrolü kullanır
+    assert bot.send(Repo({FRIEND: "onayli"}), FRIEND, "2015 Toyota Vitz 5000£") == ["ILAN-CEVABI"]
+    assert bot.ads[-1] == ("2015 Toyota Vitz 5000£", None, {"subscriber": FRIEND})  # kendi kotası/standart kurallar
+    for status in ("durduruldu", "bekliyor", "reddedildi"):  # onaylı olmayan kişi ilan kontrolü kullanamaz
+        n = len(bot.ads)
+        assert bot.send(Repo({FRIEND: status}), FRIEND, "2015 Toyota Vitz 5000£") == [] and len(bot.ads) == n
+    assert bot.send(Repo(), "99", "2015 Toyota Vitz 5000£") == []
 
 
 def test_every_reply_fits_one_telegram_message(bot):
@@ -251,3 +257,46 @@ def test_a_double_tap_stores_one_vote_and_a_second_action_is_a_second_vote(bot):
     assert repo.conn.feedback == [("L1", "ilgilendim", "chat:2")]
     tap("yanlis_fiyat")
     assert len(repo.conn.feedback) == 2
+
+
+# --- onay/ret: sahibe de haber gider ---------------------------------------------------------------------------------
+class NameConn(Conn):
+    def execute(self, sql, params=()):
+        s = " ".join(sql.split())
+        if s.startswith("SELECT name FROM subscribers"):
+            self.sql.append((s, params))
+            self._row = {"name": "Erkan"}
+            return self
+        return super().execute(sql, params)
+
+
+def _approve(monkeypatch, action, fail_welcome=False):
+    sent = []
+
+    def fake_api(token, method, **kw):
+        if method == "sendMessage" and kw["chat_id"] == FRIEND and fail_welcome:
+            raise bot_poll.TelegramError("sendMessage", 403, "bot was blocked by the user")
+        sent.append((method, kw))
+        return {}
+    monkeypatch.setattr(bot_poll, "api", fake_api)
+    monkeypatch.setattr(bot_poll, "_answer", lambda *a, **k: None)
+    repo = Repo({FRIEND: "bekliyor"})
+    repo.conn = NameConn({OWNER: "onayli", FRIEND: "bekliyor"})
+    bot_poll._handle_callback(repo, "t", OWNER, {"id": "1", "from": {"id": int(OWNER)}, "data": f"sub:{action}:{FRIEND}"})
+    return repo, {kw["chat_id"]: kw["text"] for m, kw in sent if m == "sendMessage"}
+
+
+def test_approving_tells_both_the_new_subscriber_and_the_owner(monkeypatch):
+    repo, texts = _approve(monkeypatch, "onayli")
+    assert texts[FRIEND] == bot_poll.WELCOME_SUBSCRIBER and "ilan" in texts[FRIEND]
+    assert texts[OWNER].startswith("✅ Erkan onaylandı; ona hoş geldin mesajı gitti")
+
+
+def test_owner_is_warned_when_the_welcome_message_cannot_be_delivered(monkeypatch):
+    repo, texts = _approve(monkeypatch, "onayli", fail_welcome=True)
+    assert FRIEND not in texts and texts[OWNER].startswith("⚠️ Erkan onaylandı ama ona mesaj gönderemedim")
+
+
+def test_rejecting_tells_the_owner_and_nobody_else(monkeypatch):
+    repo, texts = _approve(monkeypatch, "reddedildi")
+    assert texts == {OWNER: "⛔ Erkan reddedildi; ona bildirim gitmeyecek."}
