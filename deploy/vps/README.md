@@ -43,6 +43,8 @@ Kurulumun yaptıkları:
 - Gerekli programları kurar.
 - `kktc-social` adlı bir sistem kullanıcısı açar. Bu kullanıcıyla kimse giriş yapamaz ve sudo yetkisi yoktur.
 - Kodu `/opt/kktc-social/app` klasörüne indirir. Yalnız `live` dalı alınır, yani testten geçmiş sürüm.
+  - Deneme sırasında, okuyucu henüz `live`'a girmediyse başka bir dal alınabilir. Bunun için klonda ve kurulumda o dalın adını ver: `git clone --branch <DAL> ...` ve `sudo KKTC_BRANCH=<DAL> bash .../setup.sh`.
+  - `sudo kktc-deploy` sonra hep klonun dalını izler. `live`'a geçmek için bir kez `sudo KKTC_BRANCH=live kktc-deploy` yaz.
 - Python ortamını, Chromium tarayıcısını ve zamanlayıcı dosyalarını kurar.
 
 **Hiçbir şeyi çalıştırmaya başlamaz.** 10–15 dakika sürebilir ve sonunda `KURULUM TAMAM` yazar. Bu adımdan sonra `~/kktc-kurulum` klasörünü silebilirsin.
@@ -248,7 +250,7 @@ Yeniden açmak için adım 11'i uygula.
 sudo kktc-deploy
 ```
 
-Bu komut `live` dalının son sürümünü alır, paketleri yeniden kurar ve sonunda `status` ile kısa bir kontrol yapar. Yeniden başlatma gerekmez; bir sonraki tur yeni kodu kullanır.
+Bu komut klonun izlediği dalın (normalde `live`) son sürümünü alır, paketleri yeniden kurar ve sonunda `status` ile kısa bir kontrol yapar. Yeniden başlatma gerekmez; bir sonraki tur yeni kodu kullanır.
 Ubuntu güvenlik güncellemelerini ayda bir yap: `sudo apt-get update && sudo apt-get -y upgrade`. Gerekirse `sudo reboot`. Yeniden başlattıktan sonra `sudo kktc-firewall show` ile kuralın yerinde olduğunu gör.
 
 ## 15. Sorun çözme

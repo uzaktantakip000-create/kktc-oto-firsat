@@ -10,7 +10,7 @@
 #   2. sistem kullanıcısı kktc-social (giriş kabuğu yok, şifresi kilitli, sudo yetkisi yok)
 #   3. klasörler ve izinler: /etc/kktc-social (750), /var/lib/kktc-social (700), /opt/kktc-social
 #   4. örnek ayar dosyaları: /etc/kktc-social/social.env ve sources.csv (yalnız YOKSA kopyalanır)
-#   5. kod: /opt/kktc-social/app (yalnız `live` dalı = testten geçmiş sürüm), Python ortamı: /opt/kktc-social/venv
+#   5. kod: /opt/kktc-social/app (varsayılan `live` dalı = testten geçmiş sürüm; deneme için KKTC_BRANCH=<dal>), Python ortamı: /opt/kktc-social/venv
 #   6. deploy.sh --setup: paketler, Chromium, systemd birimleri, kısa komutlar (kktc-social, kktc-firewall, kktc-deploy)
 set -euo pipefail
 umask 022
@@ -21,7 +21,7 @@ APP=$BASE/app
 VENV=$BASE/venv
 ETC=/etc/kktc-social
 STATE=/var/lib/kktc-social
-BRANCH=live
+BRANCH=${KKTC_BRANCH:-live}  # deneme: sudo KKTC_BRANCH=<dal> bash setup.sh (deploy.sh sonra klonun dalını izler)
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 APT_PACKAGES="python3.12 python3.12-venv git curl ca-certificates tzdata nftables
   xvfb xauth xfonts-base x11vnc novnc websockify python3-websockify

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # deploy/vps/deploy.sh — sosyal okuyucuyu GÜNCELLER. root ile çalışır. Kısa adı: sudo kktc-deploy
-#   1. kodu `live` dalının son (testten geçmiş) sürümüne getirir (/opt/kktc-social/app)
+#   1. kodu klonun izlediği dalın son sürümüne getirir (/opt/kktc-social/app; normalde `live` = testten geçmiş sürüm).
+#      Dal değiştirmek için: sudo KKTC_BRANCH=live kktc-deploy
 #   2. Python paketlerini constraints.txt + requirements-social.txt ile yeniden kurar
 #   3. Chromium'u (Playwright) kurar/günceller
 #   4. systemd birimlerini ve kısa komutları (kktc-social, kktc-firewall, kktc-deploy) yerleştirir
@@ -15,7 +16,7 @@ BASE=/opt/kktc-social
 APP=$BASE/app
 VENV=$BASE/venv
 BROWSERS=$BASE/ms-playwright
-BRANCH=live
+BRANCH=${KKTC_BRANCH:-}  # boşsa klonun şu anki dalı (yoksa live): resolve_branch
 UNIT_DIR=/etc/systemd/system
 SBIN=/usr/local/sbin
 UNITS="kktc-social@.service kktc-social@.timer kktc-xvfb.service kktc-novnc.service kktc-firewall.service"
@@ -24,6 +25,11 @@ export PLAYWRIGHT_BROWSERS_PATH=$BROWSERS
 
 die() { printf 'HATA: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n==> %s\n' "$*"; }
+
+resolve_branch() {
+  [ -n "$BRANCH" ] || BRANCH=$(git -C "$APP" symbolic-ref --quiet --short HEAD 2>/dev/null || echo live)
+  git check-ref-format --branch "$BRANCH" >/dev/null 2>&1 || die "geçersiz dal adı: $BRANCH"
+}
 
 update_repo() {
   step "Kod güncelleniyor (dal: $BRANCH)"
@@ -157,7 +163,7 @@ self_check() {
     SELF_CHECK_FAILED=1
   fi
   if [ ! -f "$APP/entrypoints/social_worker.py" ]; then
-    echo "   UYARI: live dalında entrypoints/social_worker.py yok (okuyucu henüz yayınlanmamış); 'status' atlandı." >&2
+    echo "   UYARI: $BRANCH dalında entrypoints/social_worker.py yok (okuyucu henüz yayınlanmamış); 'status' atlandı." >&2
     # İlk kurulumda bu yalnız uyarıdır (sistem tarafı yine tamamlanır); sonraki güncellemelerde hata sayılır.
     if [ "$SETUP_MODE" = 0 ]; then SELF_CHECK_FAILED=1; fi
   elif ! firewall_loaded; then
@@ -178,6 +184,7 @@ main() {
   [ -d "$APP/.git" ] || die "$APP yok; önce setup.sh"
   [ -x "$VENV/bin/python" ] || die "$VENV yok; önce setup.sh"
   SELF_CHECK_FAILED=0
+  resolve_branch
 
   if [ "${KKTC_DEPLOY_SKIP_FETCH:-0}" = 1 ]; then
     OLD=${KKTC_DEPLOY_OLD:-$(git -C "$APP" rev-parse HEAD)}
