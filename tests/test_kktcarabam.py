@@ -278,10 +278,12 @@ def test_merge_detail_fills_only_what_the_card_lacks():
     detail = parse_detail(page(270001), card)
     merged, conflicts = site.merge_detail(data, detail)
     assert conflicts == [] and merged != data
-    assert {k: v for k, v in merged.items() if k not in ("km", "posted_at", "seller_handle")} == data  # kartın hiçbir alanı değişmedi
+    assert {k: v for k, v in merged.items() if k not in ("km", "posted_at", "seller_handle", "steering")} == data  # kartın hiçbir alanı değişmedi
+    assert merged["steering"] == "RHD"  # kartta direksiyon yok: sayfadan gelir
     again, _ = site.merge_detail(merged, detail)
     assert again == merged  # tekrar birleştirmek bir şey değiştirmez
     assert site.merge_detail(data | {"km": 120_000}, detail)[0]["km"] == 120_000  # kartta olan değerin üstüne yazılmaz
+    assert site.merge_detail(data, detail | {"steering": "LHD"})[0]["steering"] == "LHD"  # soldan direksiyon: sağ direksiyonlularla kıyaslanmaz
 
 
 def test_merge_detail_conflicts_are_normalized_so_spelling_differences_are_not_conflicts():

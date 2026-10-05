@@ -148,8 +148,9 @@ def polite_sleep() -> None:
 
 
 # Liste kartının TAŞIDIĞI alanlar sayfayla çelişirse kart kalır: bu alanlar için sayfa yalnız kontrol amaçlıdır.
-# Karta ait olmayan alanlar (km, ilan tarihi, satıcı adı) sayfadan DOLDURULUR.
-_FILL_FROM_PAGE = ("km", "posted_at", "seller_handle")
+# Karta ait olmayan alanlar (km, ilan tarihi, satıcı adı, direksiyon) sayfadan DOLDURULUR. Direksiyon: kartta yok ve emsal seçimi bilinmeyen
+# direksiyonu SAĞ sayar (domain/comparables.py); soldan direksiyonlu (ucuz) araç sağ direksiyonlularla kıyaslanıp sahte ucuz görünmesin.
+_FILL_FROM_PAGE = ("km", "posted_at", "seller_handle", "steering")
 _UNKNOWN_LOCATION = (None, "", "other")  # kart adresinde şehir yoksa ("other") sayfadaki konum doldurur
 
 
