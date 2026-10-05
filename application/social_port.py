@@ -92,7 +92,9 @@ class SocialFetcher(Protocol):
         ...
 
     def fetch_new(self, source: SocialSource, cursor: Cursor, max_posts: int) -> FetchResult:
-        """Kaynağın imleçten yeni gönderileri (en çok max_posts). SocialStop / SourceError / DailyCap fırlatabilir."""
+        """Kaynağın imleçten yeni gönderileri (en çok max_posts). SocialStop / SourceError / DailyCap / Unreachable fırlatabilir.
+        İsteğe bağlı ek yetenekler (işçi getattr ile bakar): fetch_image(url) -> (bytes, mime) | None (proxy üzerinden),
+        fetch_combined(sources, max_posts_toplam) (Facebook "Akışlar -> Gruplar" denemesi)."""
         ...
 
     def close(self) -> None:

@@ -725,6 +725,7 @@ def test_login_saves_private_session_via_proxied_browser(monkeypatch, tmp_path, 
     assert kw["headless"] is False and kw["timezone_id"] == tz
     assert kw["proxy"] == {"server": "http://proxy.example.net:8000", "username": "kullanici", "password": "Gizli@Sifre"}
     assert f"--force-webrtc-ip-handling-policy={ig.WEBRTC_POLICY}" in kw["args"]
+    assert f"--webrtc-ip-handling-policy={ig.WEBRTC_POLICY}" in kw["args"]  # tam Chromium yalnız bunu okur
     prefs = json.loads((Path(user_data_dir) / "Default" / "Preferences").read_text())
     assert prefs["webrtc"]["ip_handling_policy"] == ig.WEBRTC_POLICY
     assert log["goto"] == [ig.EGRESS_URL, ig.LOGIN_URL] and log["closed"]

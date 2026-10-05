@@ -653,7 +653,8 @@ def login(env: Mapping[str, str], state_dir: Path, *, now: Callable[[], datetime
         context = p.chromium.launch_persistent_context(
             str(profile), headless=False, proxy=playwright_proxy(proxy),
             timezone_id=(env.get(TZ_ENV) or BROWSER_TZ).strip(),
-            args=[f"--force-webrtc-ip-handling-policy={WEBRTC_POLICY}"],
+            args=[f"--webrtc-ip-handling-policy={WEBRTC_POLICY}",  # tam (görünür) Chromium bunu okur
+                  f"--force-webrtc-ip-handling-policy={WEBRTC_POLICY}"],  # görünmez kip bunu okur; profil tercihi de ayrıca yazıldı
         )
         try:
             page = context.pages[0] if context.pages else context.new_page()

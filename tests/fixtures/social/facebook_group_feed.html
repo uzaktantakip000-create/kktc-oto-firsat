@@ -1,0 +1,105 @@
+<!doctype html>
+<!-- SENTETİK, anonim Facebook grup akışı (gerçek sayfa DEĞİL; ad, telefon, grup kimliği uydurma). EXTRACT_JS bu sayfada yerel
+     Chromium'da (ağ kapalı) denendi; çıktısı facebook_feed_items.json'un temelidir. Yapı Facebook'un bilinen özniteliklerini taklit
+     eder: [role=feed] > [role=article], gövde [data-ad-rendering-role=story_message], iç içe yorum makalesi, "See more" düğmesi,
+     karışık harfli (görsel sırası CSS ile verilen) zaman bağlantısı, href="#" olup üzerine gelince dolan bağlantı. -->
+<html lang="en"><head><meta charset="utf-8"><title>Group</title>
+<style>
+  body { margin: 0; font: 15px sans-serif; }
+  header { position: fixed; top: 0; left: 0; right: 0; height: 56px; background: #fff; }
+  [role="feed"] { margin-top: 60px; width: 680px; }
+  [role="article"] { min-height: 420px; border-bottom: 1px solid #ccc; padding: 8px; }
+  .ts { display: inline-flex; position: relative; }
+  .tip { position: absolute; left: -10000px; }
+</style></head>
+<body>
+<header>Facebook</header>
+<span id="tip4" class="tip">Yesterday at 3:15 PM</span>
+<div role="main">
+<div role="feed">
+
+  <div role="article" aria-posinset="1">
+    <h3><strong><a href="/groups/1000000000000001/user/9000000000000001/">Ornek Yonetici</a></strong></h3>
+    <span>Featured</span>
+    <a href="/groups/1000000000000001/posts/2000000000000000/?__cft__[0]=AZfake&amp;__tn__=%2CO%2CP-R">September 1 at 10:00 AM</a>
+    <div data-ad-rendering-role="story_message"><div dir="auto">Grup kurallari: yalnizca arac ilani.</div></div>
+  </div>
+
+  <div role="article" aria-posinset="2">
+    <h3><strong><a href="/groups/1000000000000001/user/9000000000000002/">Ornek Satici Bir</a></strong></h3>
+    <a href="/groups/1000000000000001/posts/2000000000000010/?__cft__[0]=AZfake&amp;__tn__=%2CO%2CP-R" aria-label="5m">5m</a>
+    <div data-ad-rendering-role="story_message" id="body1">
+      <div dir="auto">Satilik 2015 Toyota Corolla</div>
+      <div dir="auto">120.000 km, otomatik</div>
+      <div dir="auto">Fiyat 8.500 STG … <div role="button" tabindex="0" onclick="more1()">See more</div></div>
+    </div>
+    <a href="/photo/?fbid=4000000000000010&amp;set=pcb.2000000000000010&amp;idorvanity=1000000000000001">
+      <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="600" height="400" alt=""></a>
+    <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="16" height="16" alt="emoji">
+    <div role="button">Like</div><div role="button">Comment</div><div role="button">Share</div>
+    <div role="article" aria-label="Comment by Ornek Yorumcu">
+      <a href="/groups/1000000000000001/posts/2000000000000010/?comment_id=3000000000000001">1h</a>
+      <div dir="auto">Kac el? <div role="button">See more</div></div>
+    </div>
+  </div>
+
+  <div role="article" aria-posinset="3">
+    <h3><strong><a href="/groups/1000000000000001/user/9000000000000003/">Ornek Satici Iki</a></strong></h3>
+    <a href="/groups/kktc.oto.ornek/permalink/2000000000000011/" aria-label="2h"><span>2h</span></a>
+    <div data-ad-rendering-role="story_message"><div dir="auto">2018 Honda Civic</div><div dir="auto">See translation</div>
+      <div dir="auto">£11.750 – 0533 000 00 00</div></div>
+  </div>
+
+  <div role="article" aria-posinset="4">
+    <h3><strong><a href="/groups/1000000000000001/user/9000000000000004/">Ornek Satici Uc</a></strong></h3>
+    <a href="#" class="ts" id="ts3" onmouseenter="this.setAttribute('href', '/groups/1000000000000001/posts/2000000000000012/')">
+      <span style="order:2">h</span><span style="order:1">3</span><span style="position:absolute;top:-9999px">S</span><span style="font-size:0">x9q</span></a>
+    <div><div dir="auto">2012 Nissan Note</div><div dir="auto">Takas olur, fiyat 4.200 stg</div></div>
+    <a href="/photo/?fbid=4000000000000012&amp;set=gm.2000000000000012&amp;idorvanity=1000000000000001">
+      <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="500" height="375" alt=""></a>
+  </div>
+
+  <div role="article" aria-posinset="5">
+    <h3><strong><a href="/groups/1000000000000001/user/9000000000000005/">Ornek Satici Dort</a></strong></h3>
+    <a href="/groups/1000000000000001/posts/2000000000000013/" aria-labelledby="tip4"><span>2</span><span>3</span></a>
+    <div data-ad-rendering-role="story_message"><div dir="auto">Mazda 3, 2016, 95 bin km, 7.900 stg</div></div>
+  </div>
+
+  <div role="article" aria-posinset="6">
+    <a href="/groups/1000000000000001/posts/2000000000000005/">Yesterday at 9:00 AM</a>
+    <div data-ad-rendering-role="story_message"><div dir="auto">Kia Rio 2014, 5.000 stg (imlec gonderisi)</div></div>
+  </div>
+
+  <div role="article" aria-posinset="7">
+    <a href="/groups/1000000000000001/posts/2000000000000004/">2d</a>
+    <div data-ad-rendering-role="story_message"><div dir="auto">Eski ilan 1</div></div>
+  </div>
+  <div role="article" aria-posinset="8">
+    <a href="/groups/1000000000000001/posts/2000000000000003/">3d</a>
+    <div data-ad-rendering-role="story_message"><div dir="auto">Eski ilan 2</div></div>
+  </div>
+  <div role="article" aria-posinset="9">
+    <a href="/groups/1000000000000001/posts/2000000000000002/">October 1 at 8:00 PM</a>
+    <div data-ad-rendering-role="story_message"><div dir="auto">Eski ilan 3</div></div>
+  </div>
+  <div role="article" aria-posinset="10">
+    <a href="/groups/1000000000000001/posts/2000000000000001/">September 30 at 1:00 PM</a>
+    <div data-ad-rendering-role="story_message"><div dir="auto">Eski ilan 4</div></div>
+  </div>
+  <div role="article" aria-posinset="11">
+    <a href="/groups/1000000000000001/posts/1999999999999999/">5d</a>
+    <div data-ad-rendering-role="story_message"><div dir="auto">Eski ilan 5</div></div>
+  </div>
+  <div role="article" aria-posinset="12">
+    <a href="/groups/1000000000000001/posts/1999999999999998/">6d</a>
+    <div data-ad-rendering-role="story_message"><div dir="auto">Eski ilan 6</div></div>
+  </div>
+
+</div></div>
+<script>
+  function more1() {
+    document.getElementById('body1').innerHTML = '<div dir="auto">Satilik 2015 Toyota Corolla</div>' +
+      '<div dir="auto">120.000 km, otomatik</div><div dir="auto">Fiyat 8.500 STG</div><div dir="auto">Tel 0533 000 00 00</div>';
+  }
+</script>
+</body></html>
