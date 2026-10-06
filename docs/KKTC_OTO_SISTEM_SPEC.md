@@ -280,7 +280,7 @@ ESKİ komutlar: `/analiz <link veya metin>` · `/piyasa <marka> <model> <yıl>` 
 [📲 WhatsApp'tan ulaş]   (yalnız satıcı telefonu biliniyorsa; mesajı sen yazarsın, sistem yazmaz)
 [👍 İşe yarar] [👎 Yanlış]
 ```
-Varsa ayrıca "⚠️ Dikkat: ..." (km şüpheli, değişen var...), "⚠️ Yapay zekâ şüpheli buldu: ...", "✅ Yapay zekâ ilanı bağımsız okudu" satırları eklenir. Bir ilan aynı kişiye BİR KEZ gider; "fiyat düştü" diye ikinci mesaj henüz yok.
+Varsa ayrıca "⚠️ Dikkat: ..." (km şüpheli, değişen var...; **06.10.2026:** km YOK ve direksiyon BİLİNMİYORSA, yani her KKTCarabam ilanında, km uyarısı yerine "km ve direksiyon yazmıyor — fiyat kıyası km'siz yapıldı; aramadan önce ilan sayfasından bakın" yazar: mesajda direksiyon yalnız sol direksiyonda görünür, bilinmiyor sessizdi; yalnız km bilinmiyorsa eski metin), "⚠️ Yapay zekâ şüpheli buldu: ...", "✅ Yapay zekâ ilanı bağımsız okudu" satırları eklenir. Bir ilan aynı kişiye BİR KEZ gider; "fiyat düştü" diye ikinci mesaj henüz yok.
 
 **GÜNCEL komutlar** (cevap en geç ~15 dk; komutlar her tick'te `getUpdates` ile işlenir):
 - Sahip, menüde görünen 8: `/durum` · `/son` (son 10 fırsat) · `/fiyat corolla 2014` (değer tablosu) · `/satti corolla 2014 120000km 7200` (gerçek satış kaydı) · `/ayarlar` · `/yardim` · `/dur` · `/basla`

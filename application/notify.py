@@ -5,6 +5,7 @@ from urllib.parse import quote
 import httpx
 
 from application.evaluate import Evaluated, confidence_label
+from domain.data_gate import KM_UNKNOWN_WARNING
 from domain.kktc_time import kktc_hour
 from domain.photo_date import kktcarabam_photo_time
 from domain.profit import Tier
@@ -51,6 +52,9 @@ def quiet_extra(now: datetime | None = None) -> dict:
 
 
 EST_HEAD = "🟠 KONTROL ET — az emsal, kendin de bak"
+# km VE direksiyon ikisi de bilinmiyorsa (KKTCarabam: ilan sayfası hep 403, ikisi de okunamıyor) "⚠️ Dikkat" bunu dürüstçe söyler: mesajda "km yok" yazar ama
+# direksiyon yönü yalnız sol direksiyonda yazılır (bilinmiyor sessiz kalır), yani arayan kişi direksiyonun da bilinmediğini fark etmez. Yalnız km bilinmiyorsa eski metin.
+KM_STEERING_UNKNOWN_WARNING = "km ve direksiyon yazmıyor — fiyat kıyası km'siz yapıldı; aramadan önce ilan sayfasından bakın"
 
 
 def _gbp(x: float) -> str:
@@ -67,6 +71,15 @@ def _reason(ev: Evaluated) -> str:
     ilan metnindeki aciliyet işareti varsa başa eklenir."""
     base = "az benzer araç var: fiyat model eğrisinden hesaplandı" if ev.profit.tier is Tier.ESTIMATED else "fiyat benzer araçların en ucuz çeyreğinde"
     return " · ".join([*(f"ilanda '{u}' yazıyor" for u in ev.urgency), base])
+
+
+def _dikkat(listing: dict, warnings: list[str]) -> list[str]:
+    """"⚠️ Dikkat" satırının uyarıları. km YOK (`l["km"]` boş: mesajda "km yok" yazan her ilan) ve direksiyon BİLİNMİYORSA, km uyarısı (`KM_UNKNOWN_WARNING`)
+    ikisini birden söyleyen uyarıyla değişir. km var (şüpheli olsa bile) ya da direksiyon biliniyorsa uyarılar aynen kalır; km uyarısı olmayan
+    mesaja (🟠 yolu) satır eklenmez."""
+    if listing["km"] or listing.get("steering"):
+        return warnings
+    return [KM_STEERING_UNKNOWN_WARNING if w == KM_UNKNOWN_WARNING else w for w in warnings]
 
 
 def format_alert(ev: Evaluated, note: dict | None = None) -> str:
@@ -95,8 +108,9 @@ def format_alert(ev: Evaluated, note: dict | None = None) -> str:
     if l["currency_guess"]:
         lines.append(f"⚠️ Para birimi yazmıyordu, {CURRENCY_NAMES.get(l['currency'], l['currency'])} varsayıldı")
     lines += ev.checks
-    if ev.warnings:
-        lines.append("⚠️ Dikkat: " + ", ".join(ev.warnings))
+    warnings = _dikkat(l, ev.warnings)
+    if warnings:
+        lines.append("⚠️ Dikkat: " + ", ".join(warnings))
     if m.archived_share > 0.6:
         lines.append(f"ℹ️ Emsallerin %{m.archived_share * 100:.0f}'i satılmış ilan (sitenin son ilan fiyatı; gerçek satış fiyatı olmayabilir)")
     if note and note.get("gercek_firsat_mi") is False:  # yapay zekâ şüpheli buldu: mesaj yine gider ama uyarı görünür

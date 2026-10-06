@@ -5,6 +5,7 @@ import pytest
 from application import notify
 from application.evaluate import Evaluated
 from domain.comparables import Market
+from domain.data_gate import KM_UNKNOWN_WARNING
 from domain.profit import Confidence, ProfitResult, Tier
 from infrastructure.db.repository import unsaved_alert_key
 
@@ -149,6 +150,48 @@ def test_message_is_short_and_has_exactly_the_decided_parts():
     for gone in ("Güven", "En yakın emsaller", "📞", "Gümrük", "🆕", "🔥", "GÜÇLÜ"):
         assert gone not in msg, gone
     assert len(lines) <= 7  # kısa
+
+
+def dikkat_ev(km, steering, warnings, tier=Tier.STRONG):
+    e = ev(1, tier)
+    e.listing.update(km=km, steering=steering)
+    e.warnings = list(warnings)
+    return e
+
+
+def dikkat(e):
+    return [l for l in notify.format_alert(e).splitlines() if l.startswith("⚠️ Dikkat")]
+
+
+def test_km_and_steering_both_unknown_says_so_and_asks_to_check_the_ad_page_before_calling():
+    """KKTCarabam ilanı (sayfa hep 403): km ve direksiyon yok. Mesajda "km yok" yazar ama direksiyon yalnız sol direksiyonda yazılır: arayan kişi
+    direksiyonun da bilinmediğini görmez. İkisi de bilinmiyorsa "⚠️ Dikkat" bunu açıkça söyler (km uyarısının yerine geçer, satır sayısı artmaz)."""
+    for km in (None, 0):  # 0 da mesajda "km yok" yazılır
+        e = dikkat_ev(km, None, [KM_UNKNOWN_WARNING])
+        assert dikkat(e) == ["⚠️ Dikkat: " + notify.KM_STEERING_UNKNOWN_WARNING]
+        msg = notify.format_alert(e)
+        assert KM_UNKNOWN_WARNING not in msg and "km yok" in msg and "aramadan önce ilan sayfasından bakın" in msg
+        assert len(msg.splitlines()) <= 7
+    assert notify.KM_STEERING_UNKNOWN_WARNING.startswith("km ve direksiyon yazmıyor")
+
+
+def test_only_km_unknown_keeps_todays_warning_text():
+    assert dikkat(dikkat_ev(None, "RHD", [KM_UNKNOWN_WARNING])) == ["⚠️ Dikkat: " + KM_UNKNOWN_WARNING]
+    lhd = dikkat_ev(None, "LHD", [KM_UNKNOWN_WARNING])
+    assert dikkat(lhd) == ["⚠️ Dikkat: " + KM_UNKNOWN_WARNING] and "SOL DİREKSİYON" in notify.format_alert(lhd)
+    assert dikkat(dikkat_ev(370, None, [KM_UNKNOWN_WARNING])) == ["⚠️ Dikkat: " + KM_UNKNOWN_WARNING]  # km yazıyor ama şüpheli: "km yazmıyor" denmez, eski uyarı
+
+
+def test_known_km_with_unknown_steering_adds_nothing():
+    msg = notify.format_alert(dikkat_ev(80_000, None, []))
+    assert "Dikkat" not in msg and "direksiyon" not in msg.lower()  # direksiyon bilinmiyor sessiz kalır (yalnız km de yoksa söylenir)
+    assert dikkat(dikkat_ev(80_000, None, ["hasarlı"])) == ["⚠️ Dikkat: hasarlı"]
+
+
+def test_both_unknown_keeps_the_other_warnings_and_adds_no_line_without_a_km_warning():
+    assert dikkat(dikkat_ev(None, None, ["hasarlı", KM_UNKNOWN_WARNING])) == ["⚠️ Dikkat: hasarlı, " + notify.KM_STEERING_UNKNOWN_WARNING]
+    assert dikkat(dikkat_ev(None, None, ["hasarlı"])) == ["⚠️ Dikkat: hasarlı"]
+    assert dikkat(dikkat_ev(None, None, [], tier=Tier.ESTIMATED)) == []  # km uyarısı olmayan mesaja (🟠 yolu) satır eklenmez
 
 
 def test_alert_record_links_the_evaluation_and_stores_the_price_at_send_time(monkeypatch):
