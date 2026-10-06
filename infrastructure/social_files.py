@@ -2,6 +2,7 @@
 Hepsi repo DIŞINDA durur (/var/lib/kktc-social, /etc/kktc-social); dosyalar yalnız sahibin okuyabileceği izinle (600) yazılır.
 Kaynak listesi gizli grup adreslerini içerir: GitHub'a girmez, günlüğe yalnız takma ad (alias) yazılır."""
 import csv
+import fcntl
 import json
 import os
 import re
@@ -127,6 +128,49 @@ class JsonlTrialSink:
 
 
 _DATED = re.compile(r"-(\d{8})(?:-\d{4,6})?\.jsonl?$")
+
+
+STATUS_FILE = "durum.json"
+STATUS_VERSION = 1
+
+
+def write_status_file(dir: Path | str, platform: str, entry: dict | None, now: datetime) -> bool:
+    """Herkesin okuyabileceği durum dosyası (kktc-bot sabah mesajı): {"surum", "yazildi_utc", "platformlar": {p: {...}}}.
+    Klasör yoksa hiçbir şey yapmaz (False). Diğer platformun satırı korunur; iki platform aynı anda yazarsa kilit sıraya sokar.
+    Önce aynı klasörde geçici dosya, sonra rename: okuyan hiçbir zaman yarım JSON görmez. Dosya 644 (servis umask'ı 077)."""
+    folder = Path(dir)
+    if not folder.is_dir():
+        return False
+    path = folder / STATUS_FILE
+    lock_fd = os.open(folder / ".durum.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            platforms = doc.get("platformlar") if isinstance(doc, dict) else None
+            platforms = platforms if isinstance(platforms, dict) else {}
+        except (OSError, ValueError):
+            platforms = {}
+        platforms = {k: v for k, v in platforms.items() if k in PLATFORMS}
+        if entry is None:
+            platforms.pop(platform, None)
+        else:
+            platforms[platform] = entry
+        doc = {"surum": STATUS_VERSION, "yazildi_utc": now.astimezone(timezone.utc).isoformat(), "platformlar": platforms}
+        fd, tmp = tempfile.mkstemp(dir=folder, prefix=".durum.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(doc, f, ensure_ascii=False, indent=1, sort_keys=True)
+                f.flush()
+                os.fchmod(f.fileno(), 0o644)
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+        return True
+    finally:
+        os.close(lock_fd)
 
 
 def delete_old_trial_files(dir: Path | str, days: int = 14, now: datetime | None = None) -> int:

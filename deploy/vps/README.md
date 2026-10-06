@@ -290,6 +290,7 @@ Ubuntu güvenlik güncellemelerini ayda bir yap: `sudo apt-get update && sudo ap
 | `/etc/kktc-social/firewall.nft` | `kktc-firewall apply` çıktısı (nftables) | root 600 |
 | `/var/lib/kktc-social` | Oturumlar (`facebook_storage_state.json`, `instagram_session`), `state.json`, `trial/*.jsonl`, `*.lock`, `tmp/` | kktc-social 700 |
 | `/usr/local/sbin/kktc-social`, `kktc-firewall`, `kktc-deploy` | Kısa komutlar (`deploy.sh` yazar) | root 755 |
+| `/var/lib/kktc-social-durum/durum.json` | Her turdan sonra yazılan özet: son tur, sonuç (tamam/fren/hata), sonraki tur, yeni ilan, kaynak hatası. Ad, grup, hesap ve IP içermez. Araç botu sabah mesajında okur | kktc-social; klasör 755, dosya 644 |
 
 - **Birimler.** `kktc-social@facebook|instagram.service` tek seferlik turdur (oneshot, en çok 45 dk). `kktc-social@.timer` 20 dakikada bir (+0–5 dk rastgele) tetikler. `kktc-xvfb.service` sanal ekrandır (:99). `kktc-novnc.service` uzak masaüstüdür (x11vnc 127.0.0.1:5900 + websockify/noVNC 127.0.0.1:6080). `kktc-firewall.service` kuralı açılışta yükler.
 - **Güvenlik duvarı.** `inet kktc_social` tablosunun output kancasında `meta skuid kktc-social` eşleşen paketler `worker` zincirine gider. Zincirin sırası: DNS (53) düşürülür; `lo`'ya izin verilir; yalnız cevap yönünde established/related'a izin verilir; iki proxy IP:port'una TCP ile izin verilir; geri kalan her şey günlüğe yazılıp (dakikada en çok 6 satır) düşürülür. Dosya `table; delete table; table {…}` kalıbıyla tek işlemde (atomik) yüklenir.

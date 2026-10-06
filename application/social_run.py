@@ -388,6 +388,39 @@ def compare_feeds(fetcher: SocialFetcher, sources: list[SocialSource], store: St
     return out
 
 
+_IPV4 = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+_HEALTHY, _FAILED = {OK, CAPPED}, {ERROR, UNREACHABLE, ERRORS_IN_ROW}
+
+
+def _utc_iso(value: datetime | None) -> str | None:
+    return value.astimezone(timezone.utc).isoformat() if value else None
+
+
+def status_entry(store: StateStore, platform: str, now: datetime) -> dict | None:
+    """Durum dosyası (kktc-bot'un sabah mesajı okur) için platform satırı; hiç tur ve fren yoksa None (platform yazılmaz).
+    sonuc: tamam | fren | hata. Ad, grup, hesap, IP yazılmaz (fren nedenindeki IP'ler maskelenir)."""
+    block = current_block(store, platform, now)
+    hb = _load(store, key("heartbeat", platform), {})
+    hb = hb if isinstance(hb, dict) else {}
+    if block is None and not hb:
+        return None
+    status = hb.get("status")
+    if block is not None:
+        result = "fren"
+    elif status in _FAILED:
+        result = "hata"
+    else:
+        result = "tamam"  # tamam/tavan; fren kaydı resume ile kalktıysa sonraki tura kadar "tamam"
+    reason = None
+    if block is not None:
+        brake = _load(store, key("brake", platform), {})
+        detail = brake.get("reason") if isinstance(brake, dict) and brake.get("reason") else block.text
+        reason = _IPV4.sub("<ip>", str(detail))[:200]
+    return {"son_tur_utc": _utc_iso(_dt(hb.get("at"))), "sonuc": result, "fren_nedeni": reason,
+            "sonraki_tur_utc": _utc_iso(_dt(store.get_state(key("next_after", platform)))),
+            "yeni_ilan": int(hb.get("new") or 0), "kaynak_hatasi": int(hb.get("errors") or 0)}
+
+
 def status_lines(store: StateStore, platform: str, now: datetime, sources: list[SocialSource]) -> list[str]:
     """`status` komutu: fren/duraklama, son tur, sonraki tur, yavaş başlangıç, kaynak hataları (yalnız takma ad)."""
     block = current_block(store, platform, now)

@@ -112,6 +112,21 @@ def test_run_happy_path_writes_trial_file_and_schedules(env, tmp_path):
     assert oct_mode == 0o600
 
 
+def test_run_publishes_status_file_and_skips_when_folder_missing(env, tmp_path):
+    main(["run", "facebook"], env)  # varsayılan/ayarsız klasör yok: sessizce atlanır, tur bozulmaz
+    folder = tmp_path / "durum"
+    folder.mkdir()
+    env = env | {"SOCIAL_STATUS_DIR": str(folder)}
+    store(env).set_state("social:next_after:facebook", (NOW - timedelta(minutes=1)).isoformat())
+    code, _ = main(["run", "facebook"], env)
+    doc = json.loads((folder / "durum.json").read_text())
+    fb = doc["platformlar"]["facebook"]
+    assert code == 0 and doc["surum"] == 1 and fb["sonuc"] == "tamam" and fb["son_tur_utc"] == NOW.isoformat()
+    assert "instagram" not in doc["platformlar"] and "901" not in json.dumps(doc)
+    code, _ = main(["run", "facebook"], env)  # sıra gelmedi: yine yazılır (sonraki tur güncel kalır)
+    assert json.loads((folder / "durum.json").read_text())["platformlar"]["facebook"]["sonraki_tur_utc"]
+
+
 def test_not_due_builds_no_fetcher(env):
     loader = Loader()
     store(env).set_state("social:next_after:facebook", (NOW + timedelta(hours=1)).isoformat())

@@ -27,16 +27,18 @@ from pathlib import Path
 
 from application.social_port import PLATFORMS, SocialSource
 from application.social_run import (ERROR, SKIP_BRAKE, STOPPED, compare_feeds, current_block, is_due, key, local, resume,
-                                    run_cycle, status_lines)
+                                    run_cycle, status_entry, status_lines)
 from domain.social_schedule import in_window
 from infrastructure.config import redact
 from infrastructure.fx import frankfurter
-from infrastructure.social_files import FileStateStore, JsonlTrialSink, SourcesFileError, delete_old_trial_files, load_sources
+from infrastructure.social_files import (FileStateStore, JsonlTrialSink, SourcesFileError, delete_old_trial_files, load_sources,
+                                         write_status_file)
 
 FETCHERS = {"facebook": "infrastructure.collectors.facebook_browser",
             "instagram": "infrastructure.collectors.instagram_instaloader"}  # tembel yüklenir: Playwright/Instaloader yalnız turda
 DEFAULT_STATE_DIR = "/var/lib/kktc-social"
 DEFAULT_SOURCES_CSV = "/etc/kktc-social/sources.csv"
+DEFAULT_STATUS_DIR = "/var/lib/kktc-social-durum"  # herkesin okuyabileceği durum dosyası (kktc-bot sabah mesajı); yoksa yazılmaz
 TRIAL_MODE = "trial"
 TRIAL_KEEP_DAYS = 14
 EXIT_OK, EXIT_ERROR, EXIT_BRAKE = 0, 1, 2
@@ -71,6 +73,10 @@ class Config:
 
     def expected_ip(self, platform: str) -> str:
         return self.env.get(f"SOCIAL_EXPECTED_IP_{platform.upper()}", "")
+
+    @property
+    def status_dir(self) -> Path:
+        return Path(self.env.get("SOCIAL_STATUS_DIR") or DEFAULT_STATUS_DIR)
 
     def store_path(self, platform: str) -> Path:
         return self.state_dir / f"{platform}.state.json"
@@ -144,6 +150,14 @@ def _not_due_text(store: FileStateStore, platform: str, now: datetime) -> str:
     return f"{platform}: sıra gelmedi (sonraki tur en erken {local(nxt)})"
 
 
+def publish_status(cfg: Config, platform: str, now: datetime, log) -> None:
+    """Durum dosyasını güncelle; hata turu ASLA bozmaz (yalnız günlüğe bir satır)."""
+    try:
+        write_status_file(cfg.status_dir, platform, status_entry(cfg.store(platform), platform, now), now)
+    except Exception as e:  # noqa: BLE001 — durum dosyası yan iş
+        log(f"{platform}: durum dosyası yazılamadı ({type(e).__name__})")
+
+
 def cmd_run(cfg: Config, platform: str, force: bool, *, clock, sleep, rng, import_module, log) -> int:
     if not cfg.trial_mode():
         log(MODE_REFUSED)
@@ -152,30 +166,37 @@ def cmd_run(cfg: Config, platform: str, force: bool, *, clock, sleep, rng, impor
         if not got:
             log(f"{platform}: önceki çalışma sürüyor, bu çağrı atlandı")
             return EXIT_OK
-        now = clock()
-        if removed := delete_old_trial_files(cfg.trial_dir, TRIAL_KEEP_DAYS, now):
-            log(f"{removed} eski deneme dosyası silindi ({TRIAL_KEEP_DAYS} günden eski)")
-        store = cfg.store(platform)
-        block = current_block(store, platform, now)  # fren --force ile de aşılmaz
-        if block is not None:
-            log(f"{platform}: tur yok, {block.text}")
-            return EXIT_BRAKE if block.kind == "fren" else EXIT_OK
-        if not force and not is_due(store, platform, now):  # zamanı gelmedi: okuyucu hiç kurulmaz, ağa çıkılmaz
-            log(_not_due_text(store, platform, now))
-            return EXIT_OK
-        sources = load_sources(cfg.sources_csv, platform)
-        if not sources:
-            log(f"{platform}: aktif kaynak yok ({cfg.sources_csv})")
-            return EXIT_OK
-        fetcher = _fetcher_module(platform, import_module).build(cfg.env, cfg.state_dir)
-        sink = JsonlTrialSink(cfg.trial_dir, platform, clock, aliases={str(s.source_id or s.key): s.alias for s in sources})
-        frankfurter.use_store(store)  # kur servisi yanıt vermezse son bilinen kur (durum dosyasında) kullanılır
-        with rate_proxy(cfg.env, platform):
-            report = run_cycle(platform, fetcher, sources, store, sink, now=now, sleep=sleep, rng=rng,
-                               expected_ip=cfg.expected_ip(platform), log=log)
-        for line in report.summary():
-            log(line)
-        return EXIT_BRAKE if report.status in (STOPPED, SKIP_BRAKE) else EXIT_OK
+        try:
+            return _run_locked(cfg, platform, force, clock=clock, sleep=sleep, rng=rng, import_module=import_module, log=log)
+        finally:
+            publish_status(cfg, platform, clock(), log)
+
+
+def _run_locked(cfg: Config, platform: str, force: bool, *, clock, sleep, rng, import_module, log) -> int:
+    now = clock()
+    if removed := delete_old_trial_files(cfg.trial_dir, TRIAL_KEEP_DAYS, now):
+        log(f"{removed} eski deneme dosyası silindi ({TRIAL_KEEP_DAYS} günden eski)")
+    store = cfg.store(platform)
+    block = current_block(store, platform, now)  # fren --force ile de aşılmaz
+    if block is not None:
+        log(f"{platform}: tur yok, {block.text}")
+        return EXIT_BRAKE if block.kind == "fren" else EXIT_OK
+    if not force and not is_due(store, platform, now):  # zamanı gelmedi: okuyucu hiç kurulmaz, ağa çıkılmaz
+        log(_not_due_text(store, platform, now))
+        return EXIT_OK
+    sources = load_sources(cfg.sources_csv, platform)
+    if not sources:
+        log(f"{platform}: aktif kaynak yok ({cfg.sources_csv})")
+        return EXIT_OK
+    fetcher = _fetcher_module(platform, import_module).build(cfg.env, cfg.state_dir)
+    sink = JsonlTrialSink(cfg.trial_dir, platform, clock, aliases={str(s.source_id or s.key): s.alias for s in sources})
+    frankfurter.use_store(store)  # kur servisi yanıt vermezse son bilinen kur (durum dosyasında) kullanılır
+    with rate_proxy(cfg.env, platform):
+        report = run_cycle(platform, fetcher, sources, store, sink, now=now, sleep=sleep, rng=rng,
+                           expected_ip=cfg.expected_ip(platform), log=log)
+    for line in report.summary():
+        log(line)
+    return EXIT_BRAKE if report.status in (STOPPED, SKIP_BRAKE) else EXIT_OK
 
 
 def cmd_resume(cfg: Config, platform: str, yes: bool, *, log) -> int:
@@ -187,6 +208,7 @@ def cmd_resume(cfg: Config, platform: str, yes: bool, *, log) -> int:
             log(f"{platform}: çalışma sürüyor, bitince tekrar dene")
             return EXIT_ERROR
         had = resume(cfg.store(platform), platform)
+        publish_status(cfg, platform, datetime.now(timezone.utc), log)
         log(f"{platform}: " + ("fren kaldırıldı" if had else "fren yoktu")
             + "; 7 gün içinde yeni bir hız uyarısı gelirse yine HARD fren olur")
         return EXIT_OK

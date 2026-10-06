@@ -40,7 +40,8 @@ MemoryMax=2G
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 ProtectSystem=strict
-ReadWritePaths=/var/lib/kktc-social
+# Durum dosyası klasörü (kktc-bot sabah mesajı okur; dosya 644). Baştaki '-': klasör yoksa birim yine başlar, dosya yazılmaz.
+ReadWritePaths=/var/lib/kktc-social -/var/lib/kktc-social-durum
 ProtectHome=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

@@ -283,3 +283,36 @@ def test_two_source_errors_never_end_the_cycle():
     f = Fetcher({"901": SourceError("x"), "902": SourceError("y")})  # 4 kaynaktan yalnız 2'si hatalı: 3'lük seri olamaz
     rep, _ = run(f, [src(1), src(2), src(3), src(4)], store=started(Store()))
     assert rep.status == sr.OK and len(f.calls) == 4 and sum(1 for r in rep.sources if r.error) == 2
+
+
+# ---------------------------------------------------------------- durum dosyası satırı
+
+def _hb(status, new=3, errors=0):
+    return json.dumps({"at": NOW.isoformat(), "sources": 2, "seen": 9, "new": new, "errors": errors, "status": status})
+
+
+def test_status_entry_none_before_first_cycle():
+    assert sr.status_entry(Store(), "instagram", NOW) is None
+
+
+def test_status_entry_healthy_cycle_has_utc_iso_times():
+    nxt = NOW + timedelta(hours=4)
+    st = Store({"social:heartbeat:instagram": _hb(sr.CAPPED, new=5, errors=1), "social:next_after:instagram": nxt.isoformat()})
+    assert sr.status_entry(st, "instagram", NOW) == {
+        "son_tur_utc": "2026-10-05T09:00:00+00:00", "sonuc": "tamam", "fren_nedeni": None,
+        "sonraki_tur_utc": "2026-10-05T13:00:00+00:00", "yeni_ilan": 5, "kaynak_hatasi": 1}
+
+
+@pytest.mark.parametrize("status", [sr.ERROR, sr.UNREACHABLE, sr.ERRORS_IN_ROW])
+def test_status_entry_failed_cycle_is_hata(status):
+    assert sr.status_entry(Store({"social:heartbeat:facebook": _hb(status)}), "facebook", NOW)["sonuc"] == "hata"
+
+
+def test_status_entry_brake_masks_ip_and_pause_is_fren():
+    brake = json.dumps({"signal": "ip_changed", "reason": "çıkış IP'si 198.51.100.9, beklenen 203.0.113.7", "at": NOW.isoformat()})
+    e = sr.status_entry(Store({"social:brake:facebook": brake}), "facebook", NOW)
+    assert e["sonuc"] == "fren" and "<ip>" in e["fren_nedeni"] and "198.51" not in e["fren_nedeni"] and e["son_tur_utc"] is None
+    paused = Store({"social:paused_until:instagram": (NOW + timedelta(hours=48)).isoformat(), "social:heartbeat:instagram": _hb(sr.STOPPED)})
+    e = sr.status_entry(paused, "instagram", NOW)
+    assert e["sonuc"] == "fren" and "duraklama" in e["fren_nedeni"]
+    assert sr.status_entry(Store({"social:heartbeat:instagram": _hb(sr.STOPPED)}), "instagram", NOW)["sonuc"] == "tamam"  # resume sonrası

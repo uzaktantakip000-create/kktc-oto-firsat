@@ -1,11 +1,13 @@
 import json
+import os
 import stat
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from application.social_port import SocialPost
-from infrastructure.social_files import FileStateStore, JsonlTrialSink, SourcesFileError, delete_old_trial_files, load_sources
+from infrastructure.social_files import (FileStateStore, JsonlTrialSink, SourcesFileError, delete_old_trial_files, load_sources,
+                                         write_status_file)
 
 NOW = datetime(2026, 10, 5, 9, tzinfo=timezone.utc)
 HEADER = "platform,key,url,alias,slug,priority,default_steering,active\n"
@@ -137,3 +139,36 @@ def test_load_sources_missing_file_columns_duplicates(tmp_path):
     alias_is_key = write_csv(tmp_path, "facebook,111,https://www.facebook.com/groups/111/,111,,1,,1\n")
     with pytest.raises(SourcesFileError, match="alias"):
         load_sources(alias_is_key, "facebook")
+
+
+# ---------------------------------------------------------------- durum dosyası (kktc-bot sabah mesajı)
+
+ENTRY = {"son_tur_utc": "2026-10-06T07:33:00+00:00", "sonuc": "tamam", "fren_nedeni": None,
+         "sonraki_tur_utc": "2026-10-06T11:37:00+00:00", "yeni_ilan": 64, "kaynak_hatasi": 0}
+T = datetime(2026, 10, 6, 8, tzinfo=timezone.utc)
+
+
+def test_status_file_skipped_when_folder_missing(tmp_path):
+    assert write_status_file(tmp_path / "yok", "instagram", ENTRY, T) is False and not (tmp_path / "yok").exists()
+
+
+def test_status_file_atomic_world_readable_and_keeps_other_platform(tmp_path):
+    old = os.umask(0o077)  # servis umask'ı
+    try:
+        assert write_status_file(tmp_path, "instagram", ENTRY, T)
+        assert write_status_file(tmp_path, "facebook", ENTRY | {"sonuc": "fren", "fren_nedeni": "x"}, T + timedelta(minutes=5))
+    finally:
+        os.umask(old)
+    path = tmp_path / "durum.json"
+    doc = json.loads(path.read_text())
+    assert doc["surum"] == 1 and doc["yazildi_utc"] == "2026-10-06T08:05:00+00:00"
+    assert doc["platformlar"]["instagram"] == ENTRY and doc["platformlar"]["facebook"]["sonuc"] == "fren"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+    assert sorted(p.name for p in tmp_path.iterdir() if p.name.endswith(".tmp")) == []  # geçici dosya kalmaz
+
+
+def test_status_file_replaces_corrupt_file_and_none_removes_platform(tmp_path):
+    (tmp_path / "durum.json").write_text("{bozuk")
+    assert write_status_file(tmp_path, "instagram", ENTRY, T)
+    assert write_status_file(tmp_path, "instagram", None, T)
+    assert json.loads((tmp_path / "durum.json").read_text())["platformlar"] == {}

@@ -85,6 +85,8 @@ install_units() {
   done
   systemctl daemon-reload
   echo "   $UNITS"
+  # Durum dosyası: kktc-social yazar (durum.json, 644), herkes okur (kktc-bot'un sabah mesajı). Ad/grup/hesap/IP içermez.
+  install -d -m 755 -o kktc-social -g kktc-social /var/lib/kktc-social-durum
 }
 
 install_helpers() {
