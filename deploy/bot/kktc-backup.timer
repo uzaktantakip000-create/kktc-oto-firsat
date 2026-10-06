@@ -1,0 +1,17 @@
+[Unit]
+Description=KKTC Oto Fırsat - veritabanı yedeğini haftada bir al (Pazar gecesi)
+
+[Timer]
+# Her Pazar 01:43 UTC (KKTC yazın 04:43, kışın 03:43): sessiz gece, gece bakımı (UTC 00:00-04:00 ilk turu) ve değer tablosu yenilemesinden sonra.
+# :43 bilerek seçildi: tarama turları :05/:20/:35/:50, KKTCarabam :07, güncelleme denetimi :x0 dakikalarında başlar; hiçbiriyle aynı ana düşmez.
+# UTC açıkça yazıldı: sunucu saat dilimi başka olsa da gün/saat kaymaz.
+OnCalendar=Sun *-*-* 01:43:00 UTC
+AccuracySec=10s
+# En çok 1 dk gecikme: en geç 01:44 (en yakın tarama turu 01:50)
+RandomizedDelaySec=60
+# VPS Pazar gecesi kapalıysa kaçan yedek açılışta hemen alınır
+Persistent=true
+Unit=kktc-backup.service
+
+[Install]
+WantedBy=timers.target

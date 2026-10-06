@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# KKTC Oto Fırsat - VPS kurulumu: Telegram anında dinleyicisi + tarama turları (kktc-tick, kktc-browser). Ubuntu 24.04, root olarak:
+# KKTC Oto Fırsat - VPS kurulumu: Telegram anında dinleyicisi + tarama turları (kktc-tick, kktc-browser) + haftalık veritabanı yedeği (kktc-backup). Ubuntu 24.04, root olarak:
 #   bash setup.sh https://github.com/<hesap>/<depo>.git        (adres ikinci yol: KKTC_REPO_URL ortam değişkeni)
 # Tekrar çalıştırmak güvenlidir (var olanı bozmaz; bot.env'de yalnız EKSİK anahtar satırlarını ekler, dolu değerlere dokunmaz).
 # Hiçbir şeyi BAŞLATMAZ: önce bot.env doldurulur (bkz. sondaki adımlar).
@@ -11,6 +11,7 @@ VENV_DIR=/opt/kktc-bot/venv
 ENV_DIR=/etc/kktc-bot
 ENV_FILE=$ENV_DIR/bot.env
 STATE_DIR=/var/lib/kktc-bot
+BACKUP_DIR=$STATE_DIR/backups  # kktc-backup.service buraya yazar (kişisel veri içerir: 0700); birimin tek yazılabilir yeri
 UPDATER=/usr/local/sbin/kktc-bot-update
 BRANCH=live
 REQUIRED="DATABASE_URL TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID"
@@ -112,6 +113,8 @@ install -d -m 755 -o root -g root /opt/kktc-bot
 install -d -m 750 -o root -g kktc-bot "$ENV_DIR"
 install -d -m 700 -o kktc-bot -g kktc-bot "$STATE_DIR"
 install -d -m 755 -o kktc-bot -g kktc-bot "$APP_DIR" "$VENV_DIR"
+# Yedek klasörü kktc-bot ile kurulur (root değil): kktc-bot bu klasörün içine bağlantı (symlink) koysa bile root onu izleyip başka yeri değiştirmez. Var olana dokunmaz.
+as_bot install -d -m 700 "$BACKUP_DIR"
 
 say "Kod (yalnız '$BRANCH' dalı)"
 if [ ! -d "$APP_DIR/.git" ]; then
@@ -154,11 +157,11 @@ if ! grep -Eq "^KKTC_RUNNER=vps[[:space:]]*$" "$ENV_FILE"; then
 fi
 
 say "systemd birimleri (etkinleştirilir, BAŞLATILMAZ)"
-for unit in kktc-bot.service kktc-bot-update.service kktc-bot-update.timer kktc-tick.service kktc-tick.timer kktc-browser.service kktc-browser.timer; do
+for unit in kktc-bot.service kktc-bot-update.service kktc-bot-update.timer kktc-tick.service kktc-tick.timer kktc-browser.service kktc-browser.timer kktc-backup.service kktc-backup.timer; do
   install -m 644 -o root -g root "$APP_DIR/deploy/bot/$unit" "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
-systemctl enable kktc-bot.service kktc-bot-update.timer kktc-tick.timer kktc-browser.timer
+systemctl enable kktc-bot.service kktc-bot-update.timer kktc-tick.timer kktc-browser.timer kktc-backup.timer
 
 missing=""
 for name in $REQUIRED; do
@@ -188,12 +191,18 @@ echo "  2) Dinleyiciyi ve güncelleme zamanlayıcısını başlatın:"
 echo "       systemctl start kktc-bot kktc-bot-update.timer"
 echo "  3) Taramaları VPS'e alın (başlatınca GitHub turları kendiliğinden geri çekilir):"
 echo "       systemctl start kktc-tick.timer kktc-browser.timer"
+echo "     Haftalık veritabanı yedeği (Pazar 01:43 UTC; son 4 yedek $BACKUP_DIR altında kalır):"
+echo "       systemctl start kktc-backup.timer"
+echo "       systemctl start kktc-backup.service     (isteğe bağlı: hemen bir yedek al; birkaç saniye sürer, bitince sonucu yazar)"
 echo "  4) Çalıştığını görün:"
 echo "       systemctl status kktc-bot"
 echo "       systemctl list-timers 'kktc-*'"
 echo "       journalctl -u kktc-bot -n 50"
 echo "       journalctl -u kktc-tick -n 50"
 echo "       journalctl -u kktc-browser -n 50"
+echo "       journalctl -u kktc-backup -n 50"
+echo "       ls -la $BACKUP_DIR"
 echo "     Sonra Telegram'da bota /durum yazın: cevap anında gelmeli."
 echo "  Durdurmak: systemctl stop kktc-bot   (GitHub'daki 15 dakikalık düzen eskisi gibi devralır)"
 echo "             systemctl stop kktc-tick.timer kktc-browser.timer   (taramaları GitHub devralır: en geç 35 dk / KKTCarabam 2,5 saat)"
+echo "             systemctl stop kktc-backup.timer   (haftalık yedeği durdurur; eski yedekler yerinde kalır)"

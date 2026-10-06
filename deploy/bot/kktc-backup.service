@@ -1,0 +1,48 @@
+[Unit]
+Description=KKTC Oto Fırsat - haftalık veritabanı yedeği (entrypoints.backup: tüm tablolar CSV, son 4 yedek saklanır)
+After=network-online.target
+Wants=network-online.target
+# bot.env yoksa ya da boşsa hiç çalıştırma
+ConditionFileNotEmpty=/etc/kktc-bot/bot.env
+# Başarısız yedek en çok 2 kez yeniden denenir (aşağıdaki Restart): 3 saatte en çok 3 başlatma. Hepsi başarısızsa birim "failed" kalır, bir sonraki hafta yine başlar.
+StartLimitIntervalSec=3h
+StartLimitBurst=3
+
+[Service]
+# Zamanlayıcı (kktc-backup.timer) haftada bir başlatır. Yedek yalnız OKUR (salt okunur tek anlık görüntü); başarıyla bitince veritabanına
+# bot_state.backup_last_ok (UTC zaman) yazılır: sabah durum mesajı bunu okur. Başarısız yedek sıfırdan farklı kodla çıkar, eski yedeklere dokunmaz.
+# Yedekler /var/lib/kktc-bot/backups/<YYYYMMDD-HHMMSS>/ altına yazılır (kişisel veri içerir: klasör 0700, dosyalar 0600; git deposuna asla girmez).
+Type=oneshot
+User=kktc-bot
+Group=kktc-bot
+WorkingDirectory=/opt/kktc-bot/app
+EnvironmentFile=/etc/kktc-bot/bot.env
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=UTC
+ExecStart=/opt/kktc-bot/venv/bin/python -m entrypoints.backup --dizin /var/lib/kktc-bot/backups --sakla 4
+# Bugün birkaç saniye sürer (~5 MB); yavaş ağ/veritabanı için geniş süre, takılırsa kesilir (kesilen yedeğin yarım klasörü bir sonraki yedekte temizlenir)
+TimeoutStartSec=10min
+Restart=on-failure
+RestartSec=20min
+# Taramalara yer bırak
+Nice=10
+
+# Sertleştirme (kktc-tick.service ile aynı): süreç yalnızca dışarı bağlanır (veritabanı); gelen bağlantı/port yok. Tek yazılabilir yer: yedek klasörü
+# (setup.sh kurar; yoksa birim açılmaz ve "failed" görünür)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+UMask=0077
+ReadWritePaths=/var/lib/kktc-bot/backups
+# Dışa aktarma parça parça diske yazılır (bellekte tutulmaz); python + psycopg ~100 MB
+MemoryMax=512M
