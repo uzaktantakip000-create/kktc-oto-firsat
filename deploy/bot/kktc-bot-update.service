@@ -7,8 +7,8 @@ Wants=network-online.target
 Type=oneshot
 # root'a ait kopya (setup.sh kurar); ağdan gelen her şey içinde kktc-bot kullanıcısıyla çalışır
 ExecStart=/usr/local/sbin/kktc-bot-update
-# pip kurulumu + dinleyicinin düzgün durması (en çok ~75 sn) için geniş süre
-TimeoutStartSec=20min
+# pip kurulumu + dinleyicinin düzgün durması (en çok ~75 sn) + Chromium indirmesi (3 deneme x en çok 6 dk) için geniş süre
+TimeoutStartSec=40min
 Nice=10
 PrivateTmp=yes
 ProtectHome=yes

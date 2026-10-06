@@ -1,0 +1,13 @@
+[Unit]
+Description=KKTC Oto Fırsat - tarama turunu 15 dakikada bir başlat
+
+[Timer]
+# Her saatin 5, 20, 35, 50. dakikası; GitHub turu da 15 dakikada bir gelir (dış tetikleyici) ve VPS'in yazdığı kalp atışını görüp atlar
+OnCalendar=*:05/15
+AccuracySec=10s
+# VPS kapalıyken kaçan turlar açılışta topluca çalıştırılmaz: GitHub zaten devralmıştır, sıradaki tur yeterli
+Persistent=false
+Unit=kktc-tick.service
+
+[Install]
+WantedBy=timers.target

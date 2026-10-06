@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# KKTC Oto Fırsat - Telegram anında dinleyici kurulumu. Ubuntu 24.04, root olarak:
+# KKTC Oto Fırsat - VPS kurulumu: Telegram anında dinleyicisi + tarama turları (kktc-tick, kktc-browser). Ubuntu 24.04, root olarak:
 #   bash setup.sh https://github.com/<hesap>/<depo>.git        (adres ikinci yol: KKTC_REPO_URL ortam değişkeni)
-# Tekrar çalıştırmak güvenlidir (var olanı bozmaz, bot.env'e dokunmaz). Dinleyiciyi BAŞLATMAZ: önce bot.env doldurulur (bkz. sondaki adımlar).
+# Tekrar çalıştırmak güvenlidir (var olanı bozmaz; bot.env'de yalnız EKSİK anahtar satırlarını ekler, dolu değerlere dokunmaz).
+# Hiçbir şeyi BAŞLATMAZ: önce bot.env doldurulur (bkz. sondaki adımlar).
 set -euo pipefail
 cd /  # kktc-bot kullanıcısının okuyamayacağı bir klasörde (örn. /root) kalınırsa git çalışmaz
 
@@ -13,10 +14,70 @@ STATE_DIR=/var/lib/kktc-bot
 UPDATER=/usr/local/sbin/kktc-bot-update
 BRANCH=live
 REQUIRED="DATABASE_URL TELEGRAM_BOT_TOKEN TELEGRAM_CHAT_ID"
+RECOMMENDED="OPENROUTER_API_KEY OPENROUTER_MODEL"  # taramalar VPS'te çalışınca yapay zekâ okuması/notu bunlara bağlı (boşsa o özellik kapalı kalır)
+DEPS_STAMP=/opt/kktc-bot/browser-deps.stamp  # tarayıcı sistem kitaplıklarının kurulduğu playwright sürümü
 
 say() { echo "==> $*"; }
 die() { echo "HATA: $*" >&2; exit 1; }
 as_bot() { runuser -u kktc-bot -- env HOME="$STATE_DIR" GIT_TERMINAL_PROMPT=0 "$@"; }
+
+# Çalışan bir tarama varken güncelleyici kodu değiştirmez (o turu atlar); setup.sh'ın güncellemesi sessizce boşa gitmesin diye bitmesi beklenir.
+wait_scans_idle() {
+  local i unit state busy
+  for i in $(seq 1 300); do
+    busy=0
+    for unit in kktc-tick.service kktc-browser.service; do
+      state=$(systemctl show -p ActiveState --value "$unit" 2>/dev/null || true)
+      case "$state" in
+        active|activating|reloading|deactivating) busy=1 ;;
+      esac
+    done
+    if [ "$busy" = 0 ]; then
+      return 0
+    fi
+    if [ "$i" = 1 ]; then
+      echo "    bir tarama sürüyor; bitmesi bekleniyor (en çok 25 dk)..."
+    fi
+    sleep 5
+  done
+  die "tarama 25 dakikada bitmedi; biraz sonra setup.sh'ı yeniden çalıştırın."
+}
+
+# bot.env eski kurulumdan kalmış olabilir: eksik anahtar satırını ekler, var olan satıra (dolu ya da boş) dokunmaz.
+ensure_env_line() {
+  local name="$1" value="$2"
+  if grep -Eq "^${name}=" "$ENV_FILE"; then
+    return 0
+  fi
+  if [ -n "$(tail -c1 "$ENV_FILE")" ]; then
+    echo >> "$ENV_FILE"  # son satırda satır sonu yoksa yeni satırı yapıştırmasın
+  fi
+  echo "${name}=${value}" >> "$ENV_FILE"
+  echo "    $ENV_FILE dosyasına eksik satır eklendi: ${name}=${value}"
+}
+
+# Tarayıcının (Chromium) ihtiyaç duyduğu sistem kitaplıkları: apt ister, bu yüzden yalnız burada (root) kurulur. `scrapling install`in 2. adımıyla
+# aynı komut; playwright sürümü değişmedikçe bir daha çalışmaz. Hata kurulumu durdurmaz: tarayıcı çalışmazsa GitHub yedeği KKTCarabam'ı toplar.
+install_browser_deps() {
+  local ver have=""
+  if ! ver=$("$VENV_DIR/bin/python" -c 'import importlib.metadata as m; print(m.version("playwright"))' 2>/dev/null); then
+    echo "    UYARI: playwright kurulu değil; tarayıcı kitaplıkları atlandı (kktc-browser çalışmaz, GitHub yedeği devrede)."
+    return 0
+  fi
+  if [ -f "$DEPS_STAMP" ]; then
+    have=$(cat "$DEPS_STAMP")
+  fi
+  if [ "$have" = "$ver" ]; then
+    echo "    zaten kurulu (playwright $ver), atlandı."
+    return 0
+  fi
+  echo "    kuruluyor (birkaç dakika sürebilir)..."
+  if PYTHONDONTWRITEBYTECODE=1 "$VENV_DIR/bin/python" -m playwright install-deps chromium; then
+    echo "$ver" > "$DEPS_STAMP"
+  else
+    echo "    UYARI: tarayıcı kitaplıkları kurulamadı; kktc-browser çalışmayabilir (GitHub yedeği KKTCarabam'ı toplar). setup.sh'ı biraz sonra yeniden çalıştırın."
+  fi
+}
 
 [ "$(id -u)" -eq 0 ] || die "root olarak çalıştırın (sudo bash setup.sh <depo-adresi>)."
 
@@ -66,9 +127,14 @@ install_updater() {
 [ -f "$APP_DIR/deploy/bot/update.sh" ] || die "'$BRANCH' dalında deploy/bot/ yok (bu kit henüz yayına geçmemiş olabilir)."
 install_updater
 
-say "Sürüm eşitleme, venv ve bağımlılıklar (birkaç dakika sürebilir)"
+say "Sürüm eşitleme, venv, bağımlılıklar ve tarayıcı (birkaç dakika sürebilir)"
+wait_scans_idle
 "$UPDATER" || die "güncelleyici hata verdi; yukarıdaki satırlara bakın."
 install_updater  # güncelleyicinin kendisi de yeni sürümden alınır
+"$UPDATER" || die "güncelleyici (yeni sürüm) hata verdi; yukarıdaki satırlara bakın."  # yeni güncelleyiciyle bir tur daha: tarayıcı paketleri/Chromium eski kurulumda da gelsin
+
+say "Tarayıcı sistem kitaplıkları (apt; KKTCarabam tarayıcılı toplaması için)"
+install_browser_deps
 
 say "Ayar dosyası"
 if [ ! -e "$ENV_FILE" ]; then
@@ -79,21 +145,32 @@ else
 fi
 chown root:kktc-bot "$ENV_FILE"
 chmod 640 "$ENV_FILE"
+# Taramalar VPS'te: bu üç satır yoksa (eski kurulum) eklenir. KKTC_RUNNER=vps olmadan VPS kalp atışı yazmaz, GitHub geri çekilmez.
+ensure_env_line OPENROUTER_MODEL ""
+ensure_env_line APIFY_TOKEN ""
+ensure_env_line KKTC_RUNNER vps
+if ! grep -Eq "^KKTC_RUNNER=vps[[:space:]]*$" "$ENV_FILE"; then
+  echo "    UYARI: $ENV_FILE içinde KKTC_RUNNER=vps değil; VPS taramaları çalışsa da GitHub geri çekilmez (çift tarama). Düzeltin: KKTC_RUNNER=vps"
+fi
 
 say "systemd birimleri (etkinleştirilir, BAŞLATILMAZ)"
-for unit in kktc-bot.service kktc-bot-update.service kktc-bot-update.timer; do
+for unit in kktc-bot.service kktc-bot-update.service kktc-bot-update.timer kktc-tick.service kktc-tick.timer kktc-browser.service kktc-browser.timer; do
   install -m 644 -o root -g root "$APP_DIR/deploy/bot/$unit" "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
-systemctl enable kktc-bot.service kktc-bot-update.timer
+systemctl enable kktc-bot.service kktc-bot-update.timer kktc-tick.timer kktc-browser.timer
 
 missing=""
 for name in $REQUIRED; do
   grep -Eq "^${name}=[[:space:]]*[^[:space:]]" "$ENV_FILE" || missing="$missing $name"
 done
+weak=""
+for name in $RECOMMENDED; do
+  grep -Eq "^${name}=[[:space:]]*[^[:space:]]" "$ENV_FILE" || weak="$weak $name"
+done
 
 echo
-echo "Kurulum tamam. Dinleyici henüz BAŞLATILMADI."
+echo "Kurulum tamam. Dinleyici ve tarama zamanlayıcıları henüz BAŞLATILMADI."
 echo
 echo "Sıradaki adımlar:"
 if [ -n "$missing" ]; then
@@ -104,10 +181,19 @@ if [ -n "$missing" ]; then
 else
   echo "  1) Ayar dosyasında zorunlu değerler dolu görünüyor ($ENV_FILE). Değiştirmek isterseniz: nano $ENV_FILE"
 fi
+if [ -n "$weak" ]; then
+  echo "     Önerilen (taramalar VPS'te çalışınca yapay zekâ okuması/notu için; GitHub'daki değerlerle AYNI), şu an boş:${weak}"
+fi
 echo "  2) Dinleyiciyi ve güncelleme zamanlayıcısını başlatın:"
 echo "       systemctl start kktc-bot kktc-bot-update.timer"
-echo "  3) Çalıştığını görün:"
+echo "  3) Taramaları VPS'e alın (başlatınca GitHub turları kendiliğinden geri çekilir):"
+echo "       systemctl start kktc-tick.timer kktc-browser.timer"
+echo "  4) Çalıştığını görün:"
 echo "       systemctl status kktc-bot"
+echo "       systemctl list-timers 'kktc-*'"
 echo "       journalctl -u kktc-bot -n 50"
+echo "       journalctl -u kktc-tick -n 50"
+echo "       journalctl -u kktc-browser -n 50"
 echo "     Sonra Telegram'da bota /durum yazın: cevap anında gelmeli."
 echo "  Durdurmak: systemctl stop kktc-bot   (GitHub'daki 15 dakikalık düzen eskisi gibi devralır)"
+echo "             systemctl stop kktc-tick.timer kktc-browser.timer   (taramaları GitHub devralır: en geç 35 dk / KKTCarabam 2,5 saat)"

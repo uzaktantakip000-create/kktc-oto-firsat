@@ -1,0 +1,39 @@
+[Unit]
+Description=KKTC Oto Fırsat - tarama turu (entrypoints.tick: toplama + değerlendirme + bildirim)
+After=network-online.target
+Wants=network-online.target
+# bot.env yoksa ya da boşsa hiç çalıştırma
+ConditionFileNotEmpty=/etc/kktc-bot/bot.env
+
+[Service]
+# Zamanlayıcı (kktc-tick.timer) 15 dakikada bir başlatır; bir tur sürerken ikinci tur başlamaz. Tur başarıyla biterse veritabanına
+# kalp atışı yazılır (vps_tick_seen): GitHub turu bunu görünce kendiliğinden atlar; bu birim durursa en geç 35 dakikada GitHub devralır.
+Type=oneshot
+User=kktc-bot
+Group=kktc-bot
+WorkingDirectory=/opt/kktc-bot/app
+EnvironmentFile=/etc/kktc-bot/bot.env
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=UTC
+ExecStart=/opt/kktc-bot/venv/bin/python -m entrypoints.tick
+# tur kendi 13 dakikalık bütçesini tutar (entrypoints/tick.py); bu süre yalnızca güvenlik ağı
+TimeoutStartSec=20min
+
+# Sertleştirme (kktc-bot.service ile aynı): süreç yalnızca dışarı bağlanır (siteler, Telegram, veritabanı); gelen bağlantı/port yok
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+UMask=0077
+# Ev klasörü (/var/lib/kktc-bot) tek yazılabilir yer: bir kütüphane ~/.cache'e yazmak isterse çökmesin
+ReadWritePaths=/var/lib/kktc-bot
+MemoryMax=1G

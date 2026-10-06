@@ -1,0 +1,13 @@
+[Unit]
+Description=KKTC Oto Fırsat - KKTCarabam tarayıcılı toplamayı 2 saatte bir başlat
+
+[Timer]
+# Her çift saatin 7. dakikası (UTC: 00:07, 02:07, ... 22:07); GitHub'ın tarayıcılı işi :37'de çalışır: VPS 30 dakika önce gelir, GitHub kalp atışını görüp atlar
+OnCalendar=*-*-* 00/2:07:00
+AccuracySec=10s
+# VPS kapalıyken kaçan tur açılışta hemen çalıştırılmaz: GitHub zaten devralmıştır
+Persistent=false
+Unit=kktc-browser.service
+
+[Install]
+WantedBy=timers.target

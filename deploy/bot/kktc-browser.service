@@ -1,0 +1,41 @@
+[Unit]
+Description=KKTC Oto Fırsat - KKTCarabam tarayıcılı toplama + değerlendirme (entrypoints.cron_collect kktcarabam, cron_evaluate)
+After=network-online.target
+Wants=network-online.target
+# bot.env yoksa ya da boşsa hiç çalıştırma
+ConditionFileNotEmpty=/etc/kktc-bot/bot.env
+
+[Service]
+# Zamanlayıcı (kktc-browser.timer) 2 saatte bir başlatır. Toplama gerçekten çalışırsa (kart görüldü, engel yok) veritabanına kalp atışı
+# yazılır (vps_browser_seen): GitHub'daki tarayıcılı toplama bunu görünce atlar; Cloudflare bu makineyi engellerse yazılmaz, GitHub toplamaya devam eder.
+Type=oneshot
+User=kktc-bot
+Group=kktc-bot
+WorkingDirectory=/opt/kktc-bot/app
+EnvironmentFile=/etc/kktc-bot/bot.env
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=UTC
+# Chromium kurulum yeri (update.sh indirir, aynı yol)
+Environment=PLAYWRIGHT_BROWSERS_PATH=/var/lib/kktc-bot/ms-playwright
+# Toplama başarısız olsa da (başındaki "-") değerlendirme yine çalışır: GitHub'daki "if: always()" adımının aynısı
+ExecStart=-/opt/kktc-bot/venv/bin/python -m entrypoints.cron_collect kktcarabam
+ExecStart=/opt/kktc-bot/venv/bin/python -m entrypoints.cron_evaluate
+TimeoutStartSec=25min
+
+# Sertleştirme (kktc-bot.service'ten Chromium'a uyarlanmış): PrivateDevices ve RestrictNamespaces BİLEREK yok (Chromium /dev/shm ve süreç
+# yalıtımı ister); MemoryDenyWriteExecute da EKLENMEZ (tarayıcının JavaScript motoru çalışırken kod üretir)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+UMask=0077
+# Ev klasörü (/var/lib/kktc-bot) tek yazılabilir yer: tarayıcı profili/önbelleği ve Chromium dosyaları burada
+ReadWritePaths=/var/lib/kktc-bot
+MemoryMax=2G
