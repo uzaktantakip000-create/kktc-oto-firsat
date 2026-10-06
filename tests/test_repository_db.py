@@ -902,6 +902,25 @@ def test_unnotified_strong_lists_only_never_sent_current_green_listings_best_fir
     assert (r["comparables_n"], r["market_median_gbp"], r["profit_pct"], r["source_name"], r["platform"]) == (10, 9000, 40, "T", "web")
 
 
+def test_photo_urls_survive_a_round_trip_and_reach_the_freshness_readers(db):
+    """KKTCarabam kapak fotoğrafı adresi (yükleme tarihi içinde) `photo_urls`'e yazılır ve tazeliği okuyan sorgular (`pending_strong`, haftalık
+    raporun `unnotified_strong`) onu listeyle döndürür; yok ya da boşsa boş liste/None döner. Mevcut sütun: migration yok."""
+    c, sid = db.conn, add_source(db.conn)
+    url = "https://www.kktcarabam.com/uploads/images/2026/10/01/13/img-1-6abe346a6b863-270_200.jpg"
+    assert db.upsert_listing(sid, "with_photo", {"brand": "Toyota", "url": "u1", "photo_urls": [url]}) is True
+    assert db.upsert_listing(sid, "empty_photo", {"brand": "Toyota", "url": "u2", "photo_urls": []}) is True
+    got = {r["source_item_id"]: r["photo_urls"] for r in c.execute("SELECT source_item_id, photo_urls FROM listings").fetchall()}
+    assert got == {"with_photo": [url], "empty_photo": []}
+    for name in ("with_photo", "empty_photo"):
+        lid = c.execute("SELECT id FROM listings WHERE source_item_id=%s", (name,)).fetchone()["id"]
+        c.execute("UPDATE listings SET price_gbp=6000, price_amount=6000, currency='GBP', brand_norm='Toyota', model_norm='vitz' WHERE id=%s", (lid,))
+        add_report_eval(c, lid, "guclu", pct=30)
+    c.execute("INSERT INTO subscribers (chat_id, status) VALUES ('c1', 'onayli')")  # pending_strong yalnız onaylı abonesi olan ilanları verir
+    by = {r["source_item_id"]: r for r in db.unnotified_strong("v1", days=14)}
+    assert by["with_photo"]["photo_urls"] == [url] and by["empty_photo"]["photo_urls"] == []
+    assert {r["source_item_id"]: r["photo_urls"] for r in db.pending_strong(36, "guclu", rules_version="v1")} == {"with_photo": [url], "empty_photo": []}
+
+
 def test_near_misses_are_this_weeks_well_compared_yellow_listings_that_were_never_sent(db):
     """Yakın kaçanlar: bu hafta ilk görülen ya da fiyatı değişen, son satırı BU sürümle 🟡, ≥8 emsal, hiç 🟢/🟠 gitmemiş; süzülen nedenler atlanır."""
     c, sid = db.conn, add_source(db.conn)

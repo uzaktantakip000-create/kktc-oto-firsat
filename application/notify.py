@@ -6,6 +6,7 @@ import httpx
 
 from application.evaluate import Evaluated, confidence_label
 from domain.kktc_time import kktc_hour
+from domain.photo_date import kktcarabam_photo_time
 from domain.profit import Tier
 from domain.red_flags import customs_stated
 from domain.settings import Settings
@@ -143,11 +144,22 @@ def keyboard(listing_id, wa_url: str | None = None) -> dict:
     return {"inline_keyboard": top + [[btn("👍 İşe yarar", "ilgilendim"), btn("👎 Yanlış", "yanlis_fiyat")]]}
 
 
+def photo_stale(photo_urls, reference: datetime, fresh_hours: int = 36) -> bool:
+    """KKTCarabam ilanının kapak fotoğrafı `reference` anından `fresh_hours` saatten ÖNCE yüklenmiş mi (adresteki yükleme anı: `domain/photo_date`)?
+    Yükleme anı okunamıyorsa (liste boş/None, başka site, bozuk adres) False: bu ipucu YALNIZ tazeliği sıkılaştırır, hiçbir zaman ilanı daha taze yapmaz."""
+    taken = kktcarabam_photo_time((photo_urls or [None])[0], now=reference)  # `reference`ın bir günden ilerisi bozuk sayılır
+    return taken is not None and taken < reference - timedelta(hours=fresh_hours)
+
+
 def is_fresh(first_seen_at, posted_at, now: datetime | None = None, fresh_hours: int = 36, max_post_days: int = 4,
-             price_changed_at=None, platform: str | None = None, social_max_hours: int = 48) -> bool:
+             price_changed_at=None, platform: str | None = None, social_max_hours: int = 48, photo_urls=None) -> bool:
     """Yeni görülmüş VE (yayın tarihi biliniyorsa) en fazla 4 günlük: geçmiş doldurma eski ilan bildirmesin.
-    Yakın zamanda fiyatı düşmüş/değişmiş ilan yaşına bakılmadan taze sayılır."""
+    Yakın zamanda fiyatı düşmüş/değişmiş ilan yaşına bakılmadan taze sayılır. KKTCarabam'da ilan tarihi hep boştur; `photo_urls` (kapak
+    fotoğrafının adresi) yükleme anı gönderim anından `fresh_hours` saatten eskiyse ilan taze sayılmaz (`photo_stale`): fiyat değişikliği
+    istisnası da bunu aşmaz (yeniden çıkmış ilan için numara kuralı da öyle: `resurfaced_ids`). Tarih yoksa davranış değişmez."""
     now = now or datetime.now(timezone.utc)
+    if photo_stale(photo_urls, now, fresh_hours):
+        return False  # KKTCarabam: sitenin "en yeni" listesine geri ittiği eski ilan (fotoğrafı pencereden eski); yalnız SIKILAŞTIRIR
     if price_changed_at and price_changed_at >= now - timedelta(hours=fresh_hours):
         return True
     if platform in SOCIAL and posted_at is not None and posted_at < now - timedelta(hours=social_max_hours):
@@ -169,7 +181,7 @@ def resurfaced_ids(repo: Repository, listings: list[dict]) -> set:
 
 def _is_fresh_ev(ev: Evaluated) -> bool:
     return is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
-                    platform=ev.listing.get("platform"))
+                    platform=ev.listing.get("platform"), photo_urls=ev.listing.get("photo_urls"))
 
 
 def _burst_summary(repo: Repository, token: str, fresh: list[Evaluated], subs: list[dict], limit: int, now: datetime | None = None) -> int:
@@ -259,7 +271,7 @@ def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes:
         if sent >= max_per_run or rate_limited:
             break
         if not is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
-                        platform=ev.listing.get("platform")):
+                        platform=ev.listing.get("platform"), photo_urls=ev.listing.get("photo_urls")):
             continue
         text = format_alert(ev, (notes or {}).get(ev.listing["id"]))
         delivered = False

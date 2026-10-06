@@ -695,10 +695,11 @@ class Repository:
     def unnotified_strong(self, rules_version: str, days: int = 14, limit: int = 50) -> list[dict]:
         """Bildirilmemiş 🟢'ler: EN SON değerlendirmesi bu kural sürümüyle 🟢 ve son 'days' günde yapılmış, ilan aktif, kopya/karantina değil,
         kaynağı anlık bildirim veren ('yesil'), hiçbir sohbete 🟢/🟠 gitmemiş (yazılamamış gönderimin yedek izi de sayılır). En iyi kâr önce.
-        Tazelik ve emsal kapısı uygulamada süzülür (application/report.py); canlılık kontrolü için fiyat/kaynak alanları da döner."""
+        Tazelik ve emsal kapısı uygulamada süzülür (application/report.py; `photo_urls`: KKTCarabam fotoğraf yükleme tarihi için); canlılık kontrolü için
+        fiyat/kaynak alanları da döner."""
         return self.conn.execute(
             """SELECT l.id, l.url, l.source_item_id, l.year, l.brand, l.model, l.km, l.price_amount::float8 AS price_amount, l.currency,
-                      l.price_gbp::float8 AS price_gbp, l.first_seen_at, l.posted_at, s.name AS source_name, s.platform,
+                      l.price_gbp::float8 AS price_gbp, l.first_seen_at, l.posted_at, l.photo_urls, s.name AS source_name, s.platform,
                       e.evaluated_at, e.comparables_n, e.market_median_gbp::float8 AS market_median_gbp,
                       e.profit_gbp::float8 AS profit_gbp, e.profit_pct::float8 AS profit_pct,
                       COALESCE(to_jsonb(e) ->> 'method', 'A') AS method,

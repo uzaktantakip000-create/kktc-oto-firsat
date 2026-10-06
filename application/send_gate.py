@@ -11,6 +11,7 @@ from infrastructure.db.repository import Repository
 # Elenme nedenleri (kısa, makine okur): ileride "neden gitmedi" sayılabilsin (🟠 gölge raporu, haftalık rapor)
 TAZE_DEGIL = "taze_degil"  # 36 saatten önce görülmüş ya da yayını 4 günden eski (fiyatı son 36 saatte değişmediyse); sosyal medyada 48 saat;
 # ayrıca yeniden çıkmış eski KKTCarabam ilanı (tarihsiz ve numarası daha önce görülenlerden küçük: sitenin "en yeni" listesine geri ittiği eski ilan)
+# ya da kapak fotoğrafı 36 saatten önce yüklenmiş KKTCarabam ilanı (`notify.photo_stale`)
 EMSAL_AZ = "emsal_az"  # emsal kapısı: doğrudan emsal < 8 ya da yalnız değer tablosuyla bulunmuş (🟠 bugün hep burada kalır)
 CANLI_DEGIL = "canli_degil"  # sitede satılmış/kaldırılmış ya da fiyatı değişmiş (fiyat değiştiyse sonraki turda yeniden değerlenir)
 LLM_REDDETTI = "llm_reddetti"  # yapay zekâ uyuşmazlık/gizli sorun buldu ya da fiyatını yapay zekâ okumuş 🟠 doğrulanamadı (🟡'ye düştü)
@@ -18,13 +19,15 @@ LLM_REDDETTI = "llm_reddetti"  # yapay zekâ uyuşmazlık/gizli sorun buldu ya d
 
 def _fresh(ev: Evaluated) -> bool:
     l = ev.listing
-    return is_fresh(l["first_seen_at"], l["posted_at"], price_changed_at=l.get("price_changed_at"), platform=l.get("platform"))
+    return is_fresh(l["first_seen_at"], l["posted_at"], price_changed_at=l.get("price_changed_at"), platform=l.get("platform"),
+                    photo_urls=l.get("photo_urls"))
 
 
 def _fresh_candidates(repo: Repository, candidates: list[Evaluated]) -> list[Evaluated]:
-    """Tazelik adımı: `is_fresh` + yeniden çıkmış eski KKTCarabam ilanı DEĞİL (`notify.resurfaced_ids`; tek sorgu, yalnız `is_fresh`'ten geçen ve
-    ilan tarihi bilinmeyen adaylar için). Tarihi biliniyorsa yalnız tarih karar verir. Yeniden çıkmış ilan taze sayılmaz ama emsal olarak
-    kalır ve değerlendirilmeye devam eder (burada yalnız gönderimden elenir)."""
+    """Tazelik adımı: `is_fresh` (KKTCarabam'da kapak fotoğrafı 36 saatten eskiyse taze değil) + yeniden çıkmış eski KKTCarabam ilanı DEĞİL
+    (`notify.resurfaced_ids`; tek sorgu, yalnız `is_fresh`'ten geçen ve ilan tarihi bilinmeyen adaylar için: numara kuralı fotoğraf tarihi taze
+    olsa da aynen işler). Tarihi biliniyorsa yalnız tarih karar verir. Yeniden çıkmış ilan taze sayılmaz ama emsal olarak kalır ve
+    değerlendirilmeye devam eder (burada yalnız gönderimden elenir)."""
     fresh = [ev for ev in candidates if _fresh(ev)]
     old = resurfaced_ids(repo, [ev.listing for ev in fresh])
     return [ev for ev in fresh if ev.listing["id"] not in old]

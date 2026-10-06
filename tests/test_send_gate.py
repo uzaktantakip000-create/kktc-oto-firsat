@@ -28,12 +28,14 @@ def kk(i):
 
 
 def cand(i, *, tier=Tier.STRONG, n=9, method="A", url=None, platform="web", seen_h=1, posted_h=None, price_changed_h=None,
-         extraction_by="parser"):
+         extraction_by="parser", photo_urls=None):
     l = {"id": i, "first_seen_at": NOW - timedelta(hours=seen_h),
          "posted_at": NOW - timedelta(hours=posted_h) if posted_h is not None else None,
          "price_changed_at": NOW - timedelta(hours=price_changed_h) if price_changed_h is not None else None,
          "platform": platform, "url": url, "price_amount": 5000, "currency": "GBP", "price_gbp": 5000.0, "raw_text": f"ilan {i}",
          "extraction_by": extraction_by, "year": 2015, "km": 90000, "brand": "Toyota", "steering": "RHD", "evaluation_id": f"ev-{i}"}
+    if photo_urls is not None:  # yalnız verilince eklenir (altın izdeki ilan sözlükleri değişmesin)
+        l["photo_urls"] = photo_urls
     return Evaluated(l, Market(n, 8000, 7000, 9000, 1, 0.0), ProfitResult(7600, 2600, 0.5, Confidence.MEDIUM, tier), [], [], [],
                      method=method)
 
@@ -449,3 +451,61 @@ def test_cron_evaluate_has_no_scattered_send_checks_left():
     for name in ("is_fresh", "apply_send_floor", "recheck_before_send", "llm_reader"):
         assert not hasattr(cron_evaluate, name), name
     assert cron_evaluate.gonderim_kontrol is gonderim_kontrol
+
+
+# --- KKTCarabam fotoğraf yükleme tarihi: tazeliği yalnız SIKILAŞTIRIR (taze_degil); numara kuralı her durumda sürer ---
+
+def photo(hours_ago: float, host="www.kktcarabam.com") -> list[str]:
+    """Kapak fotoğrafı `hours_ago` saat önce yüklenmiş KKTCarabam adresi (yol KKTC saatiyle, UTC+3; saat başına yuvarlanır: biraz ESKİ görünür)."""
+    local = NOW - timedelta(hours=hours_ago) + timedelta(hours=3)
+    return [f"https://{host}/uploads/images/{local:%Y/%m/%d/%H}/img-1-6abe346a6b863-270_200.jpg"]
+
+
+def test_gate_old_photo_date_is_taze_degil_for_green_and_orange_and_skips_the_resurfaced_query_for_it(monkeypatch):
+    """(a) fotoğrafı 36 saatten eski KKTCarabam ilanı yeni görülmüş olsa da taze değildir: `taze_degil`, sonraki adımlara (canlılık, yapay zekâ)
+    girmez ve numara sorgusuna konmaz (zaten elendi)."""
+    old, mid, new = (cand("p1", url=kk("p1"), photo_urls=photo(120)), cand("p2", url=kk("p2"), photo_urls=photo(30)),
+                     cand("p3", url=kk("p3"), photo_urls=photo(2)))
+    w = World(green=[old, mid, new])
+    sendable, rejected = gonderim_kontrol(wire(monkeypatch, w), [old, mid, new], "🟢")
+    assert [ev.listing["id"] for ev in sendable] == ["p2", "p3"] and ids(rejected) == [("p1", TAZE_DEGIL)]
+    assert w.trace[0] == ("repo.resurfaced_kktcarabam", ["p2", "p3"])  # elenen p1 numara sorgusuna girmedi
+    assert ("site.get", kk("p1")) not in w.trace  # elenen ilanın sayfası açılmadı
+    o = cand("o1", tier=Tier.ESTIMATED, method="B", n=20, url=kk("o1"), photo_urls=photo(120))  # 🟠 aynı kapıdan geçer
+    assert ids(gonderim_kontrol(wire(monkeypatch, World(orange=[o])), [o], "🟠")[1]) == [("o1", TAZE_DEGIL)]
+
+
+def test_gate_fresh_photo_date_does_not_save_a_number_resurfaced_ad_and_an_old_photo_wins_over_a_price_change(monkeypatch):
+    """(b) fotoğraf tarihi taze olsa da numara kuralı (`resurfaced_kktcarabam`) aynen işler: yine `taze_degil`. Fotoğraf eskiyse fiyatın yeni
+    değişmesi de ilanı taze yapmaz (numara kuralındaki gibi)."""
+    r1 = cand("r1", url=kk("r1"), photo_urls=photo(2))  # fotoğraf taze ama numarası küçük: yeniden çıkmış
+    r2 = cand("r2", url=kk("r2"), photo_urls=photo(2))
+    changed = cand("c1", url=kk("c1"), seen_h=60, price_changed_h=2, photo_urls=photo(500))  # fiyat yeni değişmiş ama fotoğraf çok eski
+    w = World(green=[r1, r2, changed], resurfaced={"r1"})
+    sendable, rejected = gonderim_kontrol(wire(monkeypatch, w), [r1, r2, changed], "🟢")
+    assert [ev.listing["id"] for ev in sendable] == ["r2"] and ids(rejected) == [("r1", TAZE_DEGIL), ("c1", TAZE_DEGIL)]
+    assert w.trace[0] == ("repo.resurfaced_kktcarabam", ["r1", "r2"])  # taze fotoğraflı ilan yine sorgulanır
+
+
+@pytest.mark.parametrize("photo_urls", [None, [], [""], ["bozuk"], ["https://www.kktcarabam.com/uploads/images/2014/01/01/10/a.jpg"],
+                                        ["https://www.kktcarabam.com/uploads/images/2026/13/40/99/a.jpg"], ["x"]])
+def test_gate_missing_or_garbage_photo_date_behaves_exactly_as_before(monkeypatch, photo_urls):
+    """(c) fotoğraf tarihi yok/okunamıyor: sonuç ve iz, fotoğraf alanı hiç olmayan ilanla BİREBİR aynı."""
+    def run(extra):
+        a, b = cand("n1", url=kk("n1"), **extra), cand("n2", url=kk("n2"), seen_h=40, **extra)
+        w = World(green=[a, b], resurfaced={"n2"})
+        sendable, rejected = gonderim_kontrol(wire(monkeypatch, w), [a, b], "🟢")
+        return [ev.listing["id"] for ev in sendable], ids(rejected), w.trace
+
+    assert run({"photo_urls": photo_urls}) == run({})
+    assert run({})[0] == ["n1"]
+
+
+def test_gate_other_sources_with_photo_urls_are_unaffected(monkeypatch):
+    """(d) KKTCarabam dışı kaynaklar: Instagram CDN, PazarKibris vb. fotoğraf adresi (eski olsa da, yol deseni benzese de) tazeliği değiştirmez."""
+    ig = cand("i1", platform="instagram", posted_h=1, photo_urls=["https://scontent.cdninstagram.com/v/t51.2885-15/2026/09/01/10/abc_n.jpg?stp=x"])
+    pk = cand("k1", url=kk("k1"), photo_urls=photo(500, host="pazarkibris.com"))  # aynı yol deseni, başka site
+    kc = cand("k2", url=kk("k2"), photo_urls=photo(500, host="www.kktcar.com"))
+    w = World(green=[ig, pk, kc], llm={"ilan i1": PRICE_OK})
+    sendable, rejected = gonderim_kontrol(wire(monkeypatch, w), [ig, pk, kc], "🟢")
+    assert [ev.listing["id"] for ev in sendable] == ["i1", "k1", "k2"] and rejected == []

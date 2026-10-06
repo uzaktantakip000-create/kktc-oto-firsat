@@ -146,6 +146,32 @@ def test_new_card_gets_km_posted_at_and_seller_from_its_own_ad_page_in_the_same_
     assert repo.checked == 1
 
 
+def test_card_photo_address_is_stored_in_photo_urls_only_when_its_upload_date_is_readable(monkeypatch):
+    """Kapak fotoğrafının adresi (yükleme tarihi içinde) `photo_urls`'e yazılır: `notify.is_fresh` yalnız tazeliği SIKILAŞTIRMAK için okur.
+    Tarih okunamıyorsa liste boş kalır (eskisi gibi). Yeni sütun/migration yok: `photo_urls` ilk şemadan beri var."""
+    url = "https://www.kktcarabam.com/uploads/images/2026/10/01/13/img-1-6abe346a6b863-270_200.jpg"
+    dated = site.Card("270001", swift_card(270001).url, "2024 Model Otomatik Suzuki Swift", "7.999 GBP", "Suzuki Swift", url,
+                      datetime(2026, 10, 1, 10, tzinfo=timezone.utc))
+    undated = site.Card("270002", swift_card(270002).url, "2024 Model Otomatik Suzuki Swift", "7.999 GBP", "Suzuki Swift", "https://cdn.example.com/a.jpg", None)
+    Wire(monkeypatch, [dated, undated, swift_card(270003)], {})
+    repo = Repo()
+    kka.collect_kktcarabam(repo, SOURCE)
+    d = saved(repo)
+    assert d["270001"]["photo_urls"] == [url] and d["270002"]["photo_urls"] == [] and d["270003"]["photo_urls"] == []
+    assert all("posted_at" not in x for x in d.values())  # sayfa okunamadığı için ilan tarihi hâlâ yok: fotoğraf tarihi posted_at'e yazılmaz
+
+
+def test_real_list_page_cards_are_saved_with_their_photo_address(monkeypatch):
+    cards = parse_list((FIX / "kktcarabam_list.html").read_text())  # Wire parse_list'i değiştirmeden önce gerçek ayrıştırma
+    Wire(monkeypatch, cards, {})
+    repo = Repo()
+    kka.collect_kktcarabam(repo, SOURCE)
+    d = saved(repo)
+    assert d["263802"]["photo_urls"] == ["https://www.kktcarabam.com/uploads/images/2026/10/01/13/4a8babb0-04f4-4317-8524-ecf662e5d701-6abe346a6b863-270_200.jpg"]
+    assert d["259938"]["photo_urls"][0].endswith("/uploads/images/2026/09/09/21/img-8003-6aa1a49ebe8e0-270_200.jpg")
+    assert d and all(len(x["photo_urls"]) == 1 for x in d.values())
+
+
 def test_each_card_is_saved_right_after_its_own_page_so_a_cut_off_run_keeps_the_earlier_cards(monkeypatch):
     cards = [swift_card(270001), swift_card(270002)]
     net, repo = Wire(monkeypatch, cards, {"270001": page(270001), "270002": page(270002)}), Repo()

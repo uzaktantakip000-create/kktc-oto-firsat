@@ -4,11 +4,13 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from urllib.parse import urljoin
 
 from selectolax.parser import HTMLParser
 
 from domain.duplicates import district
 from domain.normalize import canon_fuel, canon_transmission, normalize_brand, normalize_model
+from domain.photo_date import kktcarabam_photo_time
 from domain.price import parse_price
 
 BASE = "https://www.kktcarabam.com"
@@ -27,6 +29,19 @@ class Card:
     title: str  # "2013 Model Otomatik Mercedes-Benz E Serisi"
     price_text: str  # "14.999 GBP" / "0 TL"
     label: str = ""  # görsel üstündeki "Mercedes-Benz E Serisi"
+    photo_url: str | None = None  # kartın kapak fotoğrafı (liste kartı); yükleme anı adresinde: /uploads/images/YYYY/MM/DD/HH/...
+    photo_at: datetime | None = None  # fotoğrafın yükleme anı (UTC; `domain.photo_date`); adres yok/bozuk/tanınmıyorsa None
+
+
+def _photo_url(src: str | None) -> str | None:
+    """Kart görselinin adresi (göreli olabilir: site adresine tamamlanır); boş/bozuksa None, hata fırlatmaz."""
+    src = (src or "").strip()
+    if not src:
+        return None
+    try:
+        return urljoin(BASE + "/", src)
+    except ValueError:  # ör. köşeli parantezi eksik adres
+        return None
 
 
 def parse_list(html: str) -> list[Card]:
@@ -38,6 +53,8 @@ def parse_list(html: str) -> list[Card]:
             continue
         h3, price = a.css_first("h3"), a.css_first(".fiyat")
         span = a.css_first(".resim span")
+        img = a.css_first(".resim img")
+        photo = _photo_url(img.attributes.get("src") if img is not None else None)
         cards.append(
             Card(
                 m.group(1),
@@ -45,6 +62,8 @@ def parse_list(html: str) -> list[Card]:
                 h3.text(strip=True) if h3 else "",
                 price.text(strip=True) if price else "",
                 span.text(strip=True) if span else "",
+                photo,
+                kktcarabam_photo_time(photo),
             )
         )
     return cards

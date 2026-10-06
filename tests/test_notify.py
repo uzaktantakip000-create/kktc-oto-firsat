@@ -96,6 +96,21 @@ def test_freshness(first_seen, posted, expected):
     assert notify.is_fresh(first_seen, posted, NOW) is expected
 
 
+@pytest.mark.parametrize("tier", [Tier.STRONG, Tier.ESTIMATED])
+def test_send_alerts_skips_a_fresh_looking_ad_with_an_old_kktcarabam_photo(monkeypatch, tier):
+    """`send_alerts`ın kendi tazelik kontrolü (🟢 ve 🟠 yolu aynı `is_fresh`): kapak fotoğrafı 36 saatten eski KKTCarabam ilanı gitmez, yenisi gider."""
+    def photo(hours_ago):
+        local = NOW - timedelta(hours=hours_ago) + timedelta(hours=3)
+        return [f"https://www.kktcarabam.com/uploads/images/{local:%Y/%m/%d/%H}/a-6abe346a6b863-270_200.jpg"]
+
+    sent = patch_api(monkeypatch, {})
+    repo = FakeRepo(["a"])
+    old, new, plain = ev("old", tier), ev("new", tier), ev("plain", tier)  # plain: fotoğraf alanı yok (eskisi gibi gider)
+    old.listing["photo_urls"], new.listing["photo_urls"] = photo(120), photo(2)
+    assert notify.send_alerts(repo, "t", [old, new, plain], tier=tier) == 2
+    assert repo.alerts == {("new", "a"), ("plain", "a")} and sent == ["a", "a"]
+
+
 def test_guessed_currency_message_names_real_currency():
     e = ev(1)
     e.listing.update(currency_guess=True, currency="TRY")

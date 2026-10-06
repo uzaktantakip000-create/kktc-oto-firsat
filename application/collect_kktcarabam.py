@@ -96,7 +96,8 @@ def collect_kktcarabam(repo: Repository, source: dict, clock=time.monotonic) -> 
             amount, cur = data["price_amount"], data["currency"]
             data["price_gbp"] = round(amount * gbp_rate(cur), 2) if amount and cur else None
             data["extraction_by"] = "parser"
-            data["photo_urls"] = []
+            # kapak fotoğrafının adresi (yükleme tarihi içinde): `notify.is_fresh` yalnız tazeliği SIKILAŞTIRMAK için okur; tarih okunamadıysa boş
+            data["photo_urls"] = [card.photo_url] if card.photo_at else []
             if repo.upsert_listing(source["id"], card.item_id, data):
                 stats.new += 1
     _print_detail_summary(stats)

@@ -4,7 +4,8 @@
   2. Bildirilmemiş fırsatlar: kurala göre 🟢 ama tazelik süzgecine (ilk görülme 36 saat / ilan tarihi 4 gün) takıldığı için anlık gitmemiş
      ilanlar; son 14 gün, en çok 5, en iyi önce. Göstermeden önce canlılık kontrolü (application/liveness.py): satılmış, kalkmış ya da fiyatı
      değişmiş ilan gösterilmez. Sitenin eski ilanı "en yeni" listesine geri itmesiyle yeniden çıkmış KKTCarabam ilanı (tarihsiz, numarası daha
-     önce görülenlerden küçük; `notify.resurfaced_ids`) hiç listelenmez: yeni bir fırsat değil, eski ve belki satılmış bir ilandır.
+     önce görülenlerden küçük; `notify.resurfaced_ids`) ve kapak fotoğrafı bize ilk göründüğü anda zaten 36 saatten eski olan KKTCarabam ilanı
+     (`notify.photo_stale`) hiç listelenmez: yeni bir fırsat değil, eski ve belki satılmış bir ilandır.
   3. Yakın kaçanlar: bu hafta gelen, gönderim kapısını geçecek kadar emsalli (≥8) ama 🟡 kalan ilanlar; yalnız bilgi, en çok 5, tek satır.
   4. Tek satır sağlık + kaybolan ilanlar: "satıldı" YALNIZ kaynağın kendi beyanı ya da sahibin düğmesiyse (domain/lifecycle.py); gerisi
      "satılıp satılmadığı belli değil".
@@ -16,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 from application.health import notify_owner
 from application.liveness import can_check, recheck_before_send
-from application.notify import is_fresh, resurfaced_ids
+from application.notify import is_fresh, photo_stale, resurfaced_ids
 from application.settings_store import load_settings
 from application.status import late_sources
 from domain.alert_policy import MIN_COMPARABLES_TO_SEND
@@ -140,7 +141,10 @@ def _unnotified_section(repo: Repository, recheck, now: datetime) -> _Section:
             if send_allowed(Tier.STRONG, r["method"], r["comparables_n"] or 0)  # emsal kapısı (≥8): bildirimdeki kuralın aynısı
             and not is_fresh(r["first_seen_at"], r["posted_at"], now=now, price_changed_at=r["price_changed_at"],
                              platform=r["platform"])]  # taze olan normal yoldan (anlık mesaj) gider
-    old = resurfaced_ids(repo, rows)  # sitenin "en yeni" listesine geri ittiği eski KKTCarabam ilanı (tarihsiz, numarası küçük): ne gider ne listelenir
+    # sitenin "en yeni" listesine geri ittiği eski KKTCarabam ilanı: fotoğrafı bize İLK göründüğü anda zaten tazelik penceresinden eskiydi (şimdiye
+    # göre değil: bayat her ilanın fotoğrafı şimdiye göre eskidir) ya da tarihsiz ve numarası küçük (`notify.resurfaced_ids`): ne gider ne listelenir
+    rows = [r for r in rows if not photo_stale(r.get("photo_urls"), r["first_seen_at"])]
+    old = resurfaced_ids(repo, rows)
     rows = [r for r in rows if r["id"] not in old]
     if not rows:
         return _Section("bildirilmemiş", [f"🔎 Bildirmediğim fırsat yok (son {UNNOTIFIED_DAYS} gün)."])

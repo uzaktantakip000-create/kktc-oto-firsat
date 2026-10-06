@@ -19,11 +19,14 @@ def vote_row(i, voted=False, tier="guclu", active=True, url=True):
                 sent_at=ago(days=1, hours=i), voted=voted)
 
 
-def strong_row(i, pct=30.0, n=12, method="A", first_seen=None, posted=None, url=None, platform="web", source="KibrisArabaAl"):
-    return dict(id=f"S{i}", url=url or f"https://kibrisarabaal.com/ilan/{i}-honda-fit/", source_item_id=str(i), year=2013, brand="Honda",
+def strong_row(i, pct=30.0, n=12, method="A", first_seen=None, posted=None, url=None, platform="web", source="KibrisArabaAl", photo_urls=None):
+    row = dict(id=f"S{i}", url=url or f"https://kibrisarabaal.com/ilan/{i}-honda-fit/", source_item_id=str(i), year=2013, brand="Honda",
                 model="Fit", km=90_000, price_amount=5400.0, currency="GBP", price_gbp=5400.0, first_seen_at=first_seen or ago(days=5),
                 posted_at=posted, source_name=source, platform=platform, evaluated_at=ago(hours=3), comparables_n=n,
                 market_median_gbp=7900.0, profit_gbp=1500.0, profit_pct=pct, method=method, price_changed_at=None)
+    if photo_urls is not None:  # yalnız verilince eklenir (eski satırlarda alan yok: rapor `.get` ile okur)
+        row["photo_urls"] = photo_urls
+    return row
 
 
 def near_row(i, pct=18.0, nedenler=None):
@@ -177,6 +180,35 @@ def test_unnotified_never_lists_a_resurfaced_old_kktcarabam_ad(capsys):
     none = FakeRepo(strong=[strong_row(3, posted=ago(days=20))])
     build(none)
     assert "resurfaced" not in none.calls
+
+
+def kka_photo(moment, host="www.kktcarabam.com"):
+    """Kapak fotoğrafı `moment` (UTC) anında yüklenmiş KKTCarabam adresi (yol KKTC saatiyle, UTC+3)."""
+    local = moment + timedelta(hours=3)
+    return [f"https://{host}/uploads/images/{local:%Y/%m/%d/%H}/img-1-6abe346a6b863-270_200.jpg"]
+
+
+def test_unnotified_never_lists_a_kktcarabam_ad_whose_photo_was_already_old_when_first_seen():
+    """Kapak fotoğrafı bize İLK göründüğü anda zaten 36 saatten eskiyse (sitenin geri ittiği eski ilan) yeniden çıkmış ilan gibi LİSTELENMEZ ve numara
+    sorgusuna konmaz. Fotoğraf ilk görülmeye yakınsa (gerçekten yeni ama gönderilememiş ilan) eskisi gibi listelenir; şimdiye göre bakılmaz."""
+    seen = ago(days=5)
+    rows = [strong_row(1, pct=40, first_seen=seen, photo_urls=kka_photo(seen - timedelta(days=40))),  # eski fotoğraf: listelenmez
+            strong_row(2, pct=35, first_seen=seen, photo_urls=kka_photo(seen - timedelta(hours=2))),  # ilk görülmeye yakın: listelenir
+            strong_row(3, pct=30, first_seen=seen, photo_urls=kka_photo(seen - timedelta(hours=40))),  # 36 saati aştı: listelenmez
+            strong_row(4, pct=28, first_seen=seen, photo_urls=kka_photo(seen - timedelta(days=40), host="www.kktcar.com")),  # başka site: etkilenmez
+            strong_row(5, pct=26, first_seen=seen, photo_urls=[]),  # fotoğraf bilgisi yok: eskisi gibi
+            strong_row(6, pct=24, first_seen=seen),  # alan hiç yok: eskisi gibi
+            strong_row(7, pct=22, first_seen=seen, photo_urls=kka_photo(seen - timedelta(hours=2)))]  # yeni fotoğraf ama numarası küçük
+    repo = FakeRepo(strong=rows, resurfaced={"S7"})
+    text, _ = build(repo)
+    assert repo.calls["resurfaced"] == ["S2", "S4", "S5", "S6", "S7"]  # eski fotoğraflılar numara sorgusuna girmedi; yeni fotoğraflı S7 girdi
+    assert "(4 ilan)" in text
+    shown = [i for i in range(1, 8) if f"/{i}-honda-fit/" in text]
+    assert shown == [2, 4, 5, 6]  # S1, S3 fotoğraf yüzünden; S7 numara kuralı yüzünden hiç listelenmedi
+    # hepsi eski fotoğraflıysa bölüm "yok" der ve sorgu hiç yapılmaz
+    only_old = FakeRepo(strong=[strong_row(1, first_seen=seen, photo_urls=kka_photo(seen - timedelta(days=9)))])
+    text, _ = build(only_old)
+    assert "🔎 Bildirmediğim fırsat yok (son 14 gün)." in text and "resurfaced" not in only_old.calls
 
 
 def test_preview_does_no_liveness_check_and_says_so():
