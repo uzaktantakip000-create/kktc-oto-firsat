@@ -57,6 +57,8 @@ IDLE_SCROLLS = 6  # bu kadar kaydırmada yeni gönderi gelmezse akış bitti
 CHECK_EVERY = 8  # kaydırma sırasında her 8 adımda bir oturum/engel denetimi
 MAX_EXPAND = 15  # sayfa başına en çok "See more" tıklaması
 MAX_HOVER = 5  # bağlantısı "#" olan zaman bağlantısına (insan gibi) fareyle gelme: sayfa başına en çok
+MAX_TIME_HOVER = 40  # zaman bağlantısına fareyle gelip ipucundaki tarihi okuma: sayfa başına en çok (yalnız alınacak gönderiler)
+TIME_TIP_WAIT_S = 3.5  # ipucu (tooltip) bu kadar sürede çıkmazsa tarih yok sayılır
 READY_FRACTION = 0.6  # gönderinin üst kenarı ekranın bu oranına gelince okunur (başlık ve yazının başı görünür)
 MIN_IMAGE_PX = 100  # bundan küçük görsel (profil resmi, simge) gönderi fotoğrafı sayılmaz
 SCROLL_PAUSE_S = (1.5, 4.0)
@@ -150,10 +152,15 @@ EXTRACT_JS = r"""(a) => {
     const bodies = allBodies.filter(b => !allBodies.some(o => o !== b && o.contains(b)));
     const inBody = n => bodies.some(b => b.contains(n));
     const links = [], times = [];
+    let tlink = -1;
     Array.from(art.querySelectorAll('a[href]')).forEach((el, j) => {
       if (!own(el)) return;
       const href = el.getAttribute('href') || '';
       if (links.length < 60) links.push(href);
+      if (tlink < 0 && !inBody(el) && !/\/user\/|profile\.php|\/hashtag\/|set=(gm|pcb)\./.test(href) && !(el.innerText || '').trim()) {
+        const tr = el.getBoundingClientRect();  // Facebook zamanı yazı olarak koymuyor (boş span'lar): ipucu fareyle okunur
+        if (tr.height >= 8 && tr.height <= 30 && tr.width >= 15 && tr.width <= 220) tlink = j;
+      }
       if (inBody(el) || /\/user\/|profile\.php|\/hashtag\//.test(href)) return;
       const label = (el.getAttribute('aria-label') || '').trim();
       const text = (el.innerText || '').trim();
@@ -189,7 +196,7 @@ EXTRACT_JS = r"""(a) => {
     const images = Array.from(art.querySelectorAll('img')).filter(own).slice(0, 12).map(m => ({
       src: m.currentSrc || m.getAttribute('src') || '', w: m.naturalWidth || m.width || 0, h: m.naturalHeight || m.height || 0}));
     const ut = Array.from(art.querySelectorAll('[data-utime]')).find(own);
-    res.push({i, top: Math.round(rect.top), vh, links, times, utime: ut ? ut.getAttribute('data-utime') : null,
+    res.push({i, top: Math.round(rect.top), vh, links, times, tlink, utime: ut ? ut.getAttribute('data-utime') : null,
               text: text.slice(0, 8000), body: bodies.length > 0, see_more: more, pinned, images});
   });
   return res;
@@ -209,6 +216,18 @@ TARGET_JS = r"""(a) => {
   const r = Array.from(rr.getClientRects()).find(ok);  // yazının görünen kutusu (blok düğmede tüm satır değil)
   if (!r) return null;
   return {x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height};
+}"""
+
+# Fareyle gelinen zaman bağlantısının ipucu (role=tooltip, ör. "Tuesday 6 October 2026 at 18:27"): öğeye dikeyde en yakın görünen ipucu.
+TOOLTIP_JS = r"""(a) => {
+  let best = null, dist = 1e9;
+  for (const t of document.querySelectorAll('[role="tooltip"]')) {
+    const r = t.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) continue;
+    const d = Math.abs((r.top + r.bottom) / 2 - a.y);
+    if (d < dist) { dist = d; best = (t.innerText || '').trim(); }
+  }
+  return dist <= a.near ? (best || '').slice(0, 120) : null;
 }"""
 
 # Oturum/engel denetimi için sayfa durumu. Gövde metni yalnız akış YOKSA alınır (gönderi metni taranmasın); hiçbir yere yazılmaz.
@@ -321,6 +340,40 @@ def parse_fb_time(text: str | None, now: datetime, tz: str = BROWSER_TZ) -> date
         out = now - (local_now - parsed)
     else:
         out = parsed.replace(tzinfo=zone).astimezone(timezone.utc)
+    if out > now + timedelta(minutes=5) or out < now - timedelta(days=5 * 365):
+        return None
+    return out
+
+
+_MONTHS = {m: i for i, m in enumerate(("january", "february", "march", "april", "may", "june", "july", "august", "september",
+                                        "october", "november", "december"), 1)}
+_TIP_DMY = re.compile(r"(?:[a-z]+,?\s+)?(\d{1,2})\s+([a-z]+),?\s+(\d{4})\s+at\s+(\d{1,2}):(\d{2})\s*([ap]m)?$")
+_TIP_MDY = re.compile(r"(?:[a-z]+,?\s+)?([a-z]+)\s+(\d{1,2}),?\s+(\d{4})\s+at\s+(\d{1,2}):(\d{2})\s*([ap]m)?$")
+
+
+def parse_tooltip_time(text: str | None, now: datetime, tz: str = BROWSER_TZ) -> datetime | None:
+    """Zaman bağlantısı ipucundaki tam tarih (tarayıcının saat diliminde) -> UTC. "Tuesday 6 October 2026 at 18:27" (İngiltere) ve
+    "Tuesday, October 6, 2026 at 6:27 PM" (ABD). Tanınmayan, gelecekte ya da 5 yıldan eski -> None."""
+    s = " ".join((text or "").replace("\u202f", " ").replace("\u200e", "").split()).lower()
+    if not s or len(s) > 80:
+        return None
+    if m := _TIP_DMY.match(s):
+        day, month, year, hour, minute, ampm = m.groups()
+    elif m := _TIP_MDY.match(s):
+        month, day, year, hour, minute, ampm = m.groups()
+    else:
+        return None
+    if month not in _MONTHS:
+        return None
+    h = int(hour)
+    if ampm:
+        if not 1 <= h <= 12:
+            return None
+        h = h % 12 + (12 if ampm == "pm" else 0)
+    try:
+        out = datetime(int(year), _MONTHS[month], int(day), h, int(minute), tzinfo=ZoneInfo(tz)).astimezone(timezone.utc)
+    except ValueError:
+        return None
     if out > now + timedelta(minutes=5) or out < now - timedelta(days=5 * 365):
         return None
     return out
@@ -516,6 +569,10 @@ class FeedScan:
             return self.now - FIRST_WINDOW
         return self.cursor.posted_at - OLD_MARGIN if self.cursor.posted_at else None
 
+    def wants(self, post: SocialPost) -> bool:
+        """Bu gönderi değerlendirilecek mi (tarih için fareyle gelmeye değer mi)? İmleç gönderisi ve tekrar değil."""
+        return not self.stop and post.post_id != self.cursor.post_id and post.post_id not in self._ids
+
     def offer(self, post: SocialPost) -> bool:
         """Gönderiyi değerlendirir; alındıysa True."""
         if self.stop:
@@ -534,9 +591,15 @@ class FeedScan:
             return False
         t, limit = post.posted_at, self.limit()
         if t is None:
-            # ilk okumada tarihsiz gönderi alınmaz (eski olabilir); sonrakilerde imleçten önce göründüyse yenidir (kronolojik akış)
-            return False if self.first_read else self._take(post, newer=True)
-        if self.first_read and not post.pinned and (self._newest_seen is None or t > self._newest_seen.posted_at):
+            # ilk okumada tarihsiz gönderi alınmaz (eski olabilir). Tarihli gönderi hiç görülmezse en üstteki (sabit olmayan)
+            # tarihsiz gönderi imleç olur: sonraki okumalar kimlikle durur (kronolojik akış); yoksa her tur "ilk okuma" kalırdı.
+            if self.first_read:
+                if not post.pinned and self._newest_seen is None:
+                    self._newest_seen = post
+                return False
+            return self._take(post, newer=True)
+        if self.first_read and not post.pinned and (
+                self._newest_seen is None or self._newest_seen.posted_at is None or t > self._newest_seen.posted_at):
             self._newest_seen = post
         if limit is not None and (t < limit if self.first_read else t <= limit):
             self.old_streak += 1
@@ -674,7 +737,7 @@ class FacebookBrowserFetcher:
         self._page_obj = None
         self._healthy = True
         self._loads = 0  # sayfa yüklemesi (istek) sayacı
-        self._expands = self._hovers = 0
+        self._expands = self._hovers = self._time_hovers = 0
         self._expand_off = False
         self.last_stats: dict = {}  # son okumanın sayaçları (yalnız sayı; metin/ad yok): 2. gün denemesinde teşhis için
 
@@ -752,7 +815,7 @@ class FacebookBrowserFetcher:
         if self._loads:
             self._pause(PAGE_GAP_S)
         self._loads += 1
-        self._expands = self._hovers = 0
+        self._expands = self._hovers = self._time_hovers = 0
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
         except Exception as e:  # ağ/proxy hatası (net::ERR_*, zaman aşımı): fren değil, tur biter. Adres (grup) mesaja girmez.
@@ -800,6 +863,32 @@ class FacebookBrowserFetcher:
         self._sleep(self._rng.uniform(0.8, 1.5))
         fresh = self._extract(page, only=item["i"])
         return fresh[0] if fresh else item
+
+    def _hover_time(self, page, item: dict) -> datetime | None:
+        """Zaman bağlantısına (gerçek fare) gelinir, çıkan ipucundaki tam tarih okunur. Facebook zamanı yazı olarak koymuyor."""
+        if self._time_hovers >= MAX_TIME_HOVER or int(item.get("tlink", -1)) < 0:
+            return None
+        rect = self._target(page, item["i"], "link", int(item["tlink"]))
+        if not rect:
+            return None
+        self._time_hovers += 1
+        self._mouse_to(page, rect["x"], rect["y"])
+        waited = 0.0
+        while waited < TIME_TIP_WAIT_S:
+            step = self._rng.uniform(0.25, 0.4)
+            self._sleep(step)
+            waited += step
+            tip = page.evaluate(TOOLTIP_JS, {"y": rect["y"], "near": 120})
+            if tip and (t := parse_tooltip_time(tip, self._clock(), self.tz)):
+                return t
+        return None
+
+    def _dated(self, page, item: dict, post: SocialPost, stats: Counter) -> SocialPost:
+        if post.posted_at is not None:
+            return post
+        t = self._hover_time(page, item)
+        stats["ipucu_tarih" if t else "ipucu_yok"] += int(int(item.get("tlink", -1)) >= 0)
+        return replace(post, posted_at=t) if t else post
 
     def _expand(self, page, item: dict) -> dict | None:
         """Gövdedeki "See more"a gerçek fare tıklaması; sayfa değişirse geri dönülür ve bu tur bir daha basılmaz."""
@@ -892,6 +981,8 @@ class FacebookBrowserFetcher:
             if group and not source_matches(source, group):
                 stats["grup_adi_farkli"] += 1  # grubun kendi akışı: yine de bu gruba yazılır (kaynak listesine slug eklenmeli)
             post = to_post(item, source, pid, now, self.tz)
+            if scan.wants(post):
+                post = self._dated(page, item, post, stats)
             stats["tarihsiz"] += post.posted_at is None
             stats["yedek_metin"] += not item.get("body", True)
             if scan.offer(post):
@@ -934,6 +1025,8 @@ class FacebookBrowserFetcher:
                 return multi.stopped
             looked[source.key] += 1
             post = to_post(item, source, pid, now, self.tz)
+            if scans[source.key].wants(post):
+                post = self._dated(page, item, post, stats)
             stats["tarihsiz"] += post.posted_at is None
             if multi.offer(source.key, post):
                 self._take_expanded(page, item, post, scans[source.key], stats)

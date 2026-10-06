@@ -64,6 +64,7 @@ class FakePage:
         self.url, self.gotos, self.calls, self.backs = "about:blank", [], 0, 0
         self.last_target, self.clicked, self.hovered = None, set(), set()
         self.mouse = FakeMouse(self)
+        self.tooltips = {}  # gönderi sırası -> zaman bağlantısı ipucu metni
 
     def goto(self, url, **kw):
         self.gotos.append(url)
@@ -96,6 +97,9 @@ class FakePage:
             return dict(self.state)
         if js is fb.WEBRTC_JS:
             return list(self.rtc)
+        if js is fb.TOOLTIP_JS:
+            i = self.last_target[0] if self.last_target else None
+            return self.tooltips.get(i)
         if js is fb.TARGET_JS:
             self.last_target = (arg["i"], arg["kind"])
             return {"x": 100.0, "y": 300.0, "w": 60.0, "h": 17.0}
@@ -352,6 +356,58 @@ def test_first_read_with_nothing_new_still_sets_cursor_and_skips_undated():
     r = scan.result()
     assert r.posts == [] and scan.stop == "eski"
     assert r.cursor == Cursor("2000000000000005", utc(2026, 10, 4, 6, 0))  # görülen en yeni (eski) gönderi
+
+
+def test_first_read_all_undated_sets_cursor_to_top_post_so_next_read_stops_by_id():
+    scan = fb.FeedScan(Cursor(), NOW, 20)
+    pinned = replace_post(post_of(1), post_id="2000000000000001", posted_at=None, pinned=True)
+    top = replace_post(post_of(2), post_id="2000000000000002", posted_at=None)
+    older = replace_post(post_of(3), post_id="2000000000000003", posted_at=None)
+    assert not any(scan.offer(p) for p in (pinned, top, older))  # ilk okumada tarihsiz: alınmaz
+    cur = scan.result().cursor
+    assert cur == Cursor("2000000000000002", None)  # sabit olmayan en üstteki
+    nxt = fb.FeedScan(cur, NOW, 20)
+    fresh = replace_post(post_of(4), post_id="2000000000000009", posted_at=None)
+    assert nxt.offer(fresh) and not nxt.offer(top) and nxt.stop == "imlec"
+    assert [p.post_id for p in nxt.result().posts] == ["2000000000000009"]
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Tuesday 6 October 2026 at 18:27", datetime(2026, 10, 6, 15, 27, tzinfo=UTC)),
+    ("Tuesday, October 6, 2026 at 6:27 PM", datetime(2026, 10, 6, 15, 27, tzinfo=UTC)),
+    ("Monday, 5 October 2026 at 09:05", datetime(2026, 10, 5, 6, 5, tzinfo=UTC)),
+    ("October 5, 2026 at 12:10 AM", datetime(2026, 10, 4, 21, 10, tzinfo=UTC)),
+    ("Like", None), ("", None), ("Tuesday 6 Octember 2026 at 18:27", None), ("Friday 9 October 2026 at 18:27", None),  # gelecekte
+])
+def test_parse_tooltip_time(text, expected):
+    now = datetime(2026, 10, 6, 16, 0, tzinfo=UTC)
+    assert fb.parse_tooltip_time(text, now, "Europe/Istanbul") == expected
+
+
+def test_timestamp_read_from_hover_tooltip_only_for_posts_to_evaluate(tmp_path):
+    picked = [copy.deepcopy(x) for x in ITEMS if fb.post_identity(x)[1] and not x.get("pinned")][:3]
+    for x in picked:
+        x["times"], x["utime"], x["tlink"] = [], None, 0  # Facebook zamanı yazı olarak vermiyor: yalnız ipucu
+    page = FakePage(picked, per_call=3)
+    page.tooltips = {0: "Monday 5 October 2026 at 14:27", 1: "Monday, October 5, 2026 at 1:00 PM", 2: "Monday 28 September 2026 at 10:00"}
+    f, _ = make(page, tmp_path)
+    r = f.fetch_new(SOURCE, Cursor(), 20)
+    ids = [fb.post_identity(x)[1] for x in picked]
+    assert [p.post_id for p in r.posts] == ids[:2]  # 3. gönderi 24 saatten eski: alınmaz
+    assert r.posts[0].posted_at == utc(2026, 10, 5, 11, 27) and r.posts[1].posted_at == utc(2026, 10, 5, 10, 0)
+    assert r.cursor == Cursor(ids[0], utc(2026, 10, 5, 11, 27))
+    assert f.last_stats["ipucu_tarih"] == 3 and f._time_hovers == 3  # tarih için yalnız fareyle gelinir (tıklama yalnız "See more")
+
+
+def test_no_tooltip_hover_for_cursor_post_or_without_time_link(tmp_path):
+    picked = [copy.deepcopy(x) for x in ITEMS if fb.post_identity(x)[1] and not x.get("pinned")][:2]
+    picked[0]["times"], picked[0]["utime"], picked[0]["tlink"] = [], None, 0
+    picked[1]["times"], picked[1]["utime"] = [], None  # zaman bağlantısı adayı yok
+    page = FakePage(picked, per_call=2)
+    f, _ = make(page, tmp_path)
+    cur = Cursor(fb.post_identity(picked[0])[1], None)  # ilk gönderi imleç: fareyle gelmeye değmez
+    f.fetch_new(SOURCE, cur, 20)
+    assert f.last_stats.get("ipucu_tarih", 0) == 0 and f.last_stats.get("ipucu_yok", 0) == 0 and f._time_hovers == 0
 
 
 def test_max_posts_cap():
