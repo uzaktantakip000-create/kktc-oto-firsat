@@ -95,12 +95,13 @@ install_helpers() {
 # Sosyal okuyucuyu zamanlayıcıyla AYNI kullanıcı (kktc-social), ayar dosyası ve güvenlik duvarıyla elle çalıştırır. Örnekler:
 #   sudo kktc-social status
 #   sudo kktc-social login facebook        (önce: sudo systemctl start kktc-novnc + SSH tüneli; README)
+#   sudo kktc-social browse facebook       (gruplara katılmak için; önce kktc-novnc + SSH tüneli)
 #   sudo kktc-social resume facebook --yes
 #   sudo kktc-social compare facebook
 set -euo pipefail
 if [ "$(id -u)" -ne 0 ]; then exec sudo -- "$0" "$@"; fi
 if [ "$#" -eq 0 ]; then
-  echo "Kullanım: sudo kktc-social <status | login P | run P | resume P --yes | compare facebook>   (P = facebook | instagram)" >&2
+  echo "Kullanım: sudo kktc-social <status | login P | browse facebook | run P | resume P --yes | compare facebook>   (P = facebook | instagram)" >&2
   exit 2
 fi
 fw=$(nft list table inet kktc_social 2>/dev/null) || fw=
@@ -110,7 +111,7 @@ case "$fw" in
      exit 3 ;;
 esac
 install -d -m 700 -o kktc-social -g kktc-social /var/lib/kktc-social/tmp/manual
-case "$1" in login|run|compare) systemctl start kktc-xvfb.service ;; esac
+case "$1" in login|browse|run|compare) systemctl start kktc-xvfb.service ;; esac
 if [ -t 0 ] && [ -t 1 ]; then io=--pty; else io=--pipe; fi
 exec systemd-run --quiet --wait --collect "$io" \
   --uid=kktc-social --gid=kktc-social \

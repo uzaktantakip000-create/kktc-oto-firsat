@@ -55,7 +55,7 @@ Kurulum sana üç kısa komut kazandırır:
 
 | Komut | Ne yapar |
 |---|---|
-| `sudo kktc-social <komut>` | Okuyucuyu elle çalıştırır. Zamanlayıcıyla aynı kullanıcı, ayar ve güvenlik duvarı kullanılır. Komutlar: `status`, `login facebook`, `login instagram`, `resume facebook --yes`, `compare facebook` |
+| `sudo kktc-social <komut>` | Okuyucuyu elle çalıştırır. Zamanlayıcıyla aynı kullanıcı, ayar ve güvenlik duvarı kullanılır. Komutlar: `status`, `login facebook`, `login instagram`, `browse facebook`, `resume facebook --yes`, `compare facebook` |
 | `sudo kktc-firewall <komut>` | Güvenlik duvarını yönetir. Komutlar: `apply`, `show`, `test`, `ipinfo`, `off` |
 | `sudo kktc-deploy` | Kodu günceller |
 
@@ -199,8 +199,14 @@ sudo chmod 640 /etc/kktc-social/vnc.passwd
    ```
    sudo kktc-social login facebook
    ```
-   Uzak masaüstünde proxy üzerinden bir tarayıcı açılır. **İkinci** Facebook hesabınla gir. Doğrulama isterse tamamla. Terminalde ne yazıyorsa ona uy. Şifreyi kod yazmaz; girişi sen yaparsın.
-5. **Facebook dilini İngilizce yap:** Settings & privacy → Settings → Language and region → Facebook language → **English (US)**. Okuyucu "6h" gibi İngilizce zaman ifadelerini okur.
+   Uzak masaüstünde proxy üzerinden bir tarayıcı açılır. **İkinci** Facebook hesabınla gir. Yeni hesap açacaksan **Create new account**'a bas. Doğrulama ya da e-posta kodu isterse tamamla. Terminalde ne yazıyorsa ona uy. Şifreyi kod yazmaz; girişi sen yaparsın. Bitince sol üstteki Facebook logosuna bas. Ana sayfa açılınca oturum kaydedilir ve pencere kapanır (en çok 30 dakika beklenir).
+5. **Facebook'u elle kullanmak için** (dili ayarlamak, gruplara katılmak) kayıtlı oturumla tarayıcıyı aç:
+   ```
+   sudo kktc-social browse facebook
+   ```
+   Bitince sekmeyi kapat; oturum güncellenip kaydedilir (en çok 30 dakika). Okuma turu sürerken çalışmaz; turun bitmesini bekle.
+   - **Dili İngilizce yap:** Settings & privacy → Settings → Language and region → Facebook language → **English (US)**. Okuyucu "6h" gibi İngilizce zaman ifadelerini okur.
+   - **Gruplara katıl:** Günde en çok 1–2 gruba istek gönder. Soruları kendin cevapla. Beğeni, yorum ve mesaj yok.
 6. Instagram için de aynısını yap (ikinci Instagram hesabıyla):
    ```
    sudo kktc-social login instagram

@@ -997,6 +997,44 @@ def login(env: Mapping[str, str], state_dir: Path, *, opener: Callable[[], Brows
                 out("Oturum kaydedildi. Facebook okuması bu oturumla çalışır.")
                 return
             sleep(LOGIN_POLL_S)
-        raise SocialStop(Signal.LOGIN_REQUIRED, "giriş 15 dakikada tamamlanmadı; oturum kaydedilmedi")
+        raise SocialStop(Signal.LOGIN_REQUIRED, f"giriş {LOGIN_TIMEOUT_S // 60} dakikada tamamlanmadı; oturum kaydedilmedi")
+    finally:
+        session.close()
+
+
+BROWSE_TIMEOUT_S = 30 * 60
+BROWSE_HELP = """
+Facebook elle kullanım (okuyucu hesabı, kayıtlı oturumla):
+  1. VPS ekranındaki tarayıcıda Facebook ana sayfası açık. Gruplara katılma isteğini, soruların cevabını KENDİN gönder.
+     Program hiçbir şey yazmaz, tıklamaz. Günde 1-2 gruptan fazlasına istek gönderme; beğeni, yorum, mesaj yok.
+  2. Bitince sekmeyi kapat (pencerenin sağ üstündeki X). Oturum güncellenip kaydedilir.
+Proxy: {proxy} · saat dilimi: {tz} · en çok {minutes} dakika (sonra kendiliğinden kaydedilip kapanır).
+"""
+
+
+def browse(env: Mapping[str, str], state_dir: Path, *, opener: Callable[[], BrowserSession] | None = None,
+           sleep: Callable[[float], None] = time.sleep, monotonic: Callable[[], float] = time.monotonic,
+           out: Callable[[str], None] = print) -> None:
+    """Sahip için: kayıtlı oturumla görünür Chromium (aynı proxy, aynı parmak izi); sahip gruplara KENDİSİ katılır. Sekmeler kapanınca
+    ya da süre dolunca oturum yeniden yazılır; oturum düşmüşse (c_user yok) eski dosya EZİLMEZ."""
+    proxy = proxy_from_env(env)
+    tz_name = browser_tz(env)
+    path = Path(state_dir) / STATE_FILE
+    if not path.exists():
+        raise SocialStop(Signal.LOGIN_REQUIRED, "oturum dosyası yok: önce login çalıştırılmalı")
+    session = (opener or (lambda: _open_browser(proxy, headless=False, tz_name=tz_name, state_path=path)))()
+    try:
+        _check_webrtc(session.context)
+        page = session.context.new_page()
+        page.goto(FB_ORIGIN + "/", wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
+        out(BROWSE_HELP.format(proxy=mask_proxy(env.get(PROXY_ENV)), tz=tz_name, minutes=BROWSE_TIMEOUT_S // 60))
+        deadline = monotonic() + BROWSE_TIMEOUT_S
+        while monotonic() < deadline and any(not p.is_closed() for p in session.context.pages):
+            sleep(LOGIN_POLL_S)
+        if has_c_user(session.context):
+            _write_state(path, session.context.storage_state())
+            out("Oturum güncellendi ve kaydedildi.")
+        else:
+            out("UYARI: oturum düşmüş görünüyor (c_user yok); kayıtlı oturum değiştirilmedi. Gerekirse: login facebook")
     finally:
         session.close()

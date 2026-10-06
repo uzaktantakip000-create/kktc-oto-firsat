@@ -731,6 +731,56 @@ def test_login_timeout_saves_nothing(tmp_path):
     assert e.value.signal == Signal.LOGIN_REQUIRED and not (tmp_path / fb.STATE_FILE).exists()
 
 
+class BrowsePage(FakePage):
+    def __init__(self, close_after):
+        super().__init__()
+        self.checks, self.close_after = 0, close_after
+
+    def is_closed(self):
+        self.checks += 1
+        return self.checks > self.close_after
+
+
+class BrowseContext(FakeContext):
+    def __init__(self, page, cookies=None):
+        super().__init__(page, cookies=cookies)
+        self.pages = [page]
+
+    def storage_state(self):
+        return {"cookies": list(self._cookies), "origins": []}
+
+
+def _browse(tmp_path, ctx, clock=None):
+    out = []
+    fb.browse({fb.PROXY_ENV: PROXY_URL}, tmp_path, opener=lambda: fb.BrowserSession(ctx, lambda: setattr(ctx, "closed", True)),
+              sleep=lambda s: None, monotonic=clock or iter(range(10_000)).__next__, out=out.append)
+    return "\n".join(out)
+
+
+def test_browse_needs_saved_session(tmp_path):
+    with pytest.raises(SocialStop) as e:
+        _browse(tmp_path, BrowseContext(BrowsePage(1)))
+    assert e.value.signal == Signal.LOGIN_REQUIRED
+
+
+def test_browse_opens_home_with_saved_state_and_saves_when_tab_closed(tmp_path):
+    (tmp_path / fb.STATE_FILE).write_text('{"cookies": []}')
+    page = BrowsePage(close_after=3)
+    ctx = BrowseContext(page, cookies=[{"name": "c_user", "value": "1"}, {"name": "xs", "value": "2"}])
+    shown = _browse(tmp_path, ctx)
+    path = tmp_path / fb.STATE_FILE
+    assert page.gotos == [fb.FB_ORIGIN + "/"] and ctx.closed and page.checks == 4
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600 and len(json.loads(path.read_text())["cookies"]) == 2
+    assert "s3cr3t" not in shown and "kaydedildi" in shown and not page.mouse.clicks
+
+
+def test_browse_times_out_and_never_overwrites_with_logged_out_state(tmp_path):
+    (tmp_path / fb.STATE_FILE).write_text('{"cookies": ["eski"]}')
+    ctx = BrowseContext(BrowsePage(close_after=10**9), cookies=[])
+    shown = _browse(tmp_path, ctx, clock=iter(range(0, 10**7, 60)).__next__)
+    assert json.loads((tmp_path / fb.STATE_FILE).read_text()) == {"cookies": ["eski"]} and "UYARI" in shown and ctx.closed
+
+
 # ---------------------------------------------------------------- yapı
 
 def test_playwright_is_imported_only_inside_functions():

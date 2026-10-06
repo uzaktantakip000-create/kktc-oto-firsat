@@ -6,6 +6,7 @@ from random import Random
 from types import SimpleNamespace
 
 import pytest
+from pathlib import Path
 
 from application import collect_facebook as cf
 from application.social_port import Cursor, FetchResult, SocialPost, SocialStop
@@ -54,11 +55,11 @@ class Fetcher:
 
 class Loader:
     def __init__(self, fetcher=None):
-        self.fetcher, self.imported, self.built, self.logins = fetcher or Fetcher(), [], 0, 0
+        self.fetcher, self.imported, self.built, self.logins, self.browses = fetcher or Fetcher(), [], 0, 0, 0
 
     def __call__(self, name):
         self.imported.append(name)
-        return SimpleNamespace(build=self.build, login=self.login)
+        return SimpleNamespace(build=self.build, login=self.login, browse=self.browse)
 
     def build(self, env, state_dir):
         self.built += 1
@@ -66,6 +67,9 @@ class Loader:
 
     def login(self, env, state_dir):
         self.logins += 1
+
+    def browse(self, env, state_dir):
+        self.browses += 1
 
 
 @pytest.fixture
@@ -174,6 +178,18 @@ def test_login_uses_lazy_module(env):
     loader = Loader()
     code, lines = main(["login", "instagram"], env, loader)
     assert code == 0 and loader.logins == 1 and loader.imported == ["infrastructure.collectors.instagram_instaloader"]
+
+
+def test_browse_is_facebook_only_and_respects_platform_lock(env, tmp_path):
+    loader = Loader()
+    code, _ = main(["browse", "facebook"], env, loader)
+    assert code == 0 and loader.browses == 1 and loader.imported == ["infrastructure.collectors.facebook_browser"]
+    code, lines = main(["browse", "instagram"], env, loader)
+    assert code == 1 and loader.browses == 1
+    with w.platform_lock(Path(env["SOCIAL_STATE_DIR"]), "facebook") as got:  # okuma turu sürüyor
+        assert got
+        code, lines = main(["browse", "facebook"], env, loader)
+    assert code == 1 and loader.browses == 1 and "çalışma sürüyor" in lines[-1]
 
 
 def test_missing_fetcher_module_is_clear_error(env):

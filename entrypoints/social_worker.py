@@ -4,6 +4,7 @@
   python -m entrypoints.social_worker resume <platform> --yes            # sahip hesabı kontrol etti: freni kaldır
   python -m entrypoints.social_worker status                             # fren, son tur, sonraki tur, kaynak hataları
   python -m entrypoints.social_worker login <platform>                   # sahip VPS'teki tarayıcıda KENDİSİ girer (kod şifre yazmaz)
+  python -m entrypoints.social_worker browse facebook                    # sahip kayıtlı oturumla tarayıcıda gruplara KENDİSİ katılır
   python -m entrypoints.social_worker compare facebook [--force]         # deneme A/B: grup sayfaları ↔ birleşik akış kapsaması
 
 Ortam: SOCIAL_MODE=trial (zorunlu: 1. aşama yalnız deneme dosyasına yazar, veritabanına ASLA), SOCIAL_STATE_DIR, SOCIAL_SOURCES_CSV,
@@ -217,6 +218,16 @@ def cmd_login(cfg: Config, platform: str, *, import_module, log) -> int:
         return EXIT_OK
 
 
+def cmd_browse(cfg: Config, platform: str, *, import_module, log) -> int:
+    with platform_lock(cfg.state_dir, platform) as got:
+        if not got:
+            log(f"{platform}: çalışma sürüyor (okuma turu), bitince tekrar dene")
+            return EXIT_ERROR
+        _fetcher_module(platform, import_module).browse(cfg.env, cfg.state_dir)
+        log(f"{platform}: elle kullanım bitti")
+        return EXIT_OK
+
+
 def cmd_compare(cfg: Config, platform: str, force: bool, *, clock, sleep, rng, import_module, log) -> int:
     if not cfg.trial_mode():
         log(MODE_REFUSED)
@@ -269,6 +280,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="fren, son tur, sonraki tur")
     login = sub.add_parser("login", help="sahip tarayıcıda kendisi girer")
     login.add_argument("platform", choices=PLATFORMS)
+    brw = sub.add_parser("browse", help="sahip kayıtlı oturumla tarayıcıda kendisi gezinir (gruplara katılma)")
+    brw.add_argument("platform", choices=["facebook"])
     cmp_ = sub.add_parser("compare", help="deneme A/B: grup sayfaları ↔ birleşik akış")
     cmp_.add_argument("platform", choices=["facebook"])
     cmp_.add_argument("--force", action="store_true")
@@ -294,6 +307,8 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None, *,
             return cmd_status(cfg, clock=clock, log=log)
         if args.cmd == "login":
             return cmd_login(cfg, args.platform, import_module=import_module, log=log)
+        if args.cmd == "browse":
+            return cmd_browse(cfg, args.platform, import_module=import_module, log=log)
         return cmd_compare(cfg, args.platform, args.force, clock=clock, sleep=sleep, rng=rng, import_module=import_module, log=log)
     except SourcesFileError as e:
         log(str(e))
