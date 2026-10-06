@@ -114,8 +114,11 @@ def main(arg: str = "all") -> None:
     for job in JOBS if arg == "all" else (arg,):
         errors += run(job, repo, outcomes)
     report_collect_errors(repo, errors)
+    beat = False
     if browser_job and not errors and kktcarabam_worked(outcomes):  # VPS'te yalnız GERÇEK başarıda (Cloudflare engelinde yazılmaz: GitHub toplamaya devam eder)
-        mark_vps(repo, VPS_BROWSER_KEY)
+        beat = mark_vps(repo, VPS_BROWSER_KEY)
+    if browser_job:
+        selfwatch.after_browser(repo, beat)  # öz-izleme (hata yutar): GitHub'da "sunucu KKTCarabam'ı okuyamıyor" uyarısı, VPS'te "yeniden okuyor" bildirimi
 
 
 if __name__ == "__main__":

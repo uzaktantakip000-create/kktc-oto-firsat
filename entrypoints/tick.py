@@ -159,9 +159,9 @@ def main() -> None:
         eval_ok = timed_evaluate("değerlendirme (2)") and eval_ok
     report_collect_errors(repo, errors)
     print(f"tur toplam: {time.monotonic() - started:.0f} sn", flush=True)
-    if eval_ok:
-        mark_vps(repo, VPS_TICK_KEY)  # kalp atışı YALNIZ başarılı turdan sonra (VPS'te); hiç başta değil
-    else:
+    beat = mark_vps(repo, VPS_TICK_KEY) if eval_ok else False  # kalp atışı YALNIZ başarılı turdan sonra (VPS'te); hiç başta değil
+    selfwatch.after_tick(repo, beat)  # öz-izleme (hata yutar): GitHub'da "sunucu turları durdu" uyarısı, VPS'te "yeniden çalışıyor" bildirimi
+    if not eval_ok:
         sys.exit(1)  # toplama ve raporlar bitti; değerlendirme çöktüyse iş akışı kırmızı olsun
 
 

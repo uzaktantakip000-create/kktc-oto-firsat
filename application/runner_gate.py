@@ -46,11 +46,14 @@ def github_should_skip(repo, key: str, max_age: timedelta, now: datetime | None 
         return False
 
 
-def mark_vps(repo, key: str, now: datetime | None = None) -> None:
-    """VPS'te, başarılı turdan sonra kalp atışını yazar; başka yerde hiçbir şey yapmaz. Yazılamazsa tur bozulmaz (GitHub yalnız devralır)."""
+def mark_vps(repo, key: str, now: datetime | None = None) -> bool:
+    """VPS'te, başarılı turdan sonra kalp atışını yazar; başka yerde hiçbir şey yapmaz. Yazılamazsa tur bozulmaz (GitHub yalnız devralır).
+    Dönen: kalp atışı gerçekten yazıldı mı (kesinti sonu bildirimi bunu ister: application/selfwatch)."""
     if not on_vps():
-        return
+        return False
     try:
         repo.set_state(key, (now or datetime.now(timezone.utc)).isoformat())
+        return True
     except Exception as e:
         print(f"VPS kalp atışı yazılamadı ({type(e).__name__})")
+        return False
