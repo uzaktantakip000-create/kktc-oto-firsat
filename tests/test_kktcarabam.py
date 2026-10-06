@@ -62,8 +62,21 @@ def page(i, **replace):
 
 
 class Repo:
-    def __init__(self, known=()):
+    def __init__(self, known=(), state=None, fail_read=None, fail_write=None):
         self.known, self.upserts, self.alive, self.checked = set(known), [], [], 0
+        self.state, self.writes = dict(state or {}), []  # bot_state (anahtar -> metin) ve yapılan yazmalar
+        self.fail_read, self.fail_write = fail_read, fail_write  # her okuma/yazmada fırlatılacak hata
+
+    def get_state(self, key, default=None):
+        if self.fail_read:
+            raise self.fail_read
+        return self.state.get(key, default)
+
+    def set_state(self, key, value):
+        if self.fail_write:
+            raise self.fail_write
+        self.writes.append((key, value))
+        self.state[key] = value
 
     def known_item_ids(self, source_id):
         return set(self.known)
@@ -361,3 +374,166 @@ def test_old_ad_resurfaced_on_the_latest_list_is_not_fresh_once_its_posting_date
     assert not is_fresh(first_seen, posted, now=first_seen + timedelta(minutes=5))  # 19 günlük ilan: taze değil
     assert is_fresh(datetime(2026, 10, 3, 9, 0, tzinfo=timezone.utc), posted, now=datetime(2026, 10, 3, 9, 5, tzinfo=timezone.utc))  # 2 günlük: taze
     assert is_fresh(first_seen, None, now=first_seen + timedelta(minutes=5))  # tarih okunamadıysa kural bugünkü gibi (commit 2 bunu kapatır)
+
+
+# --- tümüyle engelli turdan sonra ilan sayfalarını 24 saat duraklatma (bot_state.kka_detail_paused_until) ---
+PAUSE_NOW = datetime(2026, 10, 6, 8, 7, tzinfo=timezone.utc)
+KEY = kka.DETAIL_PAUSE_KEY
+
+
+def blocked_cards(n=6):
+    return [swift_card(270000 + i) for i in range(n)]
+
+
+def test_pause_key_and_length_are_fixed():
+    assert KEY == "kka_detail_paused_until" and kka.DETAIL_PAUSE == timedelta(hours=24)
+
+
+def test_a_fully_blocked_run_records_a_24_hour_pause_and_logs_one_extra_line(monkeypatch, capsys):
+    cards = blocked_cards(6)
+    net, repo = Wire(monkeypatch, cards, {c.item_id: None for c in cards}), Repo()  # her sayfa 403
+    stats = kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)
+    assert len(net.opened) == 3 and stats.detail_read == 0 and stats.detail_pause_set and not stats.detail_paused
+    assert repo.writes == [(KEY, "2026-10-07T08:07:00+00:00")] and repo.checked == 1  # 24 saat sonrası, UTC ISO
+    assert len(repo.upserts) == 6 and all("km" not in d for _, d in repo.upserts)  # kartlar eskisi gibi kaydedildi
+    out = capsys.readouterr().out.splitlines()
+    assert [l for l in out if "duraklat" in l] == ["KKTCarabam: ilan sayfaları 24 saat duraklatıldı (hepsi engelli; sunucu zorlanmasın): "
+                                                   "07.10 08:07 UTC'den sonraki ilk tur yeniden dener"]
+
+
+def test_exactly_three_new_cards_all_blocked_also_pauses(monkeypatch):
+    cards = blocked_cards(3)  # sınıra tam varıldı (3 üst üste hata), atlanan kart yok
+    net, repo = Wire(monkeypatch, cards, {}), Repo()
+    kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)
+    assert len(net.opened) == 3 and [k for k, _ in repo.writes] == [KEY]
+
+
+@pytest.mark.parametrize("pages,n_cards,label", [
+    ({"270000": None, "270001": None}, 2, "iki hata, sınıra varılmadı"),
+    ({"270000": None, "270001": None, "270002": page(270002), "270003": None, "270004": None}, 5, "bir sayfa okundu (seri bozuldu)"),
+    ({"270000": page(270000), "270001": None, "270002": None, "270003": None}, 4, "okunan sayfa var, sonra üç hata"),
+    ({"270000": RuntimeError("zaman aşımı")}, 1, "tek hata"),
+])
+def test_no_pause_unless_nothing_was_read_and_the_three_in_a_row_limit_was_hit(monkeypatch, pages, n_cards, label):
+    Wire(monkeypatch, blocked_cards(n_cards), pages)
+    repo = Repo()
+    stats = kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)
+    assert repo.writes == [] and not stats.detail_pause_set, label
+
+
+def test_while_paused_no_ad_page_is_opened_cards_are_saved_as_before_and_one_line_is_logged(monkeypatch, capsys):
+    cards = [swift_card(270001), swift_card(270002)]
+    net = Wire(monkeypatch, cards, {c.item_id: page(c.item_id) for c in cards})  # sayfalar AÇILABİLSE bile açılmamalı
+    until = PAUSE_NOW + timedelta(hours=5)
+    repo = Repo(state={KEY: until.isoformat()})
+    stats = kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)
+    assert net.opened == [] and net.sleeps == 0  # ilan sayfası isteği ve bekleme yok
+    assert len(net.sessions) == 1  # yalnız liste sayfası açıldı
+    assert saved(repo) == {c.item_id: card_only_fields(c) for c in cards}  # kartlar eskisi gibi (km/tarih/satıcı olmadan) kaydedildi
+    assert stats.new == 2 and stats.detail_paused and not stats.detail_pause_set
+    assert (stats.detail_read, stats.detail_failed, stats.detail_skipped) == (0, 0, 0)
+    assert repo.writes == [] and repo.state == {KEY: until.isoformat()}  # duraklama uzatılmadı, sıfırlanmadı
+    assert capsys.readouterr().out.splitlines() == [
+        "KKTCarabam: ilan sayfaları 06.10 13:07 UTC'ye kadar duraklatıldı (önceki tur hepsi engelli); kartlar eskisi gibi (km, tarih, satıcı olmadan) kaydedildi"]
+    assert repo.checked == 1  # tur normal tamamlandı
+
+
+def test_a_paused_run_with_no_new_cards_still_logs_exactly_one_line(monkeypatch, capsys):
+    known = swift_card(270001)
+    net, repo = Wire(monkeypatch, [known], {}), Repo(known={"270001"}, state={KEY: (PAUSE_NOW + timedelta(minutes=1)).isoformat()})
+    kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)
+    assert net.opened == [] and repo.upserts == [] and repo.alive == [["270001"]]
+    assert len(capsys.readouterr().out.splitlines()) == 1
+
+
+def test_after_the_pause_expires_the_next_run_probes_normally(monkeypatch):
+    """Süre dolunca ilan sayfaları normal denenir: sayfa okunursa duraklama yenilenmez; yine hepsi engelliyse 24 saat daha."""
+    expired = (PAUSE_NOW - timedelta(seconds=1)).isoformat()
+    net, repo = Wire(monkeypatch, [swift_card(270001)], {"270001": page(270001)}), Repo(state={KEY: expired})
+    stats = kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)
+    assert net.opened == ["270001"] and saved(repo)["270001"]["km"] == 69 and not stats.detail_paused and repo.writes == []
+    # tam bitiş anı (until == now) de bitmiş sayılır
+    net2, repo2 = Wire(monkeypatch, [swift_card(270002)], {"270002": page(270002)}), Repo(state={KEY: PAUSE_NOW.isoformat()})
+    kka.collect_kktcarabam(repo2, SOURCE, now=PAUSE_NOW)
+    assert net2.opened == ["270002"]
+    # yine hepsi engelli: yeni 24 saat
+    net3, repo3 = Wire(monkeypatch, blocked_cards(4), {}), Repo(state={KEY: expired})
+    stats3 = kka.collect_kktcarabam(repo3, SOURCE, now=PAUSE_NOW)
+    assert len(net3.opened) == 3 and stats3.detail_pause_set and repo3.state[KEY] == "2026-10-07T08:07:00+00:00"
+
+
+def test_one_second_before_expiry_is_still_paused(monkeypatch):
+    net = Wire(monkeypatch, [swift_card(270001)], {"270001": page(270001)})
+    repo = Repo(state={KEY: (PAUSE_NOW + timedelta(seconds=1)).isoformat()})
+    stats = kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)
+    assert net.opened == [] and stats.detail_paused
+
+
+@pytest.mark.parametrize("raw", [None, "", "bozuk", "2026-13-45T99:99", "12345", "2026-10-07T08:07:00",  # saat dilimsiz
+                                 "2026-10-07", (PAUSE_NOW + timedelta(days=10)).isoformat(),  # 24 saatten çok ileride: bozuk kayıt
+                                 (PAUSE_NOW - timedelta(days=3)).isoformat()])  # çoktan bitmiş
+def test_unreadable_or_implausible_pause_record_means_no_pause(monkeypatch, capsys, raw):
+    """Kayıt okunamıyor/bozuk/ileri tarihli: ilan sayfaları eskisi gibi denenir (sonsuza kadar duraklamaz)."""
+    net = Wire(monkeypatch, [swift_card(270001)], {"270001": page(270001)})
+    repo = Repo(state={KEY: raw} if raw is not None else {})
+    stats = kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)
+    assert net.opened == ["270001"] and saved(repo)["270001"]["km"] == 69 and not stats.detail_paused
+    assert "duraklat" not in capsys.readouterr().out
+
+
+def test_pause_read_error_behaves_as_before_with_one_log_line_and_never_crashes(monkeypatch, capsys):
+    net = Wire(monkeypatch, [swift_card(270001)], {"270001": page(270001)})
+    repo = Repo(fail_read=RuntimeError("bağlantı koptu: postgresql://u:SIR@host/db"))
+    stats = kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)  # fırlatmaz
+    assert net.opened == ["270001"] and saved(repo)["270001"]["km"] == 69 and not stats.detail_paused
+    out = capsys.readouterr().out
+    assert out.splitlines() == ["KKTCarabam: ilan sayfası duraklatma kaydı okunamadı (RuntimeError); ilan sayfaları eskisi gibi denenecek"]
+    assert "SIR" not in out and "postgresql" not in out  # hata metni yazılmaz, yalnız türü
+
+
+def test_pause_write_error_does_not_break_the_run(monkeypatch, capsys):
+    net, repo = Wire(monkeypatch, blocked_cards(5), {}), Repo(fail_write=RuntimeError("yazılamadı: postgresql://u:SIR@host/db"))
+    stats = kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)  # fırlatmaz
+    assert len(net.opened) == 3 and len(repo.upserts) == 5 and repo.checked == 1 and not stats.detail_pause_set
+    out = capsys.readouterr().out
+    assert "duraklatma kaydı yazılamadı (RuntimeError); sonraki tur ilan sayfalarını yine deneyecek" in out
+    assert "SIR" not in out and "postgresql" not in out and "24 saat duraklatıldı" not in out  # kayıt yoksa "duraklatıldı" denmez
+
+
+@pytest.mark.db
+def test_pause_and_photo_address_round_trip_through_the_real_tables(db, monkeypatch):
+    """Gerçek bot_state/listings tabloları (sahte repo değil): duraklama kaydı YENİ bir bağlantıdan okunur; ikinci turda ilan sayfası açılmaz;
+    kapak fotoğrafı adresi `photo_urls` dizisine yazılır."""
+    import psycopg
+
+    from tests.conftest import safe_test_dsn
+
+    sid = db.conn.execute("INSERT INTO sources (platform, name, url, status) VALUES ('web', 'KKTCarabam', 'https://www.kktcarabam.com/kategori/x', 'aktif') "
+                          "RETURNING id").fetchone()["id"]
+    source = {"id": sid, "name": "KKTCarabam"}
+    photo = "https://www.kktcarabam.com/uploads/images/2026/10/01/13/img-1-6abe346a6b863-270_200.jpg"
+    first = [site.Card("270000", swift_card(270000).url, "2024 Model Otomatik Suzuki Swift", "7.999 GBP", "Suzuki Swift", photo,
+                       datetime(2026, 10, 1, 10, tzinfo=timezone.utc)), *blocked_cards(4)[1:]]
+    net = Wire(monkeypatch, first, {})  # her ilan sayfası 403
+    kka.collect_kktcarabam(db, source, now=PAUSE_NOW)
+    assert len(net.opened) == 3
+    with psycopg.connect(safe_test_dsn()) as other:  # yeni bağlantı: yazma gerçekten kalıcı mı
+        assert other.execute("SELECT value FROM bot_state WHERE key=%s", (KEY,)).fetchone()[0] == "2026-10-07T08:07:00+00:00"
+        rows = dict(other.execute("SELECT source_item_id, photo_urls FROM listings").fetchall())
+    assert rows["270000"] == [photo] and rows["270001"] == [] and len(rows) == 4
+    # ikinci tur (duraklama sürerken): yeni kart gelir, ilan sayfası açılmaz, kart kaydedilir
+    net2 = Wire(monkeypatch, [swift_card(270010)], {"270010": page(270010)})
+    stats = kka.collect_kktcarabam(db, source, now=PAUSE_NOW + timedelta(hours=2))
+    assert net2.opened == [] and stats.detail_paused and stats.new == 1
+    # 24 saat sonra: yeniden denenir
+    net3 = Wire(monkeypatch, [swift_card(270011)], {"270011": page(270011)})
+    stats = kka.collect_kktcarabam(db, source, now=PAUSE_NOW + timedelta(hours=24, minutes=1))
+    assert net3.opened == ["270011"] and stats.detail_read == 1 and not stats.detail_paused
+
+
+def test_failed_list_page_still_raises_as_before_and_touches_no_pause_key(monkeypatch):
+    net, repo = Wire(monkeypatch, [swift_card(270001)], {}), Repo()
+    monkeypatch.setattr(site, "fetch_html", lambda session, url: None)  # liste engelli
+    with pytest.raises(RuntimeError, match="liste sayfası alınamadı"):
+        kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)
+    assert repo.writes == [] and net.opened == []
