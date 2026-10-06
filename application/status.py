@@ -154,7 +154,7 @@ def build_heartbeat(repo: Repository, now: datetime | None = None) -> str:
     text = f"✅ Sistem çalışıyor · son 24 saatte {new_n} yeni ilan tarandı, {sent['strong'] or 0} 🟢 ve {sent['est'] or 0} 🟠 gönderildi."
     if late:
         text += f"\n⚠️ {len(late)} yerde gecikme var (ayrıntı: /durum)."
-    for line in selfwatch.morning_lines(repo, now):  # en çok 2 satır: taramalar nerede + yedek sağlığı, son yedek (kayıt yoksa satır yok; hata sabah mesajını bozmaz)
+    for line in selfwatch.morning_lines(repo, now):  # en çok 3 satır: taramalar nerede + yedek sağlığı, son yedek, sosyal okuyucu (kayıt/dosya yoksa satır yok; hata sabah mesajını bozmaz)
         text += "\n" + line
     return text
 

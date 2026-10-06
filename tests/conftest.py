@@ -18,6 +18,13 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "db: gerçek PostgreSQL gerektirir (yalnızca TEST_DATABASE_URL; yerel ve adında 'test' geçen veritabanı)")
 
 
+@pytest.fixture(autouse=True)
+def _no_real_social_status_file(monkeypatch):
+    """Sosyal okuyucunun GERÇEK durum dosyası (VPS'te var) hiçbir testi etkilemesin: yol var olmayan bir yere çevrilir (sosyal testler kendi geçici dosyasını kurar)."""
+    from application import selfwatch
+    monkeypatch.setattr(selfwatch, "SOCIAL_STATUS_PATH", "/yok/kktc-social-durum/durum.json")
+
+
 def safe_test_dsn(env=None) -> str | None:
     """TEST_DATABASE_URL, yalnızca yerel bir sunucudaki adında 'test' geçen veritabanını gösteriyorsa döner; aksi halde None."""
     dsn = (env if env is not None else os.environ).get("TEST_DATABASE_URL")

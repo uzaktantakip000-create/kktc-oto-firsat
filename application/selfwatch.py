@@ -14,14 +14,19 @@ bot_state anahtarları (hepsi UTC ISO zaman; yazılmamış ya da "" = yok):
   bot_listen_seen                  dinleyici kalp atışı (bot_poll.LISTENER_STATE_KEY; dinleyici yazar, temiz çıkışta siler)
   backup_last_ok                   son BAŞARILI veritabanı yedeği (haftalık yedek işi yazar; burada yalnız okunur, sabah satırı)
 Uyarı tekrar sınırı health.notify_owner'ın kendi `alert:<ad>` kayıtlarıdır; adlar: vps_failover, vps_recovered, vps_browser_failover, vps_browser_recovered,
-listener_down, listener_up, vps_resources.
+listener_down, listener_up, vps_resources, social_<platform>_<fren|hata|susuyor>, social_okuyucu_durmus.
+Sosyal medya okuyucusu (Instagram/Facebook; ayrı program, veritabanımızda değil) aynı VPS'te kendi durum dosyasını yazar (SOCIAL_STATUS_PATH, JSON);
+burada yalnız OKUNUR: sabah satırı + anında uyarı. Dosya yoksa (sosyal taraf kurulu değil) hiçbir şey yazılmaz/uyarılmaz.
 """
+import json
+import re
 import shutil
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 
 from application.health import notify_owner
 from application.runner_gate import SKEW, TICK_FRESH, VPS_BROWSER_KEY, VPS_TICK_KEY, on_github, on_vps
+from domain.kktc_time import KKTC, kktc_hour, to_kktc
 
 GH_TICK_KEY = "gh_tick_seen"
 GH_BROWSER_KEY = "gh_browser_seen"
@@ -42,6 +47,15 @@ RESOURCES = "⚠️ Sunucuda kaynak azalıyor: disk %{pct} boş ({gb} GB), belle
 GH_TICK_MAX_AGE = timedelta(hours=3)  # sabah satırı: yedek GitHub tick'i bundan uzun süredir görünmüyorsa ⚠️ (dış tetikleyici 15 dk'da bir, GitHub'ın kendi saati 2 saatte bir)
 GH_BROWSER_MAX_AGE = timedelta(hours=5)  # aynısı collect-browser için (2 saatte bir)
 BACKUP_MAX_AGE = timedelta(days=8)  # sabah satırı: haftalık veritabanı yedeği bundan eskiyse ⚠️
+SOCIAL_STATUS_PATH = "/var/lib/kktc-social-durum/durum.json"  # sosyal okuyucunun durum dosyası (~20 dk'da bir, yalnız VPS'te); çağrı anında aranır: testler değiştirir
+SOCIAL_SCHEMA = 1  # dosyadaki "surum"; başkası = biçim değişmiş, okunmaz (satır da uyarı da yok)
+SOCIAL_DAY = (time(8), time(23))  # okuyucunun tur attığı KKTC gündüzü [08:00, 23:00); gece boşluğu "susma" sayılmaz, uyarı da yalnız bu saatlerde gider
+SOCIAL_SILENT_AFTER = timedelta(hours=5)  # "tamam" diyen platform GÜNDÜZ saatiyle bu kadar süredir tur atmadıysa susuyor (turlar ~4 saatte bir)
+SOCIAL_FILE_STALE = timedelta(hours=1)  # durum dosyası gündüz saatiyle bundan uzun süredir yazılmadıysa okuyucunun kendisi durmuş (~20 dk'da bir yazar)
+SOCIAL_REASON_MAX = 60  # fren nedeninin mesajdaki en çok uzunluğu
+SOCIAL_REPEAT_H = 24  # aynı sosyal uyarı en erken bu kadar saat sonra tekrar yazılır
+SOCIAL_NAMES = {"instagram": "Instagram", "facebook": "Facebook"}  # satırda önce bunlar (bu sırayla), sonra öbürleri alfabetik; bilinmeyen adın baş harfi büyütülür
+SOCIAL_KEY_OK = re.compile(r"[a-z0-9_]{1,24}")  # platform anahtarı uyarı anahtarına ve mesaja girer: başka bir şey taşıyan platform atlanır
 BROWSER_ALERT_AFTER = timedelta(hours=6)  # KKTCarabam: GitHub 150 dk'da devralır ama tek aksayan tur (Cloudflare, site) uyarı sebebi değil: 3 tur üst üste
 
 
@@ -206,9 +220,126 @@ def listener_watch(repo, now: datetime) -> None:
             repo.set_state(LISTEN_DOWN_KEY, first.isoformat())
 
 
+# --- sosyal medya okuyucusu (Instagram/Facebook): ayrı programın durum dosyasını OKUR, hiçbir şeyi değiştirmez -------------------------
+@dataclass(frozen=True)
+class SocialPlatform:
+    key: str
+    state: str  # "tamam" | "susuyor" | "fren" | "hata" | "belirsiz"
+    part: str  # sabah satırındaki parça: "Instagram ✅ (son tur 2 saat önce, 3 yeni)"
+    alert: str | None  # anında uyarı metni: yalnız susuyor/fren/hata durumlarında
+
+
+@dataclass(frozen=True)
+class SocialView:
+    stale: timedelta | None  # durum dosyası gündüz saatiyle >SOCIAL_FILE_STALE yazılmadıysa dosyanın gerçek yaşı (okuyucu durmuş), değilse None
+    platforms: list[SocialPlatform]
+
+
+def _day_elapsed(start: datetime, end: datetime) -> timedelta:
+    """[start, end] aralığının KKTC gündüz pencereleriyle (SOCIAL_DAY, yerel saat: yaz/kış domain/kktc_time'dan) kesişen süresi: gece boşluğu sayılmaz
+    (22:50'de tur atmış okuyucu 08:30'da 40 dk'lıktır, 9 saat 40 dk'lık değil). Yalnız eşik karşılaştırması içindir: son 3 gün dışı kesilir
+    (her 3 günde 45 saat gündüz var, eşiklerin çok üstünde); aşırı eski bozuk kayıt döngüyü uzatamaz."""
+    start = max(start, end - timedelta(days=3))
+    total, day, last = timedelta(0), to_kktc(start).date(), to_kktc(end).date()
+    while day <= last:
+        opens = datetime.combine(day, SOCIAL_DAY[0], tzinfo=KKTC).astimezone(timezone.utc)  # UTC'ye çevir: aynı saat dilimli çıkarma duvar saatiyle yapılırdı
+        closes = datetime.combine(day, SOCIAL_DAY[1], tzinfo=KKTC).astimezone(timezone.utc)
+        total += max(timedelta(0), min(end, closes) - max(start, opens))
+        day += timedelta(days=1)
+    return total
+
+
+def _social_ages(value, now: datetime) -> tuple[timedelta, timedelta] | None:
+    """(gerçek süre, gündüz süresi). Kayıt yok/bozuk/saat dilimsiz/ileri tarihli ise None (_age ile aynı güvenilmezlik kuralı)."""
+    age = _age(value, now)
+    return None if age is None else (age, _day_elapsed(now - age, now))
+
+
+def _count(value) -> int | None:
+    return value if type(value) is int and value >= 0 else None  # bool/metin/eksi sayı: yok say
+
+
+def _reason(value) -> str | None:
+    """Fren nedeni (başka programın kısa metni): tek satıra indirilir, SOCIAL_REASON_MAX karaktere kısaltılır; metin değilse/boşsa None."""
+    text = " ".join(value.split()) if isinstance(value, str) else ""
+    if not text:
+        return None
+    return text if len(text) <= SOCIAL_REASON_MAX else text[:SOCIAL_REASON_MAX - 1].rstrip() + "…"
+
+
+def _social_platform(key: str, p: dict, now: datetime) -> SocialPlatform:
+    name = SOCIAL_NAMES.get(key, key.capitalize())
+    result, errors = p.get("sonuc"), _count(p.get("kaynak_hatasi")) or 0
+    if result == "tamam":
+        ages = _social_ages(p.get("son_tur_utc"), now)
+        if ages is None:  # "tamam" diyor ama tur zamanı yok/bozuk: susup susmadığı bilinemez
+            return SocialPlatform(key, "belirsiz", f"{name} ⚠️ durum belirsiz", None)
+        age, day_age = ages
+        if day_age > SOCIAL_SILENT_AFTER:
+            return SocialPlatform(key, "susuyor", f"{name} ⚠️ susuyor (son tur {_span(age)} önce)",
+                                  f"⚠️ {name} okuyucusu sustu: son tur {_span(age)} önce. Sunucuda sosyal okuyucunun çalışıp çalışmadığına bakılmalı.")
+        new = _count(p.get("yeni_ilan"))
+        notes = [f"son tur {_span(age)} önce"] + ([f"{new} yeni"] if new is not None else []) + ([f"{errors} kaynak hatası"] if errors else [])
+        return SocialPlatform(key, "tamam", f"{name} ✅ ({', '.join(notes)})", None)
+    if result == "fren":
+        reason = _reason(p.get("fren_nedeni"))
+        why = f": {reason.rstrip('.')}" if reason else " (fren)"
+        return SocialPlatform(key, "fren", f"{name} ⚠️ fren" + (f" ({reason})" if reason else ""),
+                              f"⚠️ {name} okuyucusu durdu{why}. Uzak masaüstünden giriş gerekebilir.")
+    if result == "hata":
+        return SocialPlatform(key, "hata", f"{name} ⚠️ hata" + (f" ({errors} kaynak hatası)" if errors else ""),
+                              f"⚠️ {name} okuyucusu hata veriyor (proxy'ye ulaşılamıyor ya da kaynaklar sürekli hata veriyor). Sunucudaki kaydına bakılmalı.")
+    return SocialPlatform(key, "belirsiz", f"{name} ⚠️ durum belirsiz", None)
+
+
+def read_social(path: str | None = None) -> dict | None:
+    """Sosyal okuyucunun durum dosyasını okur. Dosya yok/okunamıyor/JSON bozuk/çok büyük/"surum" başka/biçim beklenenden farklıysa None (hata yok, log yok:
+    sosyal taraf kurulu olmayabilir). Dosya yazarı tarafından yeniden adlandırılarak (tmp+rename) yazılır: yarım dosya okunmaz."""
+    try:
+        with open(path or SOCIAL_STATUS_PATH, encoding="utf-8") as f:
+            data = json.loads(f.read(65536))
+    except (OSError, ValueError, RecursionError):  # ValueError: bozuk JSON ve UTF-8
+        return None
+    ok = isinstance(data, dict) and type(data.get("surum")) is int and data["surum"] == SOCIAL_SCHEMA and isinstance(data.get("platformlar"), dict)
+    return data if ok else None
+
+
+def judge_social(data: dict, now: datetime) -> SocialView | None:
+    """Saf yargı. Dosyanın yazım zamanı (`yazildi_utc`) yok/bozuk/saat dilimsiz/ileri tarihli ise None (beklenmeyen biçim: satır da uyarı da yok).
+    Sözlük olmayan platform ya da geçersiz anahtar atlanır, öbürleri yine değerlendirilir. Sıra: instagram, facebook, sonra alfabetik."""
+    ages = _social_ages(data.get("yazildi_utc"), now)
+    if ages is None:
+        return None
+    raw = data.get("platformlar")
+    raw = raw if isinstance(raw, dict) else {}
+    keys = [k for k, v in raw.items() if isinstance(k, str) and SOCIAL_KEY_OK.fullmatch(k) and isinstance(v, dict)]
+    order = list(SOCIAL_NAMES)
+    keys.sort(key=lambda k: (order.index(k) if k in order else len(order), k))
+    return SocialView(ages[0] if ages[1] > SOCIAL_FILE_STALE else None, [_social_platform(k, raw[k], now) for k in keys])
+
+
+def social_watch(repo, now: datetime, path: str | None = None) -> None:
+    """VPS tick'inde (yalnız KKTC gündüzü 08–23): durum dosyası bir platform için fren/hata/susma ya da okuyucunun kendisi için "durmuş" diyorsa sahibe
+    BİR uyarı (`social_<platform>_<durum>` / `social_okuyucu_durmus`, 24 saatte bir tekrar). Okuyucu durmuşsa yalnız o uyarı gider: dosyadaki platform
+    bilgisi bayattır, ayrıca "susuyor" demek aynı arızanın kopyası olur. Dosya yoksa/okunamıyorsa/biçim yanlışsa hiçbir şey yapılmaz; düzelince mesaj yok."""
+    if not SOCIAL_DAY[0].hour <= kktc_hour(now) < SOCIAL_DAY[1].hour:
+        return
+    data = read_social(path)
+    view = judge_social(data, now) if data is not None else None
+    if view is None:
+        return
+    if view.stale is not None:
+        notify_owner(repo, "social_okuyucu_durmus", f"⚠️ Sosyal okuyucu durmuş görünüyor (son yazım {_span(view.stale)} önce). Sunucuda çalışıp çalışmadığına bakılmalı.",
+                     repeat_hours=SOCIAL_REPEAT_H)
+        return
+    for p in view.platforms:
+        if p.alert:
+            notify_owner(repo, f"social_{p.key}_{p.state}", p.alert, repeat_hours=SOCIAL_REPEAT_H)
+
+
 def after_tick(repo, beat_written: bool, now: datetime | None = None) -> None:
     """tick.py'nin son adımı (hata yutar). GitHub (atlamadan tarayan tur): sunucu turları durduysa uyarı.
-    VPS: kalp atışı yazıldıysa kesinti sonu bildirimi; her VPS turunda (değerlendirme çökse de) dinleyici bekçisi ve disk/bellek kontrolü."""
+    VPS: kalp atışı yazıldıysa kesinti sonu bildirimi; her VPS turunda (değerlendirme çökse de) dinleyici bekçisi, disk/bellek ve sosyal okuyucu kontrolü."""
     now = now or datetime.now(timezone.utc)
     if on_github():
         _safe("sunucu kesintisi uyarısı", lambda: github_failover(repo, TICK, now))
@@ -217,6 +348,7 @@ def after_tick(repo, beat_written: bool, now: datetime | None = None) -> None:
             _safe("sunucu dönüş bildirimi", lambda: vps_recovery(repo, TICK, now))
         _safe("dinleyici bekçisi", lambda: listener_watch(repo, now))
         _safe("kaynak izleme", lambda: resource_watch(repo, now))
+        _safe("sosyal okuyucu uyarısı", lambda: social_watch(repo, now))
 
 
 def after_browser(repo, beat_written: bool, now: datetime | None = None) -> None:
@@ -228,7 +360,7 @@ def after_browser(repo, beat_written: bool, now: datetime | None = None) -> None
         _safe("KKTCarabam dönüş bildirimi", lambda: vps_recovery(repo, BROWSER, now))
 
 
-# --- sabah mesajına eklenen en çok 2 kısa satır (application/status.build_heartbeat) -----------------------------------------------
+# --- sabah mesajına eklenen en çok 3 kısa satır (application/status.build_heartbeat) -----------------------------------------------
 def _scan_line(repo, now: datetime) -> str | None:
     """"Taramalar: sunucuda ✅ (son tur 4 dk önce) · yedek GitHub ✅ · disk %62 boş, bellek 6,1 GB boş". Kaydı olmayan (ya da bozuk) parça atlanır, ⚠️ yazılmaz;
     hiçbir parça yoksa satır yok. Disk/bellek yalnız sunucuda (VPS) yazılan sabah mesajında görünür."""
@@ -264,11 +396,24 @@ def _backup_line(repo, now: datetime) -> str | None:
     return f"{'⚠️ ' if age > BACKUP_MAX_AGE else ''}Son veritabanı yedeği: {when}"
 
 
+def _social_line(repo, now: datetime) -> str | None:
+    """"Sosyal: Instagram ✅ (son tur 2 saat önce, 3 yeni) · Facebook ⚠️ fren (doğrulama isteniyor (checkpoint))". Yalnız VPS'te yazılan mesajda (durum dosyası
+    orada); dosya yok/okunamıyor/biçim yanlışsa satır yok. Okuyucunun kendisi durmuşsa parçaların başına "⚠️ sosyal okuyucu durmuş görünüyor (son yazım X önce)"."""
+    if not on_vps():
+        return None
+    data = read_social()
+    view = judge_social(data, now) if data is not None else None
+    if view is None:
+        return None
+    parts = ([f"⚠️ sosyal okuyucu durmuş görünüyor (son yazım {_span(view.stale)} önce)"] if view.stale is not None else []) + [p.part for p in view.platforms]
+    return "Sosyal: " + " · ".join(parts) if parts else None
+
+
 def morning_lines(repo, now: datetime | None = None) -> list[str]:
-    """Sabah mesajına eklenecek 0-2 satır. Hiçbir hata sabah mesajını bozmaz (hata veren satır atlanır, öbürü yine yazılır)."""
+    """Sabah mesajına eklenecek 0-3 satır. Hiçbir hata sabah mesajını bozmaz (hata veren satır atlanır, öbürü yine yazılır)."""
     now = now or datetime.now(timezone.utc)
     lines = []
-    for name, build in (("sabah satırı (taramalar)", _scan_line), ("sabah satırı (yedek)", _backup_line)):
+    for name, build in (("sabah satırı (taramalar)", _scan_line), ("sabah satırı (yedek)", _backup_line), ("sabah satırı (sosyal)", _social_line)):
         line = _safe(name, lambda build=build: build(repo, now))
         if line:
             lines.append(line)
