@@ -4,7 +4,12 @@ from datetime import date, timedelta
 from domain.comparables import effective_km
 from domain.normalize import canon_fuel, canon_transmission, fold
 
-TWIN_WINDOW_HOURS = 3  # kaynaklar arası ikiz: iki ilanın ilk görülme farkı en çok bu kadar
+# Kaynaklar arası ikiz: iki ilanın ilk görülme farkı en çok bu kadar. İlk görülme gerçek yayın saati DEĞİLDİR: toplayıcı boşlukları ve toplu yüklemeler
+# (bir tur kaçınca / yeni tarama açılınca ilanlar saatler sonra birden gelir) aynı aracın iki ilanını saatlerce ayırabiliyor. 06.10.2026 salt-okunur
+# ölçüm: 3-24 saat arası 9 çift, hepsi tek eşleşmeli, şehir/vites/yakıt çelişkisiz (fark 3,5 / 7,5 / 20,5 saat: toplu yükleme izi); 1-7 gün arası
+# çiftlerde çelişki oranı (~%41) rastgele çiftlerle aynı: güvenilmez. Bu yüzden pencere 24 saat; daha fazlasına çıkılmaz. Diğer koşullar (birebir aynı tutar,
+# şehir/vites/yakıt çelişmemesi, iki yönde tek eşleşme) aynen durur: pencere genişleyince rastlantısal eşleşme riskini onlar taşır.
+TWIN_WINDOW_HOURS = 24
 # KKTC'nin altı ilçesi; KKTCarabam adresindeki kasaba adları (lapta, alsancak) ilçesine. Tanınmayan değer = bilinmiyor.
 _DISTRICTS = {"lefkosa": "lefkosa", "girne": "girne", "lapta": "girne", "alsancak": "girne", "gazimagusa": "magusa",
               "magusa": "magusa", "iskele": "iskele", "guzelyurt": "guzelyurt", "lefke": "lefke"}
@@ -58,7 +63,8 @@ def cross_source_twin(lean: dict, rich: dict) -> bool:
     BİREBİR aynı tutar ve para birimi, ilk görülme farkı ≤ TWIN_WINDOW_HOURS, şehir/vites/yakıt çelişmiyor (biri bilinmiyorsa çelişki sayılmaz).
     "İki yönde tek eşleşme" şartı ve yön (kopya her zaman `lean`) çağıranda: application/dedupe.py.
     Ölçüm (05.10.2026, salt okunur): ≤3 saatte aynı marka/model/yıl ve çelişmeyen şehir/vites/yakıt 47 KKTCarabam↔KibrisArabaAl çiftinin
-    46'sında tutar birebir aynı; farklı araçlarda birebir aynı tutar oranı (%3,6–5,3) ile beklenen rastlantı ≈2 (üst sınır)."""
+    46'sında tutar birebir aynı; farklı araçlarda birebir aynı tutar oranı (%3,6–5,3) ile beklenen rastlantı ≈2 (üst sınır).
+    Pencere 06.10.2026'da 3 saatten 24 saate çıktı (gerekçe ve ölçüm: TWIN_WINDOW_HOURS yorumu)."""
     if lean["model_norm"] is None or (lean["brand_norm"], lean["model_norm"], lean["year"]) != (rich["brand_norm"], rich["model_norm"], rich["year"]):
         return False
     if lean.get("price_amount") is None or rich.get("price_amount") is None or not lean.get("currency"):

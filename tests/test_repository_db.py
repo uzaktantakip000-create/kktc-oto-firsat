@@ -125,7 +125,7 @@ def test_twin_candidates_returns_only_cross_site_exact_price_rows_within_the_win
     bmw = dict(brand_norm="BMW", model_norm="3", year=2007, price_gbp=5400, price_amount=5400, currency="GBP", km=None)
     add_listing(c, arabam, "a_bmw", **bmw, location="girne", first_seen_at=ago(minutes=10))
     add_listing(c, kaa, "k_bmw", **(bmw | {"km": 145_000}), first_seen_at=ago(minutes=26))  # eş
-    add_listing(c, kaa, "k_bmw_late", **bmw, first_seen_at=ago(hours=4))  # 3 saatten uzak: gelmez
+    add_listing(c, kaa, "k_bmw_late", **bmw, first_seen_at=ago(hours=4))  # 3 saat penceresinde gelmez (24 saatte gelir: aşağıdaki ikinci çağrı)
     add_listing(c, kaa, "k_bmw_price", **(bmw | {"price_amount": 5450, "price_gbp": 5450}), first_seen_at=ago(minutes=20))  # tutar farklı
     add_listing(c, kaa, "k_bmw_try", **(bmw | {"currency": "TRY"}), first_seen_at=ago(minutes=20))  # para birimi farklı
     add_listing(c, other, "x_bmw", **bmw, first_seen_at=ago(minutes=20))  # başka site: gelmez
@@ -145,6 +145,7 @@ def test_twin_candidates_returns_only_cross_site_exact_price_rows_within_the_win
                            ("a_fit_old", "kktcarabam"), ("k_fit_old", "kibrisarabaal")}
     assert found(db.twin_candidates(window_hours=3, new_hours=3)) == {("a_bmw", "kktcarabam"), ("k_bmw", "kibrisarabaal"),
                                                                        ("a_bmw2", "kktcarabam")}
+    assert found(db.twin_candidates(window_hours=24)) == found(full) | {("k_bmw_late", "kibrisarabaal")}  # pencere parametredir: 24 saatte 4 saat uzaktaki ikiz de gelir
     r = next(r for r in full if names[r["id"]] == "a_bmw")
     assert r["price_amount"] == 5400.0 and r["currency"] == "GBP" and r["location"] == "girne" and r["is_active"] and r["duplicate_of"] is None
 

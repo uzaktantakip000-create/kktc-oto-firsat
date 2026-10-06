@@ -165,8 +165,14 @@ def ad(i, site, minutes_ago=0, **kw):
 def test_cross_source_twin_needs_same_key_exact_price_and_close_time():
     a, b = ad("a", "kktcarabam"), ad("b", "kibrisarabaal", 16)
     assert cross_source_twin(a, b)
-    assert cross_source_twin(a, {**b, "first_seen_at": NOW - timedelta(hours=3)})  # sınır dahil
-    assert not cross_source_twin(a, {**b, "first_seen_at": NOW - timedelta(hours=3, minutes=1)})
+    assert cross_source_twin(a, {**b, "first_seen_at": NOW - timedelta(hours=3, minutes=1)})  # eski 3 saat sınırının ötesi: artık bağlanır
+    assert cross_source_twin(a, {**b, "first_seen_at": NOW - timedelta(hours=23)})  # toplayıcı boşluğu / toplu yükleme: saatler sonra gelen ikiz
+    assert cross_source_twin(a, {**b, "first_seen_at": NOW - timedelta(hours=24)})  # sınır dahil
+    assert not cross_source_twin(a, {**b, "first_seen_at": NOW - timedelta(hours=24, minutes=1)})
+    assert not cross_source_twin(a, {**b, "first_seen_at": NOW - timedelta(hours=25)})
+    assert not cross_source_twin(a, {**b, "first_seen_at": NOW - timedelta(days=3)})  # 1-7 gün ölçümde güvenilmez çıktı: pencere 24 saati aşmaz
+    assert cross_source_twin(a, {**b, "first_seen_at": NOW + timedelta(hours=23)})  # KAA sonra görülmüş: pencere iki yönde aynı
+    assert not cross_source_twin(a, {**b, "first_seen_at": NOW + timedelta(hours=25)})
     assert cross_source_twin(a, {**b, "first_seen_at": NOW + timedelta(hours=2)})  # KAA sonra görülmüş: yön aynı
     assert not cross_source_twin(a, {**b, "price_amount": 5450.0})  # yakın fiyat yetmez: BİREBİR aynı tutar
     assert not cross_source_twin(a, {**b, "currency": "TRY"})
@@ -204,7 +210,7 @@ def test_twin_marks_kktcarabam_as_copy_of_kaa_even_when_kktcarabam_was_seen_firs
     assert mark_duplicates(repo) == 1 and repo.dups == {"arabam": "kaa"}
     repo = FakeRepo([], twins=[ad("arabam", "kktcarabam", 120), ad("kaa", "kibrisarabaal", 0)])  # KKTCarabam ÖNCE görülmüş
     assert mark_duplicates(repo) == 1 and repo.dups == {"arabam": "kaa"}
-    assert repo.twin_calls == [(3, None)]
+    assert repo.twin_calls == [(24, None)]  # SQL'e giden pencere de 24 saat (python tarafındaki cross_source_twin ile aynı sabit)
 
 
 def test_twin_requires_a_unique_match_in_both_directions():
@@ -220,6 +226,30 @@ def test_twin_requires_a_unique_match_in_both_directions():
     other = [ad("arabam", "kktcarabam"), ad("kaa1", "kibrisarabaal", 10), ad("kaa2", "kibrisarabaal", 20, location="Lefkoşa"),
              ad("kaa3", "kibrisarabaal", 20, price_amount=5500.0)]
     repo = FakeRepo([], twins=other)
+    assert mark_duplicates(repo) == 1 and repo.dups == {"arabam": "kaa1"}
+
+
+def test_twin_window_links_a_late_twin_at_23_hours_but_not_at_25_hours():
+    # Toplayıcı boşluğu/toplu yükleme: KKTCarabam ilanı KAA ikizinden saatler sonra (ya da önce) ilk kez görülebilir
+    for hours, linked in ((5, 1), (23, 1), (25, 0)):
+        repo = FakeRepo([], twins=[ad("arabam", "kktcarabam"), ad("kaa", "kibrisarabaal", hours * 60)])  # KAA saatler ÖNCE görülmüş
+        assert mark_duplicates(repo) == linked and repo.dups == ({"arabam": "kaa"} if linked else {}), hours
+        repo = FakeRepo([], twins=[ad("arabam", "kktcarabam", hours * 60), ad("kaa", "kibrisarabaal")])  # KKTCarabam saatler ÖNCE görülmüş
+        assert mark_duplicates(repo) == linked and repo.dups == ({"arabam": "kaa"} if linked else {}), hours
+
+
+def test_twin_ambiguity_still_blocks_inside_the_wider_window_and_not_outside_it():
+    # geniş pencerede de iki yönde TEK eşleşme şart: 22 saat önceki ikinci KAA adayı da belirsizlik yaratır
+    repo = FakeRepo([], twins=[ad("arabam", "kktcarabam"), ad("kaa1", "kibrisarabaal", 10), ad("kaa2", "kibrisarabaal", 22 * 60)])
+    assert mark_duplicates(repo) == 0 and repo.dups == {}
+    two_arabam = [ad("arabam1", "kktcarabam"), ad("arabam2", "kktcarabam", 22 * 60), ad("kaa", "kibrisarabaal", 10)]
+    assert mark_duplicates(FakeRepo([], twins=two_arabam)) == 0
+    # 25 saat önceki aynı tutarlı ilan pencerenin dışında: rakip sayılmaz, bağ kurulur
+    repo = FakeRepo([], twins=[ad("arabam", "kktcarabam"), ad("kaa1", "kibrisarabaal", 10), ad("kaa2", "kibrisarabaal", 25 * 60)])
+    assert mark_duplicates(repo) == 1 and repo.dups == {"arabam": "kaa1"}
+    # geç gelen ikiz tek başına bağlanır; yanında şehir çelişkili bir rakip teklik bozmaz
+    repo = FakeRepo([], twins=[ad("arabam", "kktcarabam"), ad("kaa1", "kibrisarabaal", 20 * 60),
+                               ad("kaa2", "kibrisarabaal", 21 * 60, location="Lefkoşa")])
     assert mark_duplicates(repo) == 1 and repo.dups == {"arabam": "kaa1"}
 
 
