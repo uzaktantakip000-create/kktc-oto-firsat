@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from application.collect_facebook import MONTHLY_BUDGET_USD as FB_BUDGET
 from application.collect_instagram import MONTHLY_BUDGET_USD as IG_BUDGET
-from application import feed_switch, price_book_job
+from application import feed_switch, price_book_job, selfwatch
 from application.maintenance import summary_line
 from application.health import notify_owner, source_limit_hours
 from domain.kktc_time import kktc_hour, to_kktc
@@ -144,7 +144,7 @@ def late_sources(repo: Repository, now: datetime | None = None) -> list[dict]:
 
 def build_heartbeat(repo: Repository, now: datetime | None = None) -> str:
     """Günlük "sistem çalışıyor" nabzı (sahibin kararı 03.10.2026: sabah durumu kalktı; ayrıntı /durum'da). Arıza varsa ayrıca haber gider
-    (check_sources, kaynak alarmı); burada yalnız gecikme sayısı + son 24 saat sayıları."""
+    (check_sources, kaynak alarmı); burada yalnız gecikme sayısı + son 24 saat sayıları + öz-izleme satırları (application/selfwatch)."""
     now = now or datetime.now(timezone.utc)
     new_n = repo.conn.execute("SELECT count(*) AS n FROM listings WHERE first_seen_at > NOW() - interval '24 hours'").fetchone()["n"]
     sent = repo.conn.execute(
@@ -154,6 +154,8 @@ def build_heartbeat(repo: Repository, now: datetime | None = None) -> str:
     text = f"✅ Sistem çalışıyor · son 24 saatte {new_n} yeni ilan tarandı, {sent['strong'] or 0} 🟢 ve {sent['est'] or 0} 🟠 gönderildi."
     if late:
         text += f"\n⚠️ {len(late)} yerde gecikme var (ayrıntı: /durum)."
+    for line in selfwatch.morning_lines(repo, now):  # en çok 2 satır: taramalar nerede + yedek sağlığı, son yedek (kayıt yoksa satır yok; hata sabah mesajını bozmaz)
+        text += "\n" + line
     return text
 
 

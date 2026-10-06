@@ -12,7 +12,9 @@ bot_state anahtarları (hepsi UTC ISO zaman; yazılmamış ya da "" = yok):
   ls_miss                          Telegram dinleyicisinin kalp atışı yok/bayat: "ilk_görülen|son_görülen" (kesintisiz kayıp sayacı)
   ls_down                          açık "anında cevap durdu" olayı (uyarı gittiyse; başı = kesintinin ilk görüldüğü an)
   bot_listen_seen                  dinleyici kalp atışı (bot_poll.LISTENER_STATE_KEY; dinleyici yazar, temiz çıkışta siler)
-uyarı tekrar sınırı health.notify_owner'ın kendi `alert:<ad>` kayıtlarıdır (ad: vps_failover, vps_recovered, vps_browser_failover, ...).
+  backup_last_ok                   son BAŞARILI veritabanı yedeği (haftalık yedek işi yazar; burada yalnız okunur, sabah satırı)
+Uyarı tekrar sınırı health.notify_owner'ın kendi `alert:<ad>` kayıtlarıdır; adlar: vps_failover, vps_recovered, vps_browser_failover, vps_browser_recovered,
+listener_down, listener_up, vps_resources.
 """
 import shutil
 from dataclasses import dataclass
@@ -27,6 +29,7 @@ FO_TICK_KEY = "fo_tick"
 FO_BROWSER_KEY = "fo_browser"
 LISTEN_MISS_KEY = "ls_miss"
 LISTEN_DOWN_KEY = "ls_down"
+BACKUP_OK_KEY = "backup_last_ok"
 
 ALERT_REPEAT_H = 12  # aynı uyarı en erken bu kadar saat sonra tekrar yazılır
 LISTEN_BAD_FOR = timedelta(minutes=20)  # dinleyici kalp atışı KESİNTİSİZ bu kadar süre yoksa uyarı (deploy/yeniden başlatmadaki tek kayıp okuma uyarı değil)
@@ -36,6 +39,9 @@ LISTEN_UP = "✅ Telegram'da anında cevap yeniden çalışıyor (kesinti ~{t}).
 DISK_MIN_FREE_PCT = 15  # sunucuda kökte boş disk bunun altına inerse uyarı (VPS: 77 GB)
 MEM_MIN_MB = 400  # kullanılabilir bellek (MemAvailable) bunun altına inerse uyarı (VPS: 8 GB; tarayıcı turu ~2 GB'a kadar çıkar)
 RESOURCES = "⚠️ Sunucuda kaynak azalıyor: disk %{pct} boş ({gb} GB), bellek {mem} kullanılabilir. Eşik: disk %{dpct}, bellek {dmem} MB."
+GH_TICK_MAX_AGE = timedelta(hours=3)  # sabah satırı: yedek GitHub tick'i bundan uzun süredir görünmüyorsa ⚠️ (dış tetikleyici 15 dk'da bir, GitHub'ın kendi saati 2 saatte bir)
+GH_BROWSER_MAX_AGE = timedelta(hours=5)  # aynısı collect-browser için (2 saatte bir)
+BACKUP_MAX_AGE = timedelta(days=8)  # sabah satırı: haftalık veritabanı yedeği bundan eskiyse ⚠️
 BROWSER_ALERT_AFTER = timedelta(hours=6)  # KKTCarabam: GitHub 150 dk'da devralır ama tek aksayan tur (Cloudflare, site) uyarı sebebi değil: 3 tur üst üste
 
 
@@ -220,3 +226,50 @@ def after_browser(repo, beat_written: bool, now: datetime | None = None) -> None
         _safe("KKTCarabam kesinti uyarısı", lambda: github_failover(repo, BROWSER, now))
     elif on_vps() and beat_written:
         _safe("KKTCarabam dönüş bildirimi", lambda: vps_recovery(repo, BROWSER, now))
+
+
+# --- sabah mesajına eklenen en çok 2 kısa satır (application/status.build_heartbeat) -----------------------------------------------
+def _scan_line(repo, now: datetime) -> str | None:
+    """"Taramalar: sunucuda ✅ (son tur 4 dk önce) · yedek GitHub ✅ · disk %62 boş, bellek 6,1 GB boş". Kaydı olmayan (ya da bozuk) parça atlanır, ⚠️ yazılmaz;
+    hiçbir parça yoksa satır yok. Disk/bellek yalnız sunucuda (VPS) yazılan sabah mesajında görünür."""
+    vps = _age(repo.get_state(VPS_TICK_KEY), now)
+    gh_tick = _age(repo.get_state(GH_TICK_KEY), now)
+    gh_browser = _age(repo.get_state(GH_BROWSER_KEY), now)
+    parts = []
+    if vps is not None:
+        parts.append(f"sunucuda ✅ (son tur {_span(vps)} önce)" if vps < TICK_FRESH
+                     else f"⚠️ sunucu turları durdu (son tur {_span(vps)} önce, GitHub tarıyor)")
+    sick = []
+    if gh_tick is not None and gh_tick > GH_TICK_MAX_AGE:
+        sick.append(f"⚠️ yedek GitHub sessiz (son çalışma {_span(gh_tick)} önce)")
+    if gh_browser is not None and gh_browser > GH_BROWSER_MAX_AGE:
+        sick.append(f"⚠️ KKTCarabam yedeği sessiz (son çalışma {_span(gh_browser)} önce)")
+    if sick:
+        parts += sick
+    elif gh_tick is not None or gh_browser is not None:
+        parts.append("yedek GitHub ✅")
+    snap = _safe("kaynak ölçümü", read_resources) if on_vps() and parts else None  # ölçüm patlarsa yalnız o parça düşer
+    if snap is not None:
+        low = snap["disk_pct"] < DISK_MIN_FREE_PCT or snap["mem_mb"] < MEM_MIN_MB
+        parts.append(f"{'⚠️ ' if low else ''}disk %{snap['disk_pct']:.0f} boş, bellek {_mem_text(snap['mem_mb'])} boş")
+    return "Taramalar: " + " · ".join(parts) if parts else None
+
+
+def _backup_line(repo, now: datetime) -> str | None:
+    """"Son veritabanı yedeği: 3 gün önce" (8 günden eskiyse başında ⚠️); `backup_last_ok` yoksa/bozuksa satır yok."""
+    age = _age(repo.get_state(BACKUP_OK_KEY), now)
+    if age is None:
+        return None
+    when = "bugün" if age.days < 1 else f"{age.days} gün önce"
+    return f"{'⚠️ ' if age > BACKUP_MAX_AGE else ''}Son veritabanı yedeği: {when}"
+
+
+def morning_lines(repo, now: datetime | None = None) -> list[str]:
+    """Sabah mesajına eklenecek 0-2 satır. Hiçbir hata sabah mesajını bozmaz (hata veren satır atlanır, öbürü yine yazılır)."""
+    now = now or datetime.now(timezone.utc)
+    lines = []
+    for name, build in (("sabah satırı (taramalar)", _scan_line), ("sabah satırı (yedek)", _backup_line)):
+        line = _safe(name, lambda build=build: build(repo, now))
+        if line:
+            lines.append(line)
+    return lines
