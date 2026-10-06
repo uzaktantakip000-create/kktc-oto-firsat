@@ -702,6 +702,26 @@ def test_login_waits_for_owner_and_saves_session(tmp_path):
     assert not page.mouse.clicks  # kod tıklamaz, yazmaz
 
 
+def test_login_waits_on_signup_confirmation_page_even_with_c_user(tmp_path):
+    """Yeni hesap: c_user e-posta onay sayfasında gelir; kod girilmeden pencere kapanmamalı, oturum yazılmamalı."""
+    page = FakePage(redirect="https://www.facebook.com/confirmemail.php?next=x")
+    ctx = FakeContext(page, cookies=[{"name": "c_user", "value": "1"}])
+    clock = iter(range(0, 10**7, 60))
+    with pytest.raises(SocialStop) as e:
+        fb.login({fb.PROXY_ENV: PROXY_URL}, tmp_path, opener=lambda: fb.BrowserSession(ctx, lambda: None),
+                 sleep=lambda s: None, monotonic=lambda: next(clock), out=lambda s: None)
+    assert e.value.signal == Signal.LOGIN_REQUIRED and not (tmp_path / fb.STATE_FILE).exists()
+
+
+@pytest.mark.parametrize("url,home", [
+    ("https://www.facebook.com/", True), ("https://www.facebook.com/?sk=welcome", True), ("https://www.facebook.com/home.php", True),
+    ("https://www.facebook.com/confirmemail.php", False), ("https://www.facebook.com/checkpoint/1501092823525282/", False),
+    ("https://www.facebook.com/login/", False), ("https://www.facebook.com/gettingstarted/", False), ("https://evil.example/", False),
+])
+def test_on_home(url, home):
+    assert fb._on_home(url) is home
+
+
 def test_login_timeout_saves_nothing(tmp_path):
     ctx = LoginContext(FakePage(), ready_after=10**9)
     clock = iter(range(0, 10**7, 60))

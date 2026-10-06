@@ -69,7 +69,8 @@ FEED_TIMEOUT_MS = 15_000
 EGRESS_TIMEOUT_MS = 15_000
 IMAGE_TIMEOUT_MS = 15_000
 MAX_IMAGE_BYTES = 5_000_000  # fotoğraftan fiyat okuma: bundan büyük görsel indirilmez
-LOGIN_TIMEOUT_S = 15 * 60
+LOGIN_TIMEOUT_S = 30 * 60  # yeni hesap açma (form + e-posta kodu) 15 dakikaya sığmayabilir
+HOME_PATHS = ("", "/", "/home.php")  # giriş ancak ana akışta biter (kayıt/e-posta onayı/checkpoint sayfalarında c_user olsa da beklenir)
 LOGIN_POLL_S = 3.0
 
 # Tek tespit listesi: (nerede, aranan, sonuç). Sonuç None = yalnız bu kaynak okunamadı (SourceError). Metin küçük harfe çevrilip
@@ -957,11 +958,19 @@ def build(env: Mapping[str, str], state_dir: Path) -> FacebookBrowserFetcher:
     return FacebookBrowserFetcher(proxy, state, headless=(env.get(HEADLESS_ENV) or "").strip() == "1", tz_name=tz_name)
 
 
+def _on_home(url: str) -> bool:
+    """Sayfa Facebook ana akışı mı? (kayıt, e-posta onayı, checkpoint, giriş sayfaları değil)"""
+    u = urlparse(url or "")
+    return (u.hostname or "").endswith("facebook.com") and u.path in HOME_PATHS
+
+
 LOGIN_HELP = """
 Facebook girişi (ikinci hesap):
   1. Açılan tarayıcı penceresinde (VPS ekranı) Facebook giriş sayfası var.
-  2. E-posta ve şifreyi KENDİN yaz; doğrulama (SMS/kod) isterse tamamla. Program hiçbir şey yazmaz, tıklamaz.
-  3. "Save your login info?" sorulursa "Not now" de. Ana sayfa açılınca bekle: oturum kendiliğinden kaydedilir, pencere kapanır.
+  2. E-posta ve şifreyi KENDİN yaz (yeni hesap: "Create new account"); doğrulama (e-posta/SMS kodu) isterse tamamla.
+     Program hiçbir şey yazmaz, tıklamaz.
+  3. "Save your login info?" sorulursa "Not now" de. Bitince sol üstteki Facebook logosuna bas: ANA SAYFA açılınca oturum
+     kendiliğinden kaydedilir, pencere kapanır (kayıt, e-posta onayı ve doğrulama sayfalarında beklenir).
 Proxy: {proxy} · saat dilimi: {tz} · en çok {minutes} dakika beklenir.
 """
 
@@ -982,8 +991,7 @@ def login(env: Mapping[str, str], state_dir: Path, *, opener: Callable[[], Brows
         out(LOGIN_HELP.format(proxy=mask_proxy(env.get(PROXY_ENV)), tz=tz_name, minutes=LOGIN_TIMEOUT_S // 60))
         deadline = monotonic() + LOGIN_TIMEOUT_S
         while monotonic() < deadline:
-            url = _norm(page.url)
-            if has_c_user(session.context) and "/checkpoint" not in url and "/login" not in url:
+            if has_c_user(session.context) and _on_home(page.url):
                 sleep(5)  # Facebook oturum çerezlerini tamamlasın
                 _write_state(path, session.context.storage_state())
                 out("Oturum kaydedildi. Facebook okuması bu oturumla çalışır.")
