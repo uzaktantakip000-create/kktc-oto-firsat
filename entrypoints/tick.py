@@ -5,7 +5,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from application import feed_switch
+from application import feed_switch, selfwatch
 from application.health import notify_owner, report_collect_errors
 from application.notify import TelegramError, api
 from application.runner_gate import TICK_FRESH, VPS_TICK_KEY, github_should_skip, mark_vps
@@ -114,7 +114,8 @@ def main() -> None:
     started = time.monotonic()
     load_env()
     repo = Repository(require("DATABASE_URL"))
-    if github_should_skip(repo, VPS_TICK_KEY, TICK_FRESH):  # VPS turları sağlıklı: GitHub hiçbir şey yazmadan çıkar (tick:last dahil)
+    selfwatch.note_github_start(repo, selfwatch.GH_TICK_KEY)  # yedek canlı mı: GitHub turu başladı (VPS görüp atlasa da yazılır)
+    if github_should_skip(repo, VPS_TICK_KEY, TICK_FRESH):  # VPS turları sağlıklı: GitHub yalnız yedek kalp atışını yazıp çıkar (tick:last yazmaz)
         print("VPS turları çalışıyor: GitHub turu atlandı (VPS durursa en geç 35 dk içinde GitHub devralır)")
         return
     frankfurter.use_store(repo)

@@ -10,7 +10,7 @@ from application.collect_sahibindenarabakibris import collect_sahibindenarabakib
 from application.collect_kktcar import collect_kktcar
 from application.collect_mezunum import collect_mezunum
 from application.collect_kktcarabam import KkaStats, collect_kktcarabam
-from application import feed_switch, llm_reader
+from application import feed_switch, llm_reader, selfwatch
 from application.health import report_collect_errors
 from application.runner_gate import BROWSER_FRESH, VPS_BROWSER_KEY, github_should_skip, mark_vps
 from application.source_alarm import track_collect
@@ -103,6 +103,8 @@ def main(arg: str = "all") -> None:
     load_env()
     repo = Repository(require("DATABASE_URL"))
     browser_job = arg == "kktcarabam"  # tarayıcılı iş: VPS ile GitHub arasında kalp atışıyla paylaşılır (application/runner_gate.py)
+    if browser_job:
+        selfwatch.note_github_start(repo, selfwatch.GH_BROWSER_KEY)  # yedek canlı mı: GitHub toplaması başladı (VPS görüp atlasa da yazılır)
     if browser_job and github_should_skip(repo, VPS_BROWSER_KEY, BROWSER_FRESH):
         print("VPS KKTCarabam'ı topluyor: GitHub toplaması atlandı (VPS durursa en geç 2,5 saat içinde GitHub devralır)")
         return

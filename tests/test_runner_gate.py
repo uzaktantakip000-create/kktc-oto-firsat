@@ -9,6 +9,7 @@ import pytest
 import infrastructure.config
 import infrastructure.db.repository
 from application import runner_gate
+from application.selfwatch import GH_BROWSER_KEY, GH_TICK_KEY
 from application.collect_kktcarabam import KkaStats
 from application.runner_gate import (BROWSER_FRESH, TICK_FRESH, VPS_BROWSER_KEY, VPS_TICK_KEY, fresh, github_should_skip, mark_vps)
 from entrypoints import cron_collect, cron_evaluate, tick
@@ -200,14 +201,14 @@ class Tick:
         monkeypatch.setattr(tick, "run_batch", lambda *a, **k: None)
 
 
-def test_tick_on_github_returns_early_and_writes_nothing_while_the_vps_heartbeat_is_fresh(monkeypatch, capsys):
+def test_tick_on_github_returns_early_and_writes_only_its_own_fallback_heartbeat_while_the_vps_heartbeat_is_fresh(monkeypatch, capsys):
     where(monkeypatch, "github")
     repo = Repo({VPS_TICK_KEY: datetime.now(timezone.utc).isoformat()})
     world = Tick(monkeypatch, repo)
     monkeypatch.setattr(tick, "due_jobs", lambda *a: pytest.fail("tur başlamamalıydı"))
     tick.main()  # SystemExit yok: çıkış 0
-    assert repo.writes == [] and "tick:last" not in repo.state  # hiçbir şey yazılmadı
-    assert repo.reads == [VPS_TICK_KEY] and world.eval_calls == []  # yalnız kalp atışı okundu
+    assert repo.writes == [GH_TICK_KEY] and "tick:last" not in repo.state  # yalnız yedeğin "buradayım" notu; tur kaydı yok
+    assert repo.reads == [VPS_TICK_KEY] and world.eval_calls == []  # yalnız VPS kalp atışı okundu
     assert "VPS turları çalışıyor: GitHub turu atlandı" in capsys.readouterr().out
 
 
@@ -435,7 +436,8 @@ def test_the_heartbeat_is_never_written_off_the_vps(monkeypatch, runner):
     repo = Collect()
     collect_world(monkeypatch, repo, GOOD)
     cron_collect.main("kktcarabam")
-    assert repo.writes == []
+    assert VPS_BROWSER_KEY not in repo.state  # VPS kalp atışını yalnız VPS yazar
+    assert repo.writes == ([GH_BROWSER_KEY] if runner == "github" else [])  # GitHub yalnız kendi yedek notunu yazar
 
 
 def test_other_jobs_never_write_the_browser_heartbeat(monkeypatch):
@@ -451,7 +453,7 @@ def test_github_skips_kktcarabam_while_the_vps_browser_heartbeat_is_fresh(monkey
     repo = Collect({VPS_BROWSER_KEY: real_ago(100)})
     calls = collect_world(monkeypatch, repo, GOOD)
     cron_collect.main("kktcarabam")
-    assert calls == [] and repo.writes == []  # toplama yok, yazma yok
+    assert calls == [] and repo.writes == [GH_BROWSER_KEY]  # toplama yok; yalnız yedeğin "buradayım" notu
     assert "VPS KKTCarabam'ı topluyor: GitHub toplaması atlandı" in capsys.readouterr().out
 
 
@@ -462,7 +464,7 @@ def test_github_collects_kktcarabam_when_the_browser_heartbeat_is_missing_stale_
     repo = Collect({VPS_BROWSER_KEY: value} if value is not None else {})
     calls = collect_world(monkeypatch, repo, GOOD)
     cron_collect.main("kktcarabam")
-    assert calls == ["KKTCarabam"] and repo.writes == []  # GitHub kalp atışı yazmaz
+    assert calls == ["KKTCarabam"] and repo.writes == [GH_BROWSER_KEY]  # GitHub VPS kalp atışını yazmaz, yalnız kendi yedek notunu
 
 
 def test_github_collects_kktcarabam_when_the_heartbeat_cannot_be_read(monkeypatch):
