@@ -35,7 +35,9 @@ class Repo(GateRepo):
 
 @pytest.fixture
 def tg(monkeypatch):
-    """Sahte Telegram: gönderilen mesaj metinleri listesi."""
+    """Sahte Telegram: gönderilen mesaj metinleri listesi. Gerçek disk/bellek ölçümü kapatılır (testin sonucu çalıştığı makinenin doluluğuna bağlı olmasın);
+    kaynak testleri kendi ölçümünü verir."""
+    monkeypatch.setattr(selfwatch, "read_resources", lambda *a, **k: None)
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
     sent = []

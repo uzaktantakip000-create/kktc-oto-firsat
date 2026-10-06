@@ -14,6 +14,7 @@ bot_state anahtarları (hepsi UTC ISO zaman; yazılmamış ya da "" = yok):
   bot_listen_seen                  dinleyici kalp atışı (bot_poll.LISTENER_STATE_KEY; dinleyici yazar, temiz çıkışta siler)
 uyarı tekrar sınırı health.notify_owner'ın kendi `alert:<ad>` kayıtlarıdır (ad: vps_failover, vps_recovered, vps_browser_failover, ...).
 """
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -32,6 +33,9 @@ LISTEN_BAD_FOR = timedelta(minutes=20)  # dinleyici kalp atışı KESİNTİSİZ 
 LISTEN_GAP_MAX = timedelta(minutes=45)  # iki okuma arası bundan uzunsa (turlar durmuş) "kesintisiz" sayılmaz, sayaç yeniden başlar
 LISTEN_DOWN = "⚠️ Telegram'da anında cevap durdu (dinleyici sessiz, en az {t}). Komutlarına yine cevap gelir ama ~15 dk gecikmeyle: tarama turu bakıyor."
 LISTEN_UP = "✅ Telegram'da anında cevap yeniden çalışıyor (kesinti ~{t})."
+DISK_MIN_FREE_PCT = 15  # sunucuda kökte boş disk bunun altına inerse uyarı (VPS: 77 GB)
+MEM_MIN_MB = 400  # kullanılabilir bellek (MemAvailable) bunun altına inerse uyarı (VPS: 8 GB; tarayıcı turu ~2 GB'a kadar çıkar)
+RESOURCES = "⚠️ Sunucuda kaynak azalıyor: disk %{pct} boş ({gb} GB), bellek {mem} kullanılabilir. Eşik: disk %{dpct}, bellek {dmem} MB."
 BROWSER_ALERT_AFTER = timedelta(hours=6)  # KKTCarabam: GitHub 150 dk'da devralır ama tek aksayan tur (Cloudflare, site) uyarı sebebi değil: 3 tur üst üste
 
 
@@ -130,6 +134,43 @@ def vps_recovery(repo, f: Failover, now: datetime | None = None) -> None:
         _resolve(repo, f.incident_key, f.up_alert, f.up, now or datetime.now(timezone.utc))
 
 
+def _dec(x: float) -> str:
+    return f"{x:.1f}".replace(".", ",")  # Türkçe ondalık virgül
+
+
+def _mem_text(mb: float) -> str:
+    return f"{_dec(mb / 1024)} GB" if mb >= 1024 else f"{mb:.0f} MB"
+
+
+def read_resources(root: str = "/", meminfo: str = "/proc/meminfo") -> dict | None:
+    """Sunucu kaynakları (yalnız standart kütüphane): kökte boş disk (% ve GB) ve kullanılabilir bellek (MB). /proc/meminfo yoksa (macOS, testler),
+    bellek satırı bulunamazsa ya da okunamazsa None: kontrol sessizce atlanır."""
+    try:
+        with open(meminfo) as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    mem_mb = int(line.split()[1]) / 1024  # kB -> MB
+                    break
+            else:
+                return None
+        total, _, free = shutil.disk_usage(root)  # `free`: yetkisiz kullanıcının kullanabildiği boş yer
+    except (OSError, ValueError, IndexError):
+        return None
+    if total <= 0:
+        return None
+    return {"disk_pct": free * 100 / total, "disk_gb": free / 1024 ** 3, "mem_mb": mem_mb}
+
+
+def resource_watch(repo, now: datetime, read=None) -> None:
+    """VPS tick'inde: boş disk < %DISK_MIN_FREE_PCT ya da kullanılabilir bellek < MEM_MIN_MB ise sahibe BİR uyarı (sayılarla; 12 saatte bir tekrar).
+    `read`: sınama için ölçüm işlevi (varsayılan read_resources, çağrı anında aranır)."""
+    snap = (read or read_resources)()
+    if snap is None or (snap["disk_pct"] >= DISK_MIN_FREE_PCT and snap["mem_mb"] >= MEM_MIN_MB):
+        return
+    text = RESOURCES.format(pct=f"{snap['disk_pct']:.0f}", gb=_dec(snap["disk_gb"]), mem=_mem_text(snap["mem_mb"]), dpct=DISK_MIN_FREE_PCT, dmem=MEM_MIN_MB)
+    notify_owner(repo, "vps_resources", text, repeat_hours=ALERT_REPEAT_H)
+
+
 def _streak(raw) -> tuple[datetime, datetime] | None:
     """`ls_miss` kaydı "ilk|son" -> (ilk, son); yok/bozuk/saat dilimsiz ise None."""
     try:
@@ -161,7 +202,7 @@ def listener_watch(repo, now: datetime) -> None:
 
 def after_tick(repo, beat_written: bool, now: datetime | None = None) -> None:
     """tick.py'nin son adımı (hata yutar). GitHub (atlamadan tarayan tur): sunucu turları durduysa uyarı.
-    VPS: kalp atışı yazıldıysa kesinti sonu bildirimi; her VPS turunda (değerlendirme çökse de) dinleyici bekçisi."""
+    VPS: kalp atışı yazıldıysa kesinti sonu bildirimi; her VPS turunda (değerlendirme çökse de) dinleyici bekçisi ve disk/bellek kontrolü."""
     now = now or datetime.now(timezone.utc)
     if on_github():
         _safe("sunucu kesintisi uyarısı", lambda: github_failover(repo, TICK, now))
@@ -169,6 +210,7 @@ def after_tick(repo, beat_written: bool, now: datetime | None = None) -> None:
         if beat_written:
             _safe("sunucu dönüş bildirimi", lambda: vps_recovery(repo, TICK, now))
         _safe("dinleyici bekçisi", lambda: listener_watch(repo, now))
+        _safe("kaynak izleme", lambda: resource_watch(repo, now))
 
 
 def after_browser(repo, beat_written: bool, now: datetime | None = None) -> None:
