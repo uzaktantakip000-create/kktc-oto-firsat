@@ -23,6 +23,12 @@ class Boom:
         return fail
 
 
+@pytest.fixture(autouse=True)
+def no_listener_watch(monkeypatch):
+    """Bu dosya yalnız kesinti/dönüş uyarılarını sınar: aynı VPS turundaki dinleyici bekçisi (test_selfwatch_listener.py) karışmasın."""
+    monkeypatch.setattr(selfwatch, "listener_watch", lambda repo, now: None)
+
+
 def telegram_error(*a, **k):
     raise health.TelegramError("sendMessage", 502, "Bad Gateway")
 

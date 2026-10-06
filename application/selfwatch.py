@@ -9,6 +9,9 @@ bot_state anahtarları (hepsi UTC ISO zaman; yazılmamış ya da "" = yok):
   gh_tick_seen, gh_browser_seen    GitHub tick / collect-browser çalışmasının BAŞLADIĞI an       (burada; atlasa da yazar)
   fo_tick, fo_browser              açık "sunucu durdu, GitHub devraldı" olayı: kesintinin başı (= son iyi VPS kalp atışı);
                                    YALNIZ "durdu" uyarısı gerçekten gittiyse yazılır, "yeniden çalışıyor" gidince silinir
+  ls_miss                          Telegram dinleyicisinin kalp atışı yok/bayat: "ilk_görülen|son_görülen" (kesintisiz kayıp sayacı)
+  ls_down                          açık "anında cevap durdu" olayı (uyarı gittiyse; başı = kesintinin ilk görüldüğü an)
+  bot_listen_seen                  dinleyici kalp atışı (bot_poll.LISTENER_STATE_KEY; dinleyici yazar, temiz çıkışta siler)
 uyarı tekrar sınırı health.notify_owner'ın kendi `alert:<ad>` kayıtlarıdır (ad: vps_failover, vps_recovered, vps_browser_failover, ...).
 """
 from dataclasses import dataclass
@@ -21,8 +24,14 @@ GH_TICK_KEY = "gh_tick_seen"
 GH_BROWSER_KEY = "gh_browser_seen"
 FO_TICK_KEY = "fo_tick"
 FO_BROWSER_KEY = "fo_browser"
+LISTEN_MISS_KEY = "ls_miss"
+LISTEN_DOWN_KEY = "ls_down"
 
 ALERT_REPEAT_H = 12  # aynı uyarı en erken bu kadar saat sonra tekrar yazılır
+LISTEN_BAD_FOR = timedelta(minutes=20)  # dinleyici kalp atışı KESİNTİSİZ bu kadar süre yoksa uyarı (deploy/yeniden başlatmadaki tek kayıp okuma uyarı değil)
+LISTEN_GAP_MAX = timedelta(minutes=45)  # iki okuma arası bundan uzunsa (turlar durmuş) "kesintisiz" sayılmaz, sayaç yeniden başlar
+LISTEN_DOWN = "⚠️ Telegram'da anında cevap durdu (dinleyici sessiz, en az {t}). Komutlarına yine cevap gelir ama ~15 dk gecikmeyle: tarama turu bakıyor."
+LISTEN_UP = "✅ Telegram'da anında cevap yeniden çalışıyor (kesinti ~{t})."
 BROWSER_ALERT_AFTER = timedelta(hours=6)  # KKTCarabam: GitHub 150 dk'da devralır ama tek aksayan tur (Cloudflare, site) uyarı sebebi değil: 3 tur üst üste
 
 
@@ -121,13 +130,45 @@ def vps_recovery(repo, f: Failover, now: datetime | None = None) -> None:
         _resolve(repo, f.incident_key, f.up_alert, f.up, now or datetime.now(timezone.utc))
 
 
+def _streak(raw) -> tuple[datetime, datetime] | None:
+    """`ls_miss` kaydı "ilk|son" -> (ilk, son); yok/bozuk/saat dilimsiz ise None."""
+    try:
+        first, last = (datetime.fromisoformat(part) for part in raw.split("|"))
+    except Exception:
+        return None
+    return (first, last) if first.tzinfo is not None and last.tzinfo is not None else None
+
+
+def listener_watch(repo, now: datetime) -> None:
+    """VPS tick'inde: Telegram dinleyicisinin kalp atışı (bot_listen_seen) taze mi? Yok/bayat/silinmiş (temiz çıkış) okuma ilk görüldüğünde YALNIZ not edilir
+    (`ls_miss`); aynı kayıp KESİNTİSİZ LISTEN_BAD_FOR sürerse BİR uyarı (12 saatte bir tekrar). Taze görülünce sayaç silinir; uyarı gittiyse BİR kez ✅.
+    Turlar 15 dk'da bir okuduğu için uyarı kayıp başladıktan ~20-35 dk sonra gelir."""
+    from application.bot_poll import LISTENER_STATE_KEY, listener_alive  # geç içe aktarma: bot_poll status'u, status bu modülü içe aktarır
+    if listener_alive(repo.get_state(LISTENER_STATE_KEY), now):
+        if repo.get_state(LISTEN_MISS_KEY):
+            repo.set_state(LISTEN_MISS_KEY, "")
+        _resolve(repo, LISTEN_DOWN_KEY, "listener_up", LISTEN_UP, now)
+        return
+    streak = _streak(repo.get_state(LISTEN_MISS_KEY))
+    continuous = streak is not None and streak[0] <= streak[1] <= now and now - streak[1] <= LISTEN_GAP_MAX
+    first = streak[0] if continuous else now
+    repo.set_state(LISTEN_MISS_KEY, f"{first.isoformat()}|{now.isoformat()}")
+    if now - first >= LISTEN_BAD_FOR:
+        sent = notify_owner(repo, "listener_down", LISTEN_DOWN.format(t=_span(now - first)), repeat_hours=ALERT_REPEAT_H)
+        if sent and not repo.get_state(LISTEN_DOWN_KEY):
+            repo.set_state(LISTEN_DOWN_KEY, first.isoformat())
+
+
 def after_tick(repo, beat_written: bool, now: datetime | None = None) -> None:
-    """tick.py'nin son adımı (hata yutar). GitHub (atlamadan tarayan tur): sunucu turları durduysa uyarı. VPS: kalp atışı yazıldıysa kesinti sonu bildirimi."""
+    """tick.py'nin son adımı (hata yutar). GitHub (atlamadan tarayan tur): sunucu turları durduysa uyarı.
+    VPS: kalp atışı yazıldıysa kesinti sonu bildirimi; her VPS turunda (değerlendirme çökse de) dinleyici bekçisi."""
     now = now or datetime.now(timezone.utc)
     if on_github():
         _safe("sunucu kesintisi uyarısı", lambda: github_failover(repo, TICK, now))
-    elif on_vps() and beat_written:
-        _safe("sunucu dönüş bildirimi", lambda: vps_recovery(repo, TICK, now))
+    elif on_vps():
+        if beat_written:
+            _safe("sunucu dönüş bildirimi", lambda: vps_recovery(repo, TICK, now))
+        _safe("dinleyici bekçisi", lambda: listener_watch(repo, now))
 
 
 def after_browser(repo, beat_written: bool, now: datetime | None = None) -> None:

@@ -8,7 +8,7 @@ import pytest
 
 import infrastructure.config
 import infrastructure.db.repository
-from application import runner_gate
+from application import runner_gate, selfwatch
 from application.selfwatch import GH_BROWSER_KEY, GH_TICK_KEY
 from application.collect_kktcarabam import KkaStats
 from application.runner_gate import (BROWSER_FRESH, TICK_FRESH, VPS_BROWSER_KEY, VPS_TICK_KEY, fresh, github_should_skip, mark_vps)
@@ -241,7 +241,8 @@ def test_tick_on_the_vps_writes_the_heartbeat_only_after_a_successful_round(monk
     before = repo.state[VPS_TICK_KEY]
     tick.main()
     assert world.eval_calls == [1] and world.eval_seen == [True]  # (eski kayıt zaten vardı)
-    assert repo.writes.index("tick:last") < repo.writes.index(VPS_TICK_KEY) and repo.writes[-1] == VPS_TICK_KEY  # en sonda yazıldı
+    assert repo.writes.index("tick:last") < repo.writes.index(VPS_TICK_KEY)  # tur işlerinden sonra yazıldı (ardından yalnız öz-izleme notları gelebilir)
+    assert repo.writes[repo.writes.index(VPS_TICK_KEY) + 1:] in ([], [selfwatch.LISTEN_MISS_KEY])
     assert repo.state[VPS_TICK_KEY] != before and fresh(repo.state[VPS_TICK_KEY], datetime.now(timezone.utc), TICK_FRESH)
 
 
