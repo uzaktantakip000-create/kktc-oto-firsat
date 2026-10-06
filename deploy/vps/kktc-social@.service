@@ -32,7 +32,9 @@ ExecStartPre=-/usr/bin/find /var/lib/kktc-social/tmp/%i -mindepth 1 -maxdepth 1 
 ExecStart=/opt/kktc-social/venv/bin/python -m entrypoints.social_worker run %i
 TimeoutStartSec=45min
 SyslogIdentifier=kktc-social-%i
-MemoryMax=3G
+# Bellek: tur başına 2 GB, sosyal tarafın tamamı (kktc-social.slice) 3 GB; aynı VPS'teki araç botuna yer kalsın.
+Slice=kktc-social.slice
+MemoryMax=2G
 
 # --- Sıkılaştırma (Chromium'un çalışmasına izin verecek kadar) ---
 NoNewPrivileges=yes

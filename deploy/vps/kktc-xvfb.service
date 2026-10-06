@@ -7,6 +7,7 @@ Documentation=file:///opt/kktc-social/app/deploy/vps/README.md
 
 [Service]
 Type=simple
+Slice=kktc-social.slice
 User=kktc-social
 Group=kktc-social
 Environment=HOME=/var/lib/kktc-social

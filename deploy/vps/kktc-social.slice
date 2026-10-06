@@ -1,0 +1,10 @@
+# deploy/vps/kktc-social.slice — sosyal okuyucunun TÜM süreçleri (turlar, elle komutlar, sanal ekran, uzak masaüstü) için ORTAK bellek sınırı.
+# Aynı VPS'te araç tarayıcı botu (kktc-bot) da çalışıyor: sosyal taraf ne yaparsa yapsın toplamda 3 GB'ı geçemez; aşarsa yalnız
+# bu dilimdeki süreçler (Chromium) sıkıştırılır/öldürülür, bot etkilenmez. setup.sh / kktc-deploy /etc/systemd/system/ altına kopyalar.
+[Unit]
+Description=KKTC sosyal okuyucu (ortak bellek siniri)
+Documentation=file:///opt/kktc-social/app/deploy/vps/README.md
+
+[Slice]
+MemoryHigh=2500M
+MemoryMax=3G

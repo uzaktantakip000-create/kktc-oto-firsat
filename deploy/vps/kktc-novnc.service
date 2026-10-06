@@ -12,6 +12,7 @@ After=kktc-xvfb.service
 
 [Service]
 Type=simple
+Slice=kktc-social.slice
 User=kktc-social
 Group=kktc-social
 Environment=HOME=/var/lib/kktc-social

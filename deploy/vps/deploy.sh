@@ -19,7 +19,7 @@ BROWSERS=$BASE/ms-playwright
 BRANCH=${KKTC_BRANCH:-}  # boşsa klonun şu anki dalı (yoksa live): resolve_branch
 UNIT_DIR=/etc/systemd/system
 SBIN=/usr/local/sbin
-UNITS="kktc-social@.service kktc-social@.timer kktc-xvfb.service kktc-novnc.service kktc-firewall.service"
+UNITS="kktc-social.slice kktc-social@.service kktc-social@.timer kktc-xvfb.service kktc-novnc.service kktc-firewall.service"
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1
 export PLAYWRIGHT_BROWSERS_PATH=$BROWSERS
 
@@ -114,6 +114,7 @@ case "$1" in login|run|compare) systemctl start kktc-xvfb.service ;; esac
 if [ -t 0 ] && [ -t 1 ]; then io=--pty; else io=--pipe; fi
 exec systemd-run --quiet --wait --collect "$io" \
   --uid=kktc-social --gid=kktc-social \
+  --slice=kktc-social.slice --property=MemoryMax=2G \
   --working-directory=/opt/kktc-social/app \
   --property=EnvironmentFile=/etc/kktc-social/social.env \
   --setenv=HOME=/var/lib/kktc-social \

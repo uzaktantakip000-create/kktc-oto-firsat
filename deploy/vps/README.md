@@ -78,6 +78,11 @@ sudo nano /etc/kktc-social/social.env
 Kaydetmek için Ctrl+O ve Enter'a, çıkmak için Ctrl+X'e bas. Dosya izinlerini kurulum ayarladı (root:kktc-social, 640); değiştirme.
 Örnek dosyadaki `203.0.113.x` ve `198.51.100.x` adresleri gerçek değildir. Bunları değiştirmezsen güvenlik duvarı kurulmaz ve sana neden kurulmadığını söyler.
 
+**Sağlayıcı IP yerine bir ad verdiyse** (ör. `gw.ornek-proxy.net:5959`; "ağ geçidi" denir):
+- Adın IP'sini bul ve adresin içine adı değil bu IP'yi yaz: `getent ahostsv4 gw.ornek-proxy.net`. Okuyucu ad çözemez, çünkü DNS'i güvenlik duvarı kapatıyor.
+- Hangi sabit IP'den çıkılacağını kullanıcı adındaki numara seçer (ör. `…-sid-0`, `…-sid-1`). İki platform aynı ağ geçidini (aynı IP:port) kullanabilir. Yeter ki kullanıcı adları ve beklenen çıkış IP'leri farklı olsun.
+- Sağlayıcı ağ geçidinin IP'sini değiştirirse okuyucu proxy'ye bağlanamaz ve durur; başka bir yere çıkmaz. Yeni IP'yi bul, `social.env`'e yaz ve `sudo kktc-firewall apply` çalıştır.
+
 ## 5. Kaynak listesi: `sources.csv`
 
 ```
@@ -283,4 +288,5 @@ Ubuntu güvenlik güncellemelerini ayda bir yap: `sudo apt-get update && sudo ap
 - **Birimler.** `kktc-social@facebook|instagram.service` tek seferlik turdur (oneshot, en çok 45 dk). `kktc-social@.timer` 20 dakikada bir (+0–5 dk rastgele) tetikler. `kktc-xvfb.service` sanal ekrandır (:99). `kktc-novnc.service` uzak masaüstüdür (x11vnc 127.0.0.1:5900 + websockify/noVNC 127.0.0.1:6080). `kktc-firewall.service` kuralı açılışta yükler.
 - **Güvenlik duvarı.** `inet kktc_social` tablosunun output kancasında `meta skuid kktc-social` eşleşen paketler `worker` zincirine gider. Zincirin sırası: DNS (53) düşürülür; `lo`'ya izin verilir; yalnız cevap yönünde established/related'a izin verilir; iki proxy IP:port'una TCP ile izin verilir; geri kalan her şey günlüğe yazılıp (dakikada en çok 6 satır) düşürülür. Dosya `table; delete table; table {…}` kalıbıyla tek işlemde (atomik) yüklenir.
 - **Kuralın korunması.** Kural silinirse (ör. `nft flush ruleset`) bir sonraki tur başlamadan önce `ExecStartPre=+…` kuralı dosyadan yeniden yükler; yine yoksa tur başlamaz. `kktc-social` komutu da kural yoksa çalışmayı reddeder. Faz 2'deki Supabase pooler için `firewall.sh` içinde yorum satırı olarak bir yer ayrıldı.
+- **Bellek.** Sosyal tarafın bütün süreçleri `kktc-social.slice` diliminde çalışır: turlar, elle komutlar, sanal ekran ve uzak masaüstü. Dilimin toplam sınırı 3 GB'tır (`MemoryHigh=2500M`); tek bir tur en çok 2 GB kullanabilir. Aynı VPS'te araç botu da çalıştığı için sınır aşılırsa yalnız bu dilimdeki süreçler sıkıştırılır ya da kapatılır; bot etkilenmez.
 - **Neden PrivateTmp yok?** Sanal ekranın soketi `/tmp/.X11-unix/X99`'da durur ve özel bir /tmp onu gizler. Okuyucu için /tmp salt-okunurdur (ProtectSystem=strict); geçici dosyalar `TMPDIR=/var/lib/kktc-social/tmp/<platform>` klasörüne yazılır.
