@@ -16,6 +16,7 @@ from application.health import check_fx, check_sources, notify_owner
 from application.llm_reader import deal_notes
 from application.notify import send_alerts
 from application.report import send_weekly_report
+from application.runner_gate import TICK_FRESH, VPS_TICK_KEY, github_should_skip
 from application.send_gate import gonderim_kontrol
 from application.settings_store import load_settings
 from application.source_alarm import check_source_alarms
@@ -35,9 +36,14 @@ BACKLOG_PASS_MINUTES = 24 * 60 - 5  # hiç değerlendirilemeyen ESKİ ilan birik
 EVAL_FULL_KEY, DEDUPE_FULL_KEY, EVAL_BACKLOG_KEY = "eval:full", "dedupe:full", "eval:backlog"
 
 
-def main() -> None:
+def main(vps_gate: bool = False) -> None:
+    """`vps_gate`: yalnız tek başına çalıştırmada (`python -m entrypoints.cron_evaluate`, GitHub'daki collect-browser) açılır: VPS turları
+    sağlıklıysa GitHub değerlendirmeyi atlar. tick.py bunu kapıyla ÇAĞIRMAZ (kendi başındaki kapıyı zaten geçti), davranışı değişmez."""
     load_env()
     repo = Repository(require("DATABASE_URL"))
+    if vps_gate and github_should_skip(repo, VPS_TICK_KEY, TICK_FRESH):
+        print("VPS turları çalışıyor: GitHub değerlendirmesi atlandı (VPS durursa en geç 35 dk içinde GitHub devralır)")
+        return
     token = repo.acquire_lock(LOCK)
     if not token:  # başka bir iş akışı şu an değerlendiriyor: çift bildirim olmasın
         print("başka bir değerlendirme çalışıyor, bu tur atlandı")
@@ -214,4 +220,4 @@ def run(repo: Repository) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(vps_gate=True)

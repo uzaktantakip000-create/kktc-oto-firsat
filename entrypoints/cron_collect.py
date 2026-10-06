@@ -9,9 +9,10 @@ from application.collect_pazarkibris import collect_pazarkibris
 from application.collect_sahibindenarabakibris import collect_sahibindenarabakibris
 from application.collect_kktcar import collect_kktcar
 from application.collect_mezunum import collect_mezunum
-from application.collect_kktcarabam import collect_kktcarabam
+from application.collect_kktcarabam import KkaStats, collect_kktcarabam
 from application import feed_switch, llm_reader
 from application.health import report_collect_errors
+from application.runner_gate import BROWSER_FRESH, VPS_BROWSER_KEY, github_should_skip, mark_vps
 from application.source_alarm import track_collect
 from infrastructure.config import load_env, redact, require
 from infrastructure.fx import frankfurter
@@ -30,7 +31,14 @@ def _provider_limit(repo: Repository, platform: str, e: Exception) -> bool:
     return True
 
 
-def run(job: str, repo: Repository) -> list[tuple[str, str]]:
+def kktcarabam_worked(outcomes: list) -> bool:
+    """KKTCarabam turu GERÇEKTEN çalıştı mı: toplayıcı sonucu var, liste sayfasında ≥1 kart görüldü ve engellenmedi. Engel/boş sayfa zaten hata
+    fırlatır (errors dolar); bu ikinci güvence VPS kalp atışının (vps_browser_seen) yanlışlıkla yazılıp GitHub'ı susturmasını önler."""
+    return any(isinstance(o, KkaStats) and o.seen >= 1 and not o.blocked for o in outcomes)
+
+
+def run(job: str, repo: Repository, outcomes: list | None = None) -> list[tuple[str, str]]:
+    """`outcomes` verilirse web toplayıcılarının dönüş değerleri (KkaStats vb.) oraya eklenir; yalnız VPS kalp atışı kararı için."""
     errors: list[tuple[str, str]] = []
     if job in feed_switch.PLATFORMS and job in feed_switch.paused_platforms(repo):
         print(f"{job}: duraklatılmış, atlandı")  # sosyal anahtar kapalı / sağlayıcı limiti: ne iş ne alarm
@@ -78,7 +86,10 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
     for source in repo.sources("web", ("aktif", "deneme")):
         if needle in source["url"]:
             try:
-                print(f"{source['name']}: {fn(repo, source)}")
+                result = fn(repo, source)
+                print(f"{source['name']}: {result}")
+                if outcomes is not None:
+                    outcomes.append(result)
                 track_collect(repo, source["name"])
             except Exception as e:
                 msg = f"{type(e).__name__}: {redact(str(e))[:150]}"  # önce maskele, sonra kırp (kırpma sırrı ortadan bölüp maskeyi atlatmasın)
@@ -91,11 +102,18 @@ def run(job: str, repo: Repository) -> list[tuple[str, str]]:
 def main(arg: str = "all") -> None:
     load_env()
     repo = Repository(require("DATABASE_URL"))
+    browser_job = arg == "kktcarabam"  # tarayıcılı iş: VPS ile GitHub arasında kalp atışıyla paylaşılır (application/runner_gate.py)
+    if browser_job and github_should_skip(repo, VPS_BROWSER_KEY, BROWSER_FRESH):
+        print("VPS KKTCarabam'ı topluyor: GitHub toplaması atlandı (VPS durursa en geç 2,5 saat içinde GitHub devralır)")
+        return
     frankfurter.use_store(repo)
-    errors = []
+    errors: list[tuple[str, str]] = []
+    outcomes: list = []
     for job in JOBS if arg == "all" else (arg,):
-        errors += run(job, repo)
+        errors += run(job, repo, outcomes)
     report_collect_errors(repo, errors)
+    if browser_job and not errors and kktcarabam_worked(outcomes):  # VPS'te yalnız GERÇEK başarıda (Cloudflare engelinde yazılmaz: GitHub toplamaya devam eder)
+        mark_vps(repo, VPS_BROWSER_KEY)
 
 
 if __name__ == "__main__":
