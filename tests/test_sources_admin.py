@@ -14,7 +14,7 @@ OWNER = "1"
 
 def src(id, platform, name, url, status="aktif", priority=10, listings_7d=5, strong_30d=0):
     return {"id": id, "platform": platform, "name": name, "url": url, "status": status, "priority": priority, "alert_level": "yesil",
-            "last_checked_at": None, "listings_7d": listings_7d, "strong_30d": strong_30d}
+            "last_checked_at": None, "listings_7d": listings_7d, "strong_30d": strong_30d, "new_24h": 4, "active_n": 120}
 
 
 BASE = [
@@ -116,7 +116,7 @@ def test_web_list_shows_toggles_requests_and_blocked_sites(store):
     data = [b["callback_data"] for row in markup["inline_keyboard"] for b in row]
     assert "src:off:w1" in data and "src:off:w2" in data and "src:on:w3" in data
     assert not any(d.endswith(":w4") for d in data)  # okuyucusu olmayan istek açılamaz: düğmesi yok
-    assert "📝 BiArabacik — istek" in text and "⏸ PazarKibris — kapalı" in text and "30 günde 2 🟢" in text
+    assert "📝 BiArabacik — istek" in text and "⏸ PazarKibris — kapalı" in text and "✅ KKTCar — 24 saatte 4 yeni, 120 aktif ilan, 30 günde 2 🟢" in text
     assert "Erişim vermeyen siteler: GalerimPlus" in text and data[-1] == "src:menu:"
     assert all(len(d.encode()) <= 64 for d in data)
 

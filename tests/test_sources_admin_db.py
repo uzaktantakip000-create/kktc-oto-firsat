@@ -26,6 +26,7 @@ def test_list_toggle_add_and_export_against_the_real_schema(db, tmp_path):
     rows = sources_cmd._rows(db, ("web", "instagram", "facebook"))
     by = {r["name"]: r for r in rows}
     assert by["KKTCar"]["strong_30d"] == 1 and isinstance(by["KKTCar"]["id"], str) and by["Pazar"]["priority"] is None
+    assert (by["KKTCar"]["new_24h"], by["KKTCar"]["active_n"], by["KibrisArabaAl"]["active_n"]) == (1, 1, 0)
 
     assert sources_cmd.toggle(db, kktcar, False)[0]
     assert c.execute("SELECT status FROM sources WHERE id::text=%s", (kktcar,)).fetchone()["status"] == "pasif"

@@ -26,7 +26,9 @@ RESERVED = {"p", "reel", "reels", "explore", "accounts", "stories", "tv", "direc
 
 ROWS_SQL = """SELECT s.id::text AS id, s.platform, s.name, s.url, s.status, s.priority, s.alert_level, s.last_checked_at, s.listings_7d,
                      (SELECT count(DISTINCT a.listing_id) FROM alerts a JOIN listings l ON l.id = a.listing_id
-                       WHERE l.source_id = s.id AND a.tier = 'guclu' AND a.sent_at > NOW() - interval '30 days') AS strong_30d
+                       WHERE l.source_id = s.id AND a.tier = 'guclu' AND a.sent_at > NOW() - interval '30 days') AS strong_30d,
+                     (SELECT count(*) FROM listings l WHERE l.source_id = s.id AND l.first_seen_at > NOW() - interval '24 hours') AS new_24h,
+                     (SELECT count(*) FROM listings l WHERE l.source_id = s.id AND l.is_active) AS active_n
               FROM sources s WHERE s.platform = ANY(%s) ORDER BY s.priority NULLS LAST, lower(s.name)"""
 
 
@@ -198,7 +200,8 @@ def _web_line(r: dict) -> str:
         return f"📝 {r['name']} — istek (okuyucusu henüz yazılmadı)"
     if not _is_open(r):
         return f"⏸ {r['name']} — kapalı"
-    return f"✅ {r['name']} — 7 günde {r['listings_7d'] or 0} yeni ilan, 30 günde {r['strong_30d'] or 0} 🟢"
+    # "24 saatte yeni": ilk görülme anına göre (sources.listings_7d ilk toplu yüklemeyi de sayar, kullanılmaz)
+    return f"✅ {r['name']} — 24 saatte {r.get('new_24h') or 0} yeni, {r.get('active_n') or 0} aktif ilan, 30 günde {r['strong_30d'] or 0} 🟢"
 
 
 def category(repo, platform: str, now: datetime | None = None) -> tuple[str, dict]:
