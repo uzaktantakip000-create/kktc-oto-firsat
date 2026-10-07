@@ -152,9 +152,12 @@ def _social_row_line(platform: str, r: dict) -> str:
     if st.get("hata"):
         return f"⚠️ {name} — okunamıyor"
     new = st.get("yeni_ilan_7g")
-    if type(new) is int and new >= 0:
-        return f"✅ {name} — 7 günde {new} ilan"
-    return f"✅ {name} — henüz okunmadı" if not st.get("son_okuma_utc") else f"✅ {name}"
+    new = new if type(new) is int and new >= 0 else None
+    # Okuyucu yavaş başlıyor (her turda yalnız en öncelikli birkaç kaynak): hiç okunmamış kaynağın "0 ilan"ı "işe yaramıyor" DEĞİL,
+    # "henüz okunmadı" demektir; sahip buna bakıp kapatmasın (sosyal oturumun uyarısı, 07.10.2026)
+    if not st.get("son_okuma_utc") and not new:
+        return f"🕓 {name} — henüz okunmadı"
+    return f"✅ {name} — 7 günde {new} ilan" if new is not None else f"✅ {name}"
 
 
 def _handle(r: dict) -> str:

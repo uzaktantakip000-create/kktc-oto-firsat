@@ -134,10 +134,16 @@ def test_social_list_shows_per_source_numbers_from_the_reader_file(store, tmp_pa
     path = tmp_path / "durum.json"
     path.write_text(json.dumps({"surum": 1, "yazildi_utc": datetime.now(timezone.utc).isoformat(), "platformlar": {"instagram": {
         "sonuc": "tamam", "son_tur_utc": datetime.now(timezone.utc).isoformat(), "yeni_ilan": 3,
-        "kaynaklar": {"ig:kibris.car": {"son_okuma_utc": "2026-10-07T08:00:00+00:00", "yeni_ilan_7g": 12, "hata": None}}}}}))
+        "kaynaklar": {"ig:kibris.car": {"son_okuma_utc": "2026-10-07T08:00:00+00:00", "yeni_ilan_7g": 12, "hata": None},
+                      "ig:yeni.a": {"son_okuma_utc": None, "yeni_ilan_7g": 0, "hata": None},  # yavaş başlangıç: hiç okunmadı
+                      "ig:yeni.b": {"son_okuma_utc": None, "yeni_ilan_7g": 46, "hata": None},  # alan yeni eklendi ama ilanı var
+                      "ig:yeni.c": {"son_okuma_utc": "2026-10-07T08:00:00+00:00", "yeni_ilan_7g": 0, "hata": "erişim yok"}}}}}))
     monkeypatch.setattr(sources_cmd.selfwatch, "SOCIAL_STATUS_PATH", str(path))
+    for user in ("yeni.a", "yeni.b", "yeni.c"):
+        store.rows.append(src(user, "instagram", user, f"https://www.instagram.com/{user}/"))
     text, _ = sources_cmd.category(store, "instagram")
     assert "✅ @kibris.car — 7 günde 12 ilan" in text and "Okuyucu: Instagram ✅" in text
+    assert "🕓 @yeni.a — henüz okunmadı" in text and "✅ @yeni.b — 7 günde 46 ilan" in text and "⚠️ @yeni.c — okunamıyor" in text
 
 
 # ---- aç / kapat ----
