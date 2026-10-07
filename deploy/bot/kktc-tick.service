@@ -36,4 +36,8 @@ CapabilityBoundingSet=
 UMask=0077
 # Ev klasörü (/var/lib/kktc-bot) tek yazılabilir yer: bir kütüphane ~/.cache'e yazmak isterse çökmesin
 ReadWritePaths=/var/lib/kktc-bot
+# Sosyal kaynak listesi (application/source_export): sosyal okuyucu (başka kullanıcı) okur. systemd klasörü kktc-bot sahipliğinde 755 açar ve
+# bu birime yazma izni verir; dosya 644 yazılır. Sözleşme: durum.json'un tersi yönü (sosyal oturumla anlaşma, 07.10.2026).
+StateDirectory=kktc-kaynaklar
+StateDirectoryMode=0755
 MemoryMax=1G

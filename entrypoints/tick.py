@@ -5,7 +5,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from application import feed_switch, selfwatch
+from application import feed_switch, selfwatch, source_export
 from application.health import notify_owner, report_collect_errors
 from application.notify import TelegramError, api
 from application.runner_gate import TICK_FRESH, VPS_TICK_KEY, github_should_skip, mark_vps
@@ -52,6 +52,16 @@ def due_jobs(now: datetime, last_runs: dict[str, datetime | None]) -> list[str]:
 
 def _parse(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
+
+
+def export_sources(repo: Repository) -> None:
+    """Sosyal kaynak listesini VPS'teki sosyal okuyucunun dosyasına yazar (yalnız VPS'te; değişiklik yoksa yazmaz). Hata turu bozmaz: okuyucu
+    eski dosyayla ya da kendi son iyi listesiyle devam eder."""
+    try:
+        if source_export.export_social_sources(repo):
+            print("sosyal kaynak listesi güncellendi")
+    except Exception as e:
+        print("sosyal kaynak listesi yazılamadı:", type(e).__name__, redact(str(e))[:100])
 
 
 def heartbeat_gap(now: datetime, last_tick: datetime | None) -> int | None:
@@ -161,6 +171,7 @@ def main() -> None:
     print(f"tur toplam: {time.monotonic() - started:.0f} sn", flush=True)
     beat = mark_vps(repo, VPS_TICK_KEY) if eval_ok else False  # kalp atışı YALNIZ başarılı turdan sonra (VPS'te); hiç başta değil
     selfwatch.after_tick(repo, beat)  # öz-izleme (hata yutar): GitHub'da "sunucu turları durdu" uyarısı, VPS'te "yeniden çalışıyor" bildirimi
+    export_sources(repo)
     if not eval_ok:
         sys.exit(1)  # toplama ve raporlar bitti; değerlendirme çöktüyse iş akışı kırmızı olsun
 
