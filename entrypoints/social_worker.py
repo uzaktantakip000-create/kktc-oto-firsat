@@ -4,7 +4,7 @@
   python -m entrypoints.social_worker resume <platform> --yes            # sahip hesabı kontrol etti: freni kaldır
   python -m entrypoints.social_worker status                             # fren, son tur, sonraki tur, kaynak hataları
   python -m entrypoints.social_worker login <platform>                   # sahip VPS'teki tarayıcıda KENDİSİ girer (kod şifre yazmaz)
-  python -m entrypoints.social_worker browse facebook                    # sahip kayıtlı oturumla tarayıcıda gruplara KENDİSİ katılır
+  python -m entrypoints.social_worker browse <platform>                  # sahip kayıtlı oturumla tarayıcıda KENDİSİ gezinir/uyarıyı kapatır
   python -m entrypoints.social_worker compare facebook [--force]         # deneme A/B: grup sayfaları ↔ birleşik akış kapsaması
 
 Ortam: SOCIAL_MODE=trial (zorunlu: 1. aşama yalnız deneme dosyasına yazar, veritabanına ASLA), SOCIAL_STATE_DIR, SOCIAL_SOURCES_CSV,
@@ -83,6 +83,14 @@ class Config:
 
     def store(self, platform: str) -> FileStateStore:
         return FileStateStore(self.store_path(platform))
+
+    def min_interval_h(self, platform: str) -> float | None:
+        """SOCIAL_MIN_INTERVAL_H_<PLATFORM>: tur aralığı en az bu kadar saat (yalnız yavaşlatır). Geçersizse yok sayılır."""
+        try:
+            value = float((self.env.get(f"SOCIAL_MIN_INTERVAL_H_{platform.upper()}") or "").strip().replace(",", "."))
+        except ValueError:
+            return None
+        return value if 0 < value <= 24 else None
 
     def trial_mode(self) -> bool:
         return (self.env.get("SOCIAL_MODE") or "").strip().lower() == TRIAL_MODE
@@ -193,7 +201,7 @@ def _run_locked(cfg: Config, platform: str, force: bool, *, clock, sleep, rng, i
     frankfurter.use_store(store)  # kur servisi yanıt vermezse son bilinen kur (durum dosyasında) kullanılır
     with rate_proxy(cfg.env, platform):
         report = run_cycle(platform, fetcher, sources, store, sink, now=now, sleep=sleep, rng=rng,
-                           expected_ip=cfg.expected_ip(platform), log=log)
+                           expected_ip=cfg.expected_ip(platform), log=log, min_interval_h=cfg.min_interval_h(platform))
     for line in report.summary():
         log(line)
     return EXIT_BRAKE if report.status in (STOPPED, SKIP_BRAKE) else EXIT_OK
@@ -302,8 +310,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="fren, son tur, sonraki tur")
     login = sub.add_parser("login", help="sahip tarayıcıda kendisi girer")
     login.add_argument("platform", choices=PLATFORMS)
-    brw = sub.add_parser("browse", help="sahip kayıtlı oturumla tarayıcıda kendisi gezinir (gruplara katılma)")
-    brw.add_argument("platform", choices=["facebook"])
+    brw = sub.add_parser("browse", help="sahip kayıtlı oturumla tarayıcıda kendisi gezinir (gruplara katılma, uyarı kontrolü)")
+    brw.add_argument("platform", choices=PLATFORMS)
     cmp_ = sub.add_parser("compare", help="deneme A/B: grup sayfaları ↔ birleşik akış")
     cmp_.add_argument("platform", choices=["facebook"])
     cmp_.add_argument("--force", action="store_true")

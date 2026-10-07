@@ -636,6 +636,80 @@ def seed_browser_profile(profile_dir: Path) -> None:
     _write_private(prefs_path, json.dumps(prefs))
 
 
+def _open_owner_browser(p, profile: Path, proxy: str, env: Mapping[str, str]):
+    """Sahibin göreceği tarayıcı: kalıcı profil (cihaz tanınsın), aynı proxy, saat dilimi, WebRTC yalnız proxy'den."""
+    return p.chromium.launch_persistent_context(
+        str(profile), headless=False, proxy=playwright_proxy(proxy),
+        timezone_id=(env.get(TZ_ENV) or BROWSER_TZ).strip(),
+        args=[f"--webrtc-ip-handling-policy={WEBRTC_POLICY}",  # tam (görünür) Chromium bunu okur
+              f"--force-webrtc-ip-handling-policy={WEBRTC_POLICY}"],  # görünmez kip bunu okur; profil tercihi de ayrıca yazıldı
+    )
+
+
+def _egress_page(context, masker: Callable[[str], str]):
+    """Önce tarayıcının çıkış IP'si: proxy çalışmıyorsa Instagram hiç açılmaz."""
+    page = context.pages[0] if context.pages else context.new_page()
+    try:
+        page.goto(EGRESS_URL)
+        ip = str(json.loads(page.inner_text("body"))["ip"])
+        ipaddress.ip_address(ip)
+    except Exception as e:
+        raise SocialStop(Signal.IP_CHANGED, masker(f"tarayıcının çıkış IP'si okunamadı: {type(e).__name__}: {e}")) from None
+    print(f"Tarayıcının çıkış IP'si: {ip} (proxy'nin IP'si olmalı; değilse pencereyi kapat)")
+    return page
+
+
+BROWSE_TIMEOUT_S = 30 * 60
+BROWSE_HELP = """
+Instagram elle kontrol (okuyucu hesabı, kayıtlı oturumla):
+  1. Açılan tarayıcıda Instagram var. Uyarı ("We suspect automated behavior", "Confirm it's you" vb.) çıkarsa KENDİN tamamla.
+     Program hiçbir şey yazmaz, tıklamaz. Gezinme, beğenme, takip yok.
+  2. Bitince sekmeyi kapat. Çerezler okuyucu oturumuna aktarılır (Instagram'a ek sorgu atılmaz). En çok 30 dakika."""
+
+
+def browse(env: Mapping[str, str], state_dir: Path, *, now: Callable[[], datetime] = _utc_now,
+           sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
+           timeout_s: float = BROWSE_TIMEOUT_S) -> None:
+    """Sahip için: kayıtlı oturumun kalıcı profiliyle görünür Chromium (aynı proxy); uyarıyı sahip KENDİSİ kapatır. Sekme kapanınca
+    ya da süre dolunca tarayıcı çerezleri oturum dosyasına yazılır; tarayıcıda oturum yoksa dosya EZİLMEZ."""
+    proxy = proxy_from_env(env)
+    state_dir = Path(state_dir)
+    saved = read_session(state_dir / SESSION_FILE)  # oturum yoksa önce login
+    masker = partial(mask, secrets=(*proxy_secrets(proxy), *saved.secrets()))
+    profile = state_dir / BROWSER_DIR
+    seed_browser_profile(profile)
+    from playwright.sync_api import sync_playwright
+    cookies: list = []
+    with sync_playwright() as p:
+        context = _open_owner_browser(p, profile, proxy, env)
+        try:
+            page = _egress_page(context, masker)
+            page.goto(INSTAGRAM_URL)
+            print(BROWSE_HELP)
+            deadline = clock() + timeout_s
+            while True:
+                try:  # kalıcı profilde son sekme kapanınca tarayıcı da kapanabilir: çerezler her turda alınır
+                    cookies = list(context.cookies(INSTAGRAM_URL))
+                    open_pages = [pg for pg in context.pages if not pg.is_closed()]
+                except Exception:
+                    break
+                if not open_pages or clock() >= deadline:
+                    break
+                sleep(LOGIN_POLL_S)
+        finally:
+            try:
+                context.close()
+            except Exception:
+                pass
+    try:
+        cookie_map = session_from_browser_cookies(cookies)
+    except ValueError:
+        print("UYARI: tarayıcıda Instagram oturumu yok; kayıtlı oturum değiştirilmedi. Gerekirse: login instagram")
+        return
+    write_session(state_dir / SESSION_FILE, replace(saved, cookies=cookie_map), now())
+    print("Instagram oturum çerezleri güncellendi.")
+
+
 def login(env: Mapping[str, str], state_dir: Path, *, now: Callable[[], datetime] = _utc_now,
           sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
           timeout_s: float = LOGIN_TIMEOUT_S) -> None:
@@ -650,21 +724,9 @@ def login(env: Mapping[str, str], state_dir: Path, *, now: Callable[[], datetime
     seed_browser_profile(profile)
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            str(profile), headless=False, proxy=playwright_proxy(proxy),
-            timezone_id=(env.get(TZ_ENV) or BROWSER_TZ).strip(),
-            args=[f"--webrtc-ip-handling-policy={WEBRTC_POLICY}",  # tam (görünür) Chromium bunu okur
-                  f"--force-webrtc-ip-handling-policy={WEBRTC_POLICY}"],  # görünmez kip bunu okur; profil tercihi de ayrıca yazıldı
-        )
+        context = _open_owner_browser(p, profile, proxy, env)
         try:
-            page = context.pages[0] if context.pages else context.new_page()
-            try:  # önce tarayıcının çıkış IP'si: proxy çalışmıyorsa Instagram hiç açılmaz
-                page.goto(EGRESS_URL)
-                ip = str(json.loads(page.inner_text("body"))["ip"])
-                ipaddress.ip_address(ip)
-            except Exception as e:
-                raise SocialStop(Signal.IP_CHANGED, masker(f"tarayıcının çıkış IP'si okunamadı: {type(e).__name__}: {e}")) from None
-            print(f"Tarayıcının çıkış IP'si: {ip} (proxy'nin IP'si olmalı; değilse pencereyi kapat)")
+            page = _egress_page(context, masker)
             page.goto(LOGIN_URL)
             print(LOGIN_HELP)
             cookies = wait_for_session(lambda: context.cookies(INSTAGRAM_URL), lambda: page.url,

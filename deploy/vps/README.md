@@ -71,6 +71,7 @@ sudo nano /etc/kktc-social/social.env
 | `SOCIAL_PROXY_INSTAGRAM` | Instagram'a ayrılan proxy (aynı biçimde) |
 | `SOCIAL_EXPECTED_IP_FACEBOOK` | Facebook proxy'sinden çıkınca görünen sabit IP. ISP proxy'lerinde çoğu zaman proxy IP'siyle aynıdır |
 | `SOCIAL_EXPECTED_IP_INSTAGRAM` | Instagram için aynısı. Facebook'unkinden **farklı** olmalı |
+| `SOCIAL_MIN_INTERVAL_H_<PLATFORM>` | İsteğe bağlı. Tur aralığı en az bu kadar saat olur; yalnız yavaşlatır. Örneğin uyarı almış yeni hesap için `8` |
 | `SOCIAL_MODE` | `trial` olarak kalsın. Deneme kipinde sonuçlar yalnız dosyaya yazılır |
 | `SOCIAL_HEADLESS` | `0` olarak kalsın |
 | `SOCIAL_STATE_DIR`, `SOCIAL_SOURCES_CSV` | Değiştirme |
@@ -207,6 +208,7 @@ sudo chmod 640 /etc/kktc-social/vnc.passwd
    Bitince sekmeyi kapat; oturum güncellenip kaydedilir (en çok 30 dakika). Okuma turu sürerken çalışmaz; turun bitmesini bekle.
    - **Dili İngilizce yap:** Settings & privacy → Settings → Language and region → Facebook language → **English (US)**. Okuyucu "6h" gibi İngilizce zaman ifadelerini okur.
    - **Gruplara katıl:** Günde en çok 1–2 gruba istek gönder. Soruları kendin cevapla. Beğeni, yorum ve mesaj yok.
+   - **Instagram uyarısı (fren) gelirse:** `sudo kktc-social browse instagram` ile hesabı aç. Uyarıyı kendin kapat, sekmeyi kapat. Okumayı yeniden açmak için en az bir gün bekle, sonra `sudo kktc-social resume instagram --yes` çalıştır. Bir süre yavaş gitmek için `social.env`'e `SOCIAL_MIN_INTERVAL_H_INSTAGRAM=8` yaz.
 6. Instagram için de aynısını yap (ikinci Instagram hesabıyla):
    ```
    sudo kktc-social login instagram

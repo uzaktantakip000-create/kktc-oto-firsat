@@ -97,13 +97,13 @@ install_helpers() {
 # Sosyal okuyucuyu zamanlayıcıyla AYNI kullanıcı (kktc-social), ayar dosyası ve güvenlik duvarıyla elle çalıştırır. Örnekler:
 #   sudo kktc-social status
 #   sudo kktc-social login facebook        (önce: sudo systemctl start kktc-novnc + SSH tüneli; README)
-#   sudo kktc-social browse facebook       (gruplara katılmak için; önce kktc-novnc + SSH tüneli)
+#   sudo kktc-social browse facebook       (gruplara katılmak / uyarı kontrolü; önce kktc-novnc + SSH tüneli)
 #   sudo kktc-social resume facebook --yes
 #   sudo kktc-social compare facebook
 set -euo pipefail
 if [ "$(id -u)" -ne 0 ]; then exec sudo -- "$0" "$@"; fi
 if [ "$#" -eq 0 ]; then
-  echo "Kullanım: sudo kktc-social <status | login P | browse facebook | run P | resume P --yes | compare facebook>   (P = facebook | instagram)" >&2
+  echo "Kullanım: sudo kktc-social <status | login P | browse P | run P | resume P --yes | compare facebook>   (P = facebook | instagram)" >&2
   exit 2
 fi
 fw=$(nft list table inet kktc_social 2>/dev/null) || fw=

@@ -68,6 +68,7 @@ LOAD_PAUSE_S = (3.0, 6.0)  # sayfa açıldıktan sonra
 PAGE_GAP_S = (6.0, 15.0)  # iki sayfa yüklemesi arası
 GOTO_TIMEOUT_MS = 45_000
 FEED_TIMEOUT_MS = 15_000
+FEED_RETRY_MS = 20_000  # akış 15 sn'de gelmezse bir kez daha beklenir (07.10 sabahı: sayfa ~25 sn'de yüklendi, 2 grup "tanınmadı")
 EGRESS_TIMEOUT_MS = 15_000
 IMAGE_TIMEOUT_MS = 15_000
 MAX_IMAGE_BYTES = 5_000_000  # fotoğraftan fiyat okuma: bundan büyük görsel indirilmez
@@ -826,7 +827,10 @@ class FacebookBrowserFetcher:
         try:
             page.wait_for_selector('[role="feed"]', timeout=FEED_TIMEOUT_MS)
         except Exception:
-            pass  # akış yoksa nedeni aşağıdaki denetim söyler
+            try:  # yavaş yükleme (proxy, sabah yoğunluğu): bir kez daha bekle
+                page.wait_for_selector('[role="feed"]', timeout=FEED_RETRY_MS)
+            except Exception:
+                pass  # akış yoksa nedeni aşağıdaki denetim söyler
         self._pause(LOAD_PAUSE_S)
         return self._check(page)
 

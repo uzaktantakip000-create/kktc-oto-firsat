@@ -316,3 +316,27 @@ def test_status_entry_brake_masks_ip_and_pause_is_fren():
     e = sr.status_entry(paused, "instagram", NOW)
     assert e["sonuc"] == "fren" and "duraklama" in e["fren_nedeni"]
     assert sr.status_entry(Store({"social:heartbeat:instagram": _hb(sr.STOPPED)}), "instagram", NOW)["sonuc"] == "tamam"  # resume sonrası
+
+
+def test_min_interval_only_slows_down():
+    srcs = [SocialSource("instagram", "a", "https://www.instagram.com/a/", "ig-a")]
+
+    class F:
+        platform = "instagram"
+
+        def check_egress(self):
+            return "203.0.113.7"
+
+        def fetch_new(self, source, cursor, max_posts):
+            return FetchResult(posts=[], cursor=cursor, seen=0, requests=1)
+
+        def close(self):
+            pass
+
+    for floor, expected in ((8, 8), (1, 4)):
+        st = Store()
+        r = sr.run_cycle("instagram", F(), srcs, st, Sink(), now=NOW, sleep=lambda s: None, rng=Random(1),
+                         expected_ip="203.0.113.7", log=lambda s: None, min_interval_h=floor)
+        assert r.interval_h == expected
+        nxt = datetime.fromisoformat(st.state["social:next_after:instagram"])
+        assert timedelta(hours=expected, minutes=-16) <= nxt - NOW <= timedelta(hours=expected, minutes=16)

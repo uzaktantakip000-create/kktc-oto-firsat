@@ -286,8 +286,9 @@ def _read_sources(platform: str, fetcher: SocialFetcher, planned: list[SocialSou
 
 def run_cycle(platform: str, fetcher: SocialFetcher, sources: list[SocialSource], store: StateStore, sink: ListingSink, *,
               now: datetime, sleep: Callable[[float], None], rng: Random, expected_ip: str, max_posts: int = MAX_POSTS,
-              reader: LlmReader | None = None, log: Callable[[str], None] = print) -> CycleReport:
-    """Tek okuma turu. Pencere/sıra kontrolü çağıranındır (--force yalnız onu atlar); fren burada da yeniden denetlenir.
+              reader: LlmReader | None = None, log: Callable[[str], None] = print,
+              min_interval_h: float | None = None) -> CycleReport:
+    """Tek okuma turu. min_interval_h: tur aralığı en az bu kadar (yalnız yavaşlatır; ör. uyarı almış yeni hesap). Pencere/sıra kontrolü çağıranındır (--force yalnız onu atlar); fren burada da yeniden denetlenir.
     Okuyucu her durumda kapatılır; tur başladıysa (hata olsa bile) sonraki tur zamanı ve nabız yazılır: hata sık denemeye dönmez."""
     report = CycleReport(platform)
     try:
@@ -297,6 +298,8 @@ def run_cycle(platform: str, fetcher: SocialFetcher, sources: list[SocialSource]
             return report
         planned, report.interval_h = plan_cycle(sources, _started_at(store, platform, now), now, rng)
         report.slow_start = report.interval_h == SLOW_INTERVAL_H
+        if min_interval_h and min_interval_h > report.interval_h:
+            report.interval_h = min_interval_h
         log(f"{platform}: tur başladı — {len(planned)}/{len(sources)} kaynak"
             + (" (yavaş başlangıç)" if report.slow_start else "") + f", aralık {report.interval_h} sa")
         _read_sources(platform, fetcher, planned, store, sink, report, now=now, sleep=sleep, rng=rng, expected_ip=expected_ip,

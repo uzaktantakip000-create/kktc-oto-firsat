@@ -195,16 +195,23 @@ def test_login_uses_lazy_module(env):
     assert code == 0 and loader.logins == 1 and loader.imported == ["infrastructure.collectors.instagram_instaloader"]
 
 
-def test_browse_is_facebook_only_and_respects_platform_lock(env, tmp_path):
+def test_browse_both_platforms_and_respects_platform_lock(env, tmp_path):
     loader = Loader()
     code, _ = main(["browse", "facebook"], env, loader)
     assert code == 0 and loader.browses == 1 and loader.imported == ["infrastructure.collectors.facebook_browser"]
-    code, lines = main(["browse", "instagram"], env, loader)
-    assert code == 1 and loader.browses == 1
+    code, _ = main(["browse", "instagram"], env, loader)
+    assert code == 0 and loader.browses == 2 and loader.imported[-1] == "infrastructure.collectors.instagram_instaloader"
+    code, _ = main(["browse", "telegram"], env, loader)
+    assert code == 1 and loader.browses == 2
     with w.platform_lock(Path(env["SOCIAL_STATE_DIR"]), "facebook") as got:  # okuma turu sürüyor
         assert got
         code, lines = main(["browse", "facebook"], env, loader)
-    assert code == 1 and loader.browses == 1 and "çalışma sürüyor" in lines[-1]
+    assert code == 1 and loader.browses == 2 and "çalışma sürüyor" in lines[-1]
+
+
+@pytest.mark.parametrize("raw,expected", [("8", 8.0), ("6,5", 6.5), ("", None), ("abc", None), ("0", None), ("30", None)])
+def test_min_interval_setting(raw, expected):
+    assert w.Config({"SOCIAL_MIN_INTERVAL_H_INSTAGRAM": raw}).min_interval_h("instagram") == expected
 
 
 def test_missing_fetcher_module_is_clear_error(env):

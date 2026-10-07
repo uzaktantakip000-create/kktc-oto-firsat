@@ -739,3 +739,77 @@ def test_login_saves_private_session_via_proxied_browser(monkeypatch, tmp_path, 
     assert saved.username == READER and saved.cookies == COOKIES and "Chrome/146" in saved.user_agent
     out = capsys.readouterr().out
     assert "Gizli" not in out and "kullanici" not in out and COOKIES["sessionid"] not in out
+
+
+def _browse_playwright(log, cookies, close_after=2):
+    class Page:
+        url = "about:blank"
+
+        def __init__(self):
+            self.checks = 0
+
+        def goto(self, url):
+            log["goto"].append(url)
+
+        def inner_text(self, selector):
+            return '{"ip":"203.0.113.7"}'
+
+        def is_closed(self):
+            self.checks += 1
+            return self.checks > close_after
+
+    class Context:
+        def __init__(self):
+            self.pages = [Page()]
+
+        def cookies(self, url):
+            return cookies
+
+        def close(self):
+            log["closed"] = True
+
+    class Chromium:
+        def launch_persistent_context(self, user_data_dir, **kwargs):
+            log["launch"] = (user_data_dir, kwargs)
+            return Context()
+
+    class Manager:
+        def __enter__(self):
+            return types.SimpleNamespace(chromium=Chromium())
+
+        def __exit__(self, *exc):
+            return False
+
+    sync_api = types.ModuleType("playwright.sync_api")
+    sync_api.sync_playwright = Manager
+    return types.ModuleType("playwright"), sync_api
+
+
+def test_browse_needs_saved_session(tmp_path):
+    with pytest.raises(SocialStop) as e:
+        ig.browse(ENV, tmp_path)
+    assert e.value.signal == Signal.LOGIN_REQUIRED
+
+
+def test_browse_refreshes_session_cookies_without_any_query(monkeypatch, tmp_path, capsys):
+    ig.write_session(tmp_path / ig.SESSION_FILE, ig.SavedSession(READER, dict(COOKIES), "UA/1"), NOW)
+    fresh = {**COOKIES, "sessionid": "yeni-oturum-degeri"}
+    log = {"goto": []}
+    pkg, sync_api = _browse_playwright(log, [{"name": k, "value": v, "domain": ".instagram.com"} for k, v in fresh.items()])
+    monkeypatch.setitem(sys.modules, "playwright", pkg)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api)
+    monkeypatch.setitem(sys.modules, "instaloader", None)  # Instagram'a sorgu atılmaz (Instaloader hiç yüklenmez)
+    ig.browse(ENV, tmp_path, now=lambda: NOW, sleep=lambda s: None, clock=lambda: 0.0)
+    assert log["goto"] == [ig.EGRESS_URL, ig.INSTAGRAM_URL] and log["closed"] and log["launch"][1]["headless"] is False
+    saved = ig.read_session(tmp_path / ig.SESSION_FILE)
+    assert saved.cookies["sessionid"] == "yeni-oturum-degeri" and saved.username == READER and saved.user_agent == "UA/1"
+    assert not (tmp_path / ig.BUDGET_FILE).exists() and "yeni-oturum" not in capsys.readouterr().out
+
+
+def test_browse_keeps_saved_session_when_browser_logged_out(monkeypatch, tmp_path):
+    ig.write_session(tmp_path / ig.SESSION_FILE, ig.SavedSession(READER, dict(COOKIES), None), NOW)
+    pkg, sync_api = _browse_playwright({"goto": []}, [])
+    monkeypatch.setitem(sys.modules, "playwright", pkg)
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", sync_api)
+    ig.browse(ENV, tmp_path, now=lambda: NOW, sleep=lambda s: None, clock=lambda: 0.0)
+    assert ig.read_session(tmp_path / ig.SESSION_FILE).cookies == COOKIES
