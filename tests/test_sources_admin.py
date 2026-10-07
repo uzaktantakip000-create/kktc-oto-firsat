@@ -123,7 +123,9 @@ def test_web_list_shows_toggles_requests_and_blocked_sites(store):
 
 def test_social_list_hides_old_candidates_and_non_groups(store):
     text, markup = sources_cmd.category(store, "instagram")
-    assert "kibris.car" in text and "eski — kapalı" in text and "gizli" not in text and "en çok 15" in text
+    assert "✅ @kibris.car\n" in text and "⏸ @eski.hesap (eski) — kapalı" in text and "gizli" not in text and "en çok 15" in text
+    data = [b["text"] for row in markup["inline_keyboard"] for b in row]
+    assert "⏸ Kapat · @kibris.car" in data and "▶️ Aç · @eski.hesap" in data
     text, _ = sources_cmd.category(store, "facebook")
     assert "KKTC ARABA PAZARI" in text and "Marketplace" not in text and "uzak ekrandan" in text
 
@@ -135,7 +137,7 @@ def test_social_list_shows_per_source_numbers_from_the_reader_file(store, tmp_pa
         "kaynaklar": {"ig:kibris.car": {"son_okuma_utc": "2026-10-07T08:00:00+00:00", "yeni_ilan_7g": 12, "hata": None}}}}}))
     monkeypatch.setattr(sources_cmd.selfwatch, "SOCIAL_STATUS_PATH", str(path))
     text, _ = sources_cmd.category(store, "instagram")
-    assert "✅ kibris.car — 7 günde 12 ilan" in text and "Okuyucu: Instagram ✅" in text
+    assert "✅ @kibris.car — 7 günde 12 ilan" in text and "Okuyucu: Instagram ✅" in text
 
 
 # ---- aç / kapat ----

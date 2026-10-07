@@ -141,17 +141,30 @@ def _source_stats(platform: str, row: dict) -> dict | None:
 
 
 def _social_row_line(platform: str, r: dict) -> str:
+    name = _label(r)
     if not _is_open(r):
-        return f"⏸ {r['name']} — kapalı"
+        return f"⏸ {name} — kapalı"
     st = _source_stats(platform, r)
     if st is None:
-        return f"✅ {r['name']}"
+        return f"✅ {name}"
     if st.get("hata"):
-        return f"⚠️ {r['name']} — okunamıyor"
+        return f"⚠️ {name} — okunamıyor"
     new = st.get("yeni_ilan_7g")
     if type(new) is int and new >= 0:
-        return f"✅ {r['name']} — 7 günde {new} ilan"
-    return f"✅ {r['name']} — henüz okunmadı" if not st.get("son_okuma_utc") else f"✅ {r['name']}"
+        return f"✅ {name} — 7 günde {new} ilan"
+    return f"✅ {name} — henüz okunmadı" if not st.get("son_okuma_utc") else f"✅ {name}"
+
+
+def _handle(r: dict) -> str:
+    """Kısa ad (düğmede): Instagram'da @kullanıcı adı (sahip hesapları böyle tanır), öbürlerinde kayıt adı."""
+    key = key_of_url(r["platform"], r["url"]) if r["platform"] == "instagram" else None
+    return "@" + key.split(":", 1)[1] if key else r["name"]
+
+
+def _label(r: dict) -> str:
+    """Listede görünen ad: kısa ad + (Instagram'da kayıt adı başkaysa) kayıt adı."""
+    short = _handle(r)
+    return short if short == r["name"] or r["name"].lower() in (short.lower(), short[1:].lower()) else f"{short} ({r['name']})"
 
 
 def _btn(text: str, data: str) -> dict:
@@ -209,9 +222,9 @@ def category(repo, platform: str, now: datetime | None = None) -> tuple[str, dic
         else:
             lines.append(_social_row_line(platform, r))
         if _is_open(r):
-            keyboard.append([_btn(f"⏸ Kapat · {r['name']}"[:60], f"src:off:{r['id']}")])
+            keyboard.append([_btn(f"⏸ Kapat · {_handle(r)}"[:60], f"src:off:{r['id']}")])
         elif has_reader(r):
-            keyboard.append([_btn(f"▶️ Aç · {r['name']}"[:60], f"src:on:{r['id']}")])
+            keyboard.append([_btn(f"▶️ Aç · {_handle(r)}"[:60], f"src:on:{r['id']}")])
     if not rows:
         lines.append("(liste boş)")
     if platform == "web":
