@@ -1,6 +1,6 @@
 # CLAUDE.md — KKTC Oto Fırsat Sistemi
 
-Bu repo, KKTC'deki araç ilan sitelerini (KKTCar, KibrisArabaAl, KKTCarabam, Mezunum; ayrıca durgun KibrisCars ve SahibindenArabaKibris) tarayıp alışın en az %20'si kadar kâr bırakacak araçları Telegram'dan bildiren sistemdir. Instagram/Facebook okuması KAPALI (sahibin kararı, 02.10.2026).
+Bu repo, KKTC'deki araç ilan sitelerini (KKTCar, KibrisArabaAl, KKTCarabam, Mezunum; ayrıca durgun KibrisCars ve SahibindenArabaKibris) tarayıp alışın en az %20'si kadar kâr bırakacak araçları Telegram'dan bildiren sistemdir. Instagram/Facebook: VPS'teki ayrı sosyal okuyucu okur (sosyal medya oturumunun işi; şimdilik deneme kipi: ilanlar sunucuda dosyaya yazılır, fırsat mesajı üretmez). Okunan hesap/grup listesi bottan yönetilir (`/kaynaklar`, spec §24.15).
 
 ## Önce oku
 - `docs/KKTC_OTO_SISTEM_SPEC.md` — ana plan: §1–§11 ilk tasarımdır (v0.2); GÜNCEL kararlar ve yapılanlar §24'te
@@ -10,7 +10,7 @@ Bu repo, KKTC'deki araç ilan sitelerini (KKTCar, KibrisArabaAl, KKTCarabam, Mez
 
 ## Değişmez kurallar
 - Mimari: Clean Architecture monolit — `domain/` (dış bağımlılık yok) · `application/` · `infrastructure/` · `entrypoints/`. Plugin sistemi, mikroservis, event bus YOK.
-- Python 3.12, Pydantic v2, httpx + selectolax (web), Scrapling (engelli siteler), Supabase Postgres, Telegram Bot API (httpx), GitHub Actions (tick.yml cron-job.org ile 15 dk'da bir; collect-browser.yml 2 saatte bir; ci.yml test + yayın kapısı). Apify yalnız sosyal medya açılırsa (Railway ücretsiz planda kurulamadı, bırakıldı).
+- Python 3.12, Pydantic v2, httpx + selectolax (web), Scrapling (engelli siteler), Supabase Postgres, Telegram Bot API (httpx). Taramalar VPS'te (systemd: kktc-tick 15 dk'da bir, kktc-browser 2 saatte bir, Telegram dinleyicisi kktc-bot); GitHub Actions yedektir (tick.yml cron-job.org ile 15 dk'da bir, collect-browser.yml 2 saatte bir; VPS çalışırken kendiliğinden atlar) ve ci.yml test + yayın kapısıdır. Eski Apify sosyal medya yolu emekli (07.10.2026).
 - LLM: OpenRouter üzerinden iki model: GLM (okuyucu, `openrouter.READ_MODEL`; önce kural tabanlı parser, olmazsa LLM) ve `OPENROUTER_MODEL` (🟢 mesajına kısa "fırsat notu", yalnız ⚠️ ekler). LLM yalnız okur/doğrular, ASLA 🟢 üretmez.
 - kibrisaraba.com, galerimplus.com, illakiburada.com: sahibin kararıyla (02.10.2026) yalnızca herkese açık ilan sayfaları, nazik hızda okunur; giriş/CAPTCHA çözme yok. Bugün taranan: KKTCar, KibrisArabaAl, KKTCarabam, Mezunum, KibrisCars, SahibindenArabaKibris; kibrisaraba/illakiburada erişilemiyor, galerimplus Cloudflare engelli.
 - Sistem öneri verir; otomatik mesaj, teklif veya satın alma YOK.
