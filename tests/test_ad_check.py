@@ -114,7 +114,7 @@ def _msg(chat, text=None, photo=None):
 
 def test_owner_and_approved_subscriber_texts_are_checked_but_commands_are_not(monkeypatch):
     from application import bot_poll
-    monkeypatch.setattr(bot_poll.sources_cmd, "sources_report", lambda repo: "rapor")
+    monkeypatch.setattr(bot_poll.sources_cmd, "menu", lambda repo: ("rapor", {"inline_keyboard": []}))
     sent, asked = [], []
     monkeypatch.setattr(bot_poll, "api", lambda token, method, **kw: sent.append((method, kw)))
     monkeypatch.setattr(bot_poll.ad_check, "handle", lambda repo, raw, image, reader, **kw: asked.append((raw, image, kw)) or "cevap")

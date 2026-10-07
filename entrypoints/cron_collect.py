@@ -14,12 +14,23 @@ from application import feed_switch, llm_reader, selfwatch
 from application.health import report_collect_errors
 from application.runner_gate import BROWSER_FRESH, VPS_BROWSER_KEY, github_should_skip, mark_vps
 from application.source_alarm import track_collect
+from application.source_readers import WEB_READERS
 from infrastructure.config import load_env, redact, require
 from infrastructure.fx import frankfurter
 from infrastructure.db.repository import Repository
 
-# ad -> (platform, url içinde geçen parça, toplayıcı)
 JOBS = ("instagram", "facebook", "kktcar", "kktcarabam", "kibrisarabaal", "mezunum", "kibriscars", "pazarkibris", "sahibindenarabakibris")
+# site işi -> toplayıcı (alan adları application/source_readers.WEB_READERS'ta: bottaki kaynak yönetimi de o listeyi kullanır).
+# Hepsi lambda: toplayıcı adı çağrı anında çözülür (testler modüldeki toplayıcıyı değiştirir).
+WEB_COLLECTORS = {
+    "kktcar": lambda repo, src: collect_kktcar(repo, src),
+    "kktcarabam": lambda repo, src: collect_kktcarabam(repo, src),
+    "kibrisarabaal": lambda repo, src: collect_kibrisarabaal(repo, src),
+    "mezunum": lambda repo, src: collect_mezunum(repo, src, llm_reader.from_env(repo)),
+    "kibriscars": lambda repo, src: collect_kibriscars(repo, src),
+    "pazarkibris": lambda repo, src: collect_pazarkibris(repo, src, llm_reader.from_env(repo)),
+    "sahibindenarabakibris": lambda repo, src: collect_sahibindenarabakibris(repo, src),
+}
 
 
 def _provider_limit(repo: Repository, platform: str, e: Exception) -> bool:
@@ -77,12 +88,7 @@ def run(job: str, repo: Repository, outcomes: list | None = None) -> list[tuple[
             errors.append(("Facebook grupları", msg))
             track_collect(repo, "Facebook grupları", msg)
         return errors
-    needle, fn = {"kktcar": ("kktcar.com", collect_kktcar), "kktcarabam": ("kktcarabam.com", collect_kktcarabam),
-                    "kibrisarabaal": ("kibrisarabaal.com", collect_kibrisarabaal),
-                    "mezunum": ("mezunumsatiyorumkibris.com.tr", lambda repo, src: collect_mezunum(repo, src, llm_reader.from_env(repo))),
-                    "kibriscars": ("kibriscars.com", collect_kibriscars),
-                    "pazarkibris": ("pazarkibris.com", lambda repo, src: collect_pazarkibris(repo, src, llm_reader.from_env(repo))),
-                    "sahibindenarabakibris": ("sahibindenarabakibris.com", collect_sahibindenarabakibris)}[job]
+    needle, fn = WEB_READERS[job], WEB_COLLECTORS[job]
     for source in repo.sources("web", ("aktif", "deneme")):
         if needle in source["url"]:
             try:

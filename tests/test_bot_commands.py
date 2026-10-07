@@ -77,7 +77,8 @@ def bot(monkeypatch):
     monkeypatch.setattr(bot_poll.history_cmd, "last_opportunities", lambda repo: "SON")
     monkeypatch.setattr(bot_poll.price_book_cmd, "fiyat_reply", lambda repo, a: f"FIYAT{a}")
     monkeypatch.setattr(bot_poll.price_book_cmd, "record_sale", lambda repo, a: f"SATTI{a}")
-    monkeypatch.setattr(bot_poll.sources_cmd, "sources_report", lambda repo: "KAYNAKLAR")
+    monkeypatch.setattr(bot_poll.sources_cmd, "menu", lambda repo: ("KAYNAKLAR", {"inline_keyboard": []}))
+    monkeypatch.setattr(bot_poll.sources_cmd, "propose_link", lambda repo, raw: (f"KAYNAK-ÖNERİSİ {raw}", None) if raw.startswith("http") else None)
     monkeypatch.setattr(bot_poll.sources_cmd, "add_instagram", lambda repo, a: f"EKLE{a}")
     monkeypatch.setattr(bot_poll.sources_cmd, "set_level", lambda repo, a: f"SEVIYE{a}")
     monkeypatch.setattr(bot_poll.sources_cmd, "change_status", lambda repo, a, to: f"{to}{a}")
@@ -99,7 +100,7 @@ def bot(monkeypatch):
 OWNER_CASES = [
     ("/durum", "DURUM"), ("/son", "SON"), ("/fiyat corolla 2014", "FIYAT corolla 2014"),
     ("/satti corolla 2014 7200", "SATTI corolla 2014 7200"), ("/kaynaklar", "KAYNAKLAR"),
-    ("/kaynak_ekle abc", "EKLE abc"), ("/kaynak_seviye x mor", "SEVIYE x mor"),
+    ("/kaynak_ekle abc", "EKLEabc"), ("/kaynak_ekle https://www.instagram.com/x/", "KAYNAK-ÖNERİSİ https://www.instagram.com/x/"), ("/kaynak_seviye x mor", "SEVIYE x mor"),
     ("/kaynak_ac abc", "deneme abc"), ("/kaynak_kapat abc", "pasif abc"),
 ]
 
@@ -226,7 +227,9 @@ def test_owner_free_text_unknown_commands_and_links(bot):
     repo = Repo()
     assert bot.send(repo, OWNER, "tamam") == [bot_poll.CHATTER_REPLY] and bot.ads == []  # kota/yapay zekâ harcanmaz
     assert bot.send(repo, OWNER, "teşekkürler 👍") == [bot_poll.CHATTER_REPLY]
-    assert bot.send(repo, OWNER, "https://kibrisarabaal.com/ilan/3107-2012-model-otomatik-666946/") == [bot_poll.LINK_REPLY] and bot.ads == []
+    link = "https://kibrisarabaal.com/ilan/3107-2012-model-otomatik-666946/"
+    assert bot.send(repo, OWNER, link) == [f"KAYNAK-ÖNERİSİ {link}"] and bot.ads == []  # sahibin linki: kaynak yönetimi cevaplar (07.10.2026)
+    assert bot.send(Repo({FRIEND: "onayli"}), FRIEND, link) == [bot_poll.LINK_REPLY]  # abonenin linki: eskisi gibi
     assert bot.send(repo, OWNER, "/yanlis_komut") == [bot_poll.UNKNOWN_OWNER_REPLY]
     assert bot.send(repo, OWNER, "2015 Toyota Vitz 5000£") == ["ILAN-CEVABI"] and bot.ads == [("2015 Toyota Vitz 5000£", None, {})]
     assert bot.send(repo, OWNER, "Satılık 2012 model araç 8500 stg 240000 km") == ["ILAN-CEVABI"]  # rakamlı gerçek ilan metni

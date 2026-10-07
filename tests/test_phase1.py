@@ -110,7 +110,7 @@ def test_instagram_username_parsing():
     assert p("https://www.instagram.com/Kibris.Car/?hl=tr") == "kibris.car"
     assert p("@araba_kktc") == "araba_kktc" and p(" araba_kktc ") == "araba_kktc"
     assert p("https://www.instagram.com/p/ABC123/") is None  # gönderi bağlantısı hesap değil
-    assert p("a") is None and p("") is None and p("kötü ad!") is None
+    assert p("") is None and p("kötü ad!") is None and p("https://www.instagram.com/reel/x/") is None
 
 
 def test_audit_text_has_link_and_price():

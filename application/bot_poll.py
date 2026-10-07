@@ -30,14 +30,15 @@ HELP_OWNER = ("📖 Komutlar (cevap en geç ~15 dk içinde gelir)\n\n"
               "/fiyat corolla 2014 — bir aracın piyasa değeri\n"
               "/satti corolla 2014 120000km 7200 — gerçek bir satışı kaydet (değer tablosunu doğrular)\n"
               "/ayarlar — eşik, bütçe, istenmeyen markalar\n"
+              "/kaynaklar — taranan siteler, Instagram hesapları, Facebook grupları: düğmeyle aç/kapat\n"
               "/dur ve /basla — bildirimleri durdur / yeniden aç\n\n"
               "Menüde görünmeyenler (yazınca çalışır):\n"
               "/esik 20 — 🟢 için en az % kâr\n"
               "/butce 20000 — bundan pahalı ilan gelmesin (/butce yok kaldırır)\n"
               "/istemiyorum fiat — markayı kapat (/istiyorum fiat geri açar)\n"
-              "/kaynaklar — taranan siteler ve durumları\n"
               "/tahmini ac | kapat — 🟠 ayarı (şu an 🟠 mesajları zaten kapalı)\n\n"
               "İlan kontrolü: bir ilanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü gönder; piyasayla karşılaştırıp cevap veririm.\n"
+              "Kaynak eklemek: Instagram hesabının, Facebook grubunun ya da yeni sitenin linkini gönder; eklemeden önce sorarım.\n"
               "Her fırsat mesajındaki 👍 İşe yarar / 👎 Yanlış düğmesine bas: sistemi bu oylarla ölçüyorum.")
 HELP_SUBSCRIBER = ("Bu bot KKTC'deki ikinci el araç ilanlarını tarar; piyasanın belirgin altında kalan fırsatları bu sohbete yazar. "
                    "Yalnızca öneridir: satıcıyla görüşmek ve karar vermek sana aittir.\n\n"
@@ -94,10 +95,11 @@ def _help_text(status_now: str | None) -> str:
     return HELP_GUEST + "\n\n" + _guest_reply(status_now)
 
 
-def _answer(token: str, callback_id: str, text: str | None = None) -> None:
-    """Saatlik çalıştığımız için düğme cevabı geç kalabilir (Telegram reddeder): bu işi bozmamalı."""
+def _answer(token: str, callback_id: str, text: str | None = None, alert: bool = False) -> None:
+    """Saatlik çalıştığımız için düğme cevabı geç kalabilir (Telegram reddeder): bu işi bozmamalı. `alert`: kısa bildirim yerine kapatılması
+    gereken uyarı kutusu (ör. korumaya takılan kaynak işlemi: sahip gözden kaçırmasın)."""
     try:
-        api(token, "answerCallbackQuery", callback_query_id=callback_id, **({"text": text} if text else {}))
+        api(token, "answerCallbackQuery", callback_query_id=callback_id, **({"text": text} if text else {}), **({"show_alert": True} if alert else {}))
     except TelegramError:
         pass
 
@@ -224,9 +226,16 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
         cmd = text.split()[0]
         api(token, "sendMessage", chat_id=chat_id, text=settings_store.block_brand(repo, text[len(cmd):], cmd == "/istemiyorum"))
     elif chat_id == owner and text.startswith("/kaynaklar"):
-        api(token, "sendMessage", chat_id=chat_id, text=sources_cmd.sources_report(repo), disable_web_page_preview=True)
+        body, markup = sources_cmd.menu(repo)
+        api(token, "sendMessage", chat_id=chat_id, text=body, reply_markup=markup, disable_web_page_preview=True)
     elif chat_id == owner and text.startswith("/kaynak_ekle"):
-        api(token, "sendMessage", chat_id=chat_id, text=sources_cmd.add_instagram(repo, text[len("/kaynak_ekle"):]))
+        arg = raw[len("/kaynak_ekle"):].strip()
+        proposal = sources_cmd.propose_link(repo, arg)
+        if proposal is not None:
+            body, markup = proposal
+            api(token, "sendMessage", chat_id=chat_id, text=body, disable_web_page_preview=True, **({"reply_markup": markup} if markup else {}))
+        else:
+            api(token, "sendMessage", chat_id=chat_id, text=sources_cmd.add_instagram(repo, arg))
     elif chat_id == owner and text.startswith("/kaynak_seviye"):
         api(token, "sendMessage", chat_id=chat_id, text=sources_cmd.set_level(repo, text[len("/kaynak_seviye"):]))
     elif chat_id == owner and text.startswith("/kaynak_ac"):
@@ -257,6 +266,10 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
             image = _download_photo(token, msg["photo"])
             reply = ("Görüntüyü indiremedim (en çok 5 MB olmalı). İlanı yazı olarak da gönderebilirsin." if image is None
                      else ad_check.handle(repo, raw, image, llm_reader.from_env(repo), **extra))
+        elif _is_bare_link(raw) and chat_id == owner and (proposal := sources_cmd.propose_link(repo, raw)) is not None:
+            body, markup = proposal  # sahibin attığı link: kaynak ekleme/açma önerisi (düğmeli) ya da "zaten taranıyor"
+            api(token, "sendMessage", chat_id=chat_id, text=body, disable_web_page_preview=True, **({"reply_markup": markup} if markup else {}))
+            return
         elif _is_bare_link(raw):  # link açılmaz; kota ve yapay zekâ çağrısı harcanmasın
             reply = LINK_REPLY
         elif not _looks_like_ad(raw):  # "tamam", "teşekkürler"...: ilan kontrolüne girmez
@@ -283,6 +296,44 @@ def _maybe_ask_mute(repo: Repository, token: str, owner: str, listing_id) -> Non
         text=f"{brand} {model} ilanlarına {n} kez 'pas' dedin. Bu modelin 🟢 bildirimlerini kapatayım mı?",
         reply_markup={"inline_keyboard": [[{"text": "✅ Evet, kapat", "callback_data": f"mute:evet:{key}"[:64]},
                                            {"text": "❌ Hayır, olduğu gibi", "callback_data": f"mute:hayir:{key}"[:64]}]]})
+
+
+def _show(token: str, cb: dict, text: str, markup: dict | None) -> None:
+    """Düğmeye basılan mesajı yerinde günceller (liste/sonuç). Mesaj çok eskiyse ya da düzenlenemiyorsa yeni mesaj gönderilir; içerik aynıysa
+    ("message is not modified": aynı düğmeye iki kez basış) hiçbir şey yapılmaz."""
+    msg = cb.get("message") or {}
+    chat, message_id = (msg.get("chat") or {}).get("id"), msg.get("message_id")
+    extra = {"reply_markup": markup} if markup else {"reply_markup": {"inline_keyboard": []}}
+    if chat is not None and message_id is not None:
+        try:
+            api(token, "editMessageText", chat_id=chat, message_id=message_id, text=text, disable_web_page_preview=True, **extra)
+            return
+        except TelegramError as e:
+            if "not modified" in (e.description or ""):
+                return
+    if chat is not None:
+        api(token, "sendMessage", chat_id=chat, text=text, disable_web_page_preview=True, **({"reply_markup": markup} if markup else {}))
+
+
+def _source_callback(repo: Repository, token: str, cb: dict, action: str, target: str) -> None:
+    """Kaynak düğmeleri (yalnız sahip): src:menu: · src:list:<platform> · src:on|off:<kaynak> · src:add:<anahtar> · src:no:"""
+    if action == "list":
+        _answer(token, cb["id"])
+        _show(token, cb, *sources_cmd.category(repo, target))
+    elif action in ("on", "off"):
+        changed, result, platform = sources_cmd.toggle(repo, target, action == "on")
+        _answer(token, cb["id"], result[:190], alert=not changed)  # korumaya takıldıysa uyarı kutusu
+        _show(token, cb, *sources_cmd.category(repo, platform or "web"))
+    elif action == "add":
+        result = sources_cmd.add(repo, target)
+        _answer(token, cb["id"], result[:190])
+        _show(token, cb, result, None)
+    elif action == "no":
+        _answer(token, cb["id"])
+        _show(token, cb, "Tamam, eklemedim.", None)
+    else:  # "menu" ve bilinmeyen: ana liste
+        _answer(token, cb["id"])
+        _show(token, cb, *sources_cmd.menu(repo))
 
 
 def _handle_callback(repo: Repository, token: str, owner: str, cb: dict) -> None:
@@ -331,6 +382,8 @@ def _handle_callback(repo: Repository, token: str, owner: str, cb: dict) -> None
                 _maybe_ask_mute(repo, token, owner, target)
         _answer(token, cb["id"], answer)
         _mark_saved(token, cb, target, action)  # oy kayıtlı: BASILAN mesajın düğmesi "✅ Kaydedildi" olur (öteki kişinin mesajına dokunulmaz)
+    elif kind == "src" and sender == owner:
+        _source_callback(repo, token, cb, action, target)
     elif kind == "fb" and action == SAVED_ACTION:  # "✅ Kaydedildi" düğmesine tekrar basış: hiçbir şey kaydedilmez
         _answer(token, cb["id"], SAVED_ANSWER)
     else:
