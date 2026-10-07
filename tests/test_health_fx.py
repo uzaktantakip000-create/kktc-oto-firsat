@@ -1,8 +1,13 @@
 import httpx
 import pytest
 
-from application import health
+from application import feed_switch, health
 from infrastructure.fx import frankfurter
+
+
+@pytest.fixture(autouse=True)
+def _legacy_apify(monkeypatch):
+    monkeypatch.setattr(feed_switch, "LEGACY_APIFY", True)  # bu dosya eski Apify yolunun davranışını da sınar (üretimde emekli, 07.10.2026)
 
 
 class FakeRepo:
@@ -97,6 +102,8 @@ def test_fx_falls_back_to_last_known_rate(monkeypatch):
 # --- Adım 2i: döviz servisi uzun süre yanıt vermezse sahibe haber ---
 
 from datetime import datetime, timedelta, timezone  # noqa: E402
+
+
 
 
 def test_fallback_start_is_recorded_once_and_cleared_when_the_service_recovers(monkeypatch):

@@ -12,6 +12,10 @@ COLLECTIVE = {"instagram": "Instagram (toplu)", "facebook": "Facebook grupları"
 LABEL = {"instagram": "Instagram", "facebook": "Facebook"}
 PAUSE_HOURS = 6  # kota/yetki hatasında bu kadar bekle, sonra yeniden dene (başarısız deneme ücretsizdir)
 OFF, LIMIT = "kapali", "limit"
+# Eski Apify toplayıcısı EMEKLİ (07.10.2026): Instagram/Facebook artık VPS'teki ayrı sosyal okuyucuda (kendi hesabı, kendi listesi:
+# veritabanındaki sosyal kaynak satırları ona dosyayla aktarılır, application/source_export). bot_state'teki `feed:<platform>` anahtarı
+# "on" yazılsa bile eski yol ÇALIŞMAZ: aynı hesaplar ikinci kez (ve ücretli) okunmasın. Eski yolun testleri bunu True yapar.
+LEGACY_APIFY = False
 
 
 def _until(repo, provider: str) -> datetime | None:
@@ -25,6 +29,8 @@ def _until(repo, provider: str) -> datetime | None:
 def paused_platforms(repo, now: datetime | None = None) -> dict[str, str]:
     """{platform: neden}. neden: 'kapali' (anahtar açılmamış) ya da 'limit' (sağlayıcı 403 verdi, süre dolana kadar)."""
     now = now or datetime.now(timezone.utc)
+    if not LEGACY_APIFY:
+        return {p: OFF for p in PLATFORMS}
     out = {}
     for p in PLATFORMS:
         if (repo.get_state(f"feed:{p}", "off") or "off").strip().lower() != "on":

@@ -1,6 +1,13 @@
 from datetime import datetime, timezone
 
-from application import health, status
+import pytest
+
+from application import feed_switch, health, status
+
+
+@pytest.fixture(autouse=True)
+def _legacy_apify(monkeypatch):
+    monkeypatch.setattr(feed_switch, "LEGACY_APIFY", True)  # bu dosya eski Apify yolunun davranışını da sınar (üretimde emekli, 07.10.2026)
 
 
 class Rows:
