@@ -34,9 +34,31 @@ def _alerted_sql(lid: str, chat: str | None = None) -> str:
     return (f"EXISTS (SELECT 1 FROM alerts a JOIN listings d ON d.id = a.listing_id WHERE (d.id = {lid} OR d.duplicate_of = {lid})"
             + (f" AND a.chat_id = {chat}" if chat else "") + " AND a.tier = ANY(%s))")
 
-# Abonenin (sahip olmayan) düğme oyu otomatik davranışı yönlendirmez (emsal, öğrenme kapısı, 🟠/kaynak koruması, 'pas' sayısı):
-# yalnız sahibin oyu ve sahibi belli olmayan kayıt (note boş: denetim, eski satır) sayılır. Oy satırı 'feedback f' takma adıyla okunmalı.
+# Yalnız SAHİBİN oyu (ve sahibi belli olmayan kayıt: note boş, denetim, eski satır): sahibin kendi ayarlarına bağlı işler ('pas' → model
+# sessize alma önerisi, öğrenme kapısı / "kusurlu" satıcı engeli), kapalı 🟠 koruması ve sahibin ekranları (/son, /durum, haftalık rapor).
+# Herkesi etkileyen emsal havuzu ve kaynak koruması bunu DEĞİL, VOTED_WRONG_SQL'i kullanır. Oy satırı 'feedback f' takma adıyla okunmalı.
 OWNER_VOTE_SQL = "NOT EXISTS (SELECT 1 FROM subscribers voter WHERE NOT voter.is_owner AND f.note = 'chat:' || voter.chat_id)"
+
+# Herkesi etkileyen oy kararı (sahibin kararı 08.10.2026: "herkes eşit, en az 2 oy"; eskiden yalnız sahibin oyu sayılıyordu). Sahip dahil
+# herkesin oyu eşittir; her kişinin bir ilandaki SON 👍/👎 oyu sayılır (sahibi belli olmayan eski kayıt sahibin oyudur; reddedilmiş kişinin
+# oyu sayılmaz). İlan "oyla yanlış" sayılır: en az VOTE_MIN_AGREE kişi 👎 (yanlış fiyat/kusurlu) dediyse VE 👎 diyenler 👍 diyenlerden
+# çoksa; eşitlikte değişiklik yok (tek kişinin yanlış ya da kasıtlı oyu herkesi bozamaz). Sahibin aylık denetimindeki "❌ Yanlış" (ilan verisi
+# yanlış okunmuş; denetim yalnız sahibe gelir, görüş değil veri kontrolüdür) tek başına yeter. İlan kimliği listesi döner (NULL yok).
+VOTE_MIN_AGREE = 2
+VOTED_WRONG_SQL = f"""SELECT listing_id FROM (
+            SELECT DISTINCT ON (fv.listing_id, fv.voter) fv.listing_id, fv.action FROM (
+                SELECT fw.listing_id, fw.action, fw.created_at,
+                       CASE WHEN COALESCE(fw.note, '') = ''
+                                 OR EXISTS (SELECT 1 FROM subscribers so WHERE so.is_owner AND fw.note = 'chat:' || so.chat_id)
+                            THEN 'sahip' ELSE fw.note END AS voter
+                FROM feedback fw
+                WHERE fw.listing_id IS NOT NULL AND fw.action IN ('ilgilendim','yanlis_fiyat','kusurlu')
+                  AND NOT EXISTS (SELECT 1 FROM subscribers sr WHERE sr.status = 'reddedildi' AND fw.note = 'chat:' || sr.chat_id)) fv
+            ORDER BY fv.listing_id, fv.voter, fv.created_at DESC) last_vote
+        GROUP BY listing_id
+        HAVING count(*) FILTER (WHERE action <> 'ilgilendim') >= {VOTE_MIN_AGREE}
+           AND count(*) FILTER (WHERE action <> 'ilgilendim') > count(*) FILTER (WHERE action = 'ilgilendim')
+        UNION SELECT listing_id FROM feedback WHERE action = 'audit_yanlis' AND listing_id IS NOT NULL"""
 
 
 def unsaved_alert_key(listing_id, chat_id: str) -> str:
@@ -178,10 +200,8 @@ class Repository:
                  AND COALESCE(extraction_by, '') <> 'llm'  -- yapay zekâ okuması emsal olmaz
                  AND karantina_nedeni IS NULL
                  AND COALESCE(posted_at, data_as_of, first_seen_at) > NOW() - make_interval(days => %s)
-                 AND NOT EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = listings.id
-                                 AND f.action IN ('yanlis_fiyat','kusurlu','audit_yanlis')
-                                 -- abonenin (sahip olmayan) yanlış basışı emsali herkes için bozmasın: yalnız sahip/sistem oyu dışlar
-                                 AND {OWNER_VOTE_SQL})""" + key_sql,
+                 -- oyla "yanlış" denen ilan emsal olmaz: herkes eşit, en az 2 kişi ve çoğunluk; sahibin denetimi tek başına yeter
+                 AND listings.id NOT IN ({VOTED_WRONG_SQL})""" + key_sql,
             args,
         ).fetchall()
 
@@ -621,12 +641,12 @@ class Repository:
         ).fetchall()
 
     def sources_failing_feedback(self, window: int = 10, max_bad: int = 3) -> list[dict]:
-        """Anlık bildirim veren kaynaklardan, SON 'window' 🟢'sinin en az 'max_bad' tanesine (sahip) 'yanlış fiyat/kusurlu' denenler."""
+        """Anlık bildirim veren kaynaklardan, SON 'window' 🟢'sinin en az 'max_bad' tanesi oyla "yanlış" sayılanlar (VOTED_WRONG_SQL:
+        herkes eşit, en az 2 kişi ve çoğunluk)."""
         return self.conn.execute(
             f"""SELECT sid AS id, name, count(*) AS n, count(*) FILTER (WHERE bad) AS bad_n FROM (
                    SELECT s.id AS sid, s.name, l.id AS lid,
-                          EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = l.id AND f.action IN ('yanlis_fiyat','kusurlu')
-                                  AND {OWNER_VOTE_SQL}) AS bad,
+                          l.id IN ({VOTED_WRONG_SQL}) AS bad,
                           ROW_NUMBER() OVER (PARTITION BY s.id ORDER BY MAX(a.sent_at) DESC) AS rn
                    FROM alerts a JOIN listings l ON l.id = a.listing_id JOIN sources s ON s.id = l.source_id
                    WHERE a.tier = 'guclu' AND s.alert_level = 'yesil'

@@ -671,15 +671,30 @@ def test_alert_exists_counts_the_fallback_trace_of_an_unsaved_green_or_orange_al
 
 
 
-def test_market_pool_drops_listings_the_owner_marked_wrong_but_ignores_a_subscribers_tap(db):
-    """Tek abonenin yanlış basışı herkesin emsalini bozmasın (bot_poll: kararlar yalnızca sahipten sisteme döner). Sahip oyu ya da
-    sahibi belli olmayan kayıt (denetim, eski satır) emsali dışlamaya devam eder."""
+def test_market_pool_drops_a_listing_only_when_at_least_two_people_say_wrong_and_they_are_the_majority(db):
+    """Sahibin kararı 08.10.2026 ("herkes eşit, en az 2 oy"): tek kişinin (sahip dahil) 👎'u emsali düşürmez; en az 2 kişi 👎 ve 👎 > 👍
+    olunca düşer; eşitlikte değişiklik yok. Her kişinin SON oyu sayılır; sahibin notsuz eski kaydı ile 'chat:<sahip>' aynı kişidir;
+    reddedilmiş kişinin oyu sayılmaz; sahibin aylık denetimindeki "❌ Yanlış" (veri kontrolü) tek başına yeter."""
     c, sid = db.conn, add_source(db.conn)
-    c.execute("INSERT INTO subscribers (chat_id, name, status, is_owner) VALUES ('o1','sahip','onayli',TRUE), ('s1','abone','onayli',FALSE)")
-    keep, owner_bad, sub_bad, no_note = (add_listing(c, sid, n) for n in ("keep", "ownerbad", "subbad", "nonote"))
-    for lid, note in ((owner_bad, "chat:o1"), (sub_bad, "chat:s1"), (no_note, None)):
-        c.execute("INSERT INTO feedback (listing_id, action, note) VALUES (%s,'yanlis_fiyat',%s)", (lid, note))
-    assert {str(r["id"]) for r in db.market_pool(days=120)} == {str(keep), str(sub_bad)}
+    c.execute("INSERT INTO subscribers (chat_id, name, status, is_owner) VALUES ('o1','sahip','onayli',TRUE), ('s1','abone','onayli',FALSE), "
+              "('s2','abone2','onayli',FALSE), ('x1','reddedilen','reddedildi',FALSE)")
+    names = ("owner_only", "two_bad", "two_subs", "tie", "changed_mind", "owner_twice", "rejected", "audit", "kusurlu_mix")
+    L = {n: add_listing(c, sid, n) for n in names}
+    votes = [("owner_only", "yanlis_fiyat", "chat:o1"),
+             ("two_bad", "yanlis_fiyat", "chat:o1"), ("two_bad", "yanlis_fiyat", "chat:s1"),
+             ("two_subs", "yanlis_fiyat", "chat:s1"), ("two_subs", "kusurlu", "chat:s2"),
+             ("tie", "yanlis_fiyat", "chat:o1"), ("tie", "yanlis_fiyat", "chat:s1"), ("tie", "ilgilendim", "chat:s2"), ("tie", "pas", None),
+             ("tie", "ilgilendim", "chat:s1"),  # s1 fikrini değiştirdi: son oyu 👍 → 1 👎, 2 👍 (pas oy değildir)
+             ("changed_mind", "ilgilendim", "chat:s1"), ("changed_mind", "yanlis_fiyat", "chat:s1"), ("changed_mind", "yanlis_fiyat", "chat:s2"),
+             ("owner_twice", "yanlis_fiyat", None), ("owner_twice", "yanlis_fiyat", "chat:o1"),  # notsuz eski kayıt + yeni: tek kişi
+             ("rejected", "yanlis_fiyat", "chat:s1"), ("rejected", "yanlis_fiyat", "chat:x1"),  # reddedilenin oyu sayılmaz
+             ("kusurlu_mix", "kusurlu", "chat:o1"), ("kusurlu_mix", "yanlis_fiyat", "chat:s1"), ("kusurlu_mix", "ilgilendim", "chat:s2")]
+    for name, action, who in votes:  # her ekleme ayrı işlem (autocommit): created_at ekleme sırasıyla artar
+        vote(c, L[name], action, who)
+    c.execute("INSERT INTO feedback (listing_id, action) VALUES (%s,'audit_yanlis')", (L["audit"],))
+    pool = {str(r["id"]) for r in db.market_pool(days=120)}
+    dropped = {n for n, lid in L.items() if str(lid) not in pool}
+    assert dropped == {"two_bad", "two_subs", "changed_mind", "audit", "kusurlu_mix"}
 
 
 # --- abone oyu otomatik davranışı yönlendirmez (repository.OWNER_VOTE_SQL): her okuma için abone oyu sayılmaz, sahibinki sayılır ---
@@ -696,9 +711,12 @@ def test_every_automatic_feedback_read_uses_the_owner_vote_filter():
     import inspect
 
     from infrastructure.db.repository import Repository
-    for fn in (Repository.market_pool, Repository.feedback_votes, Repository.pas_count, Repository.est_feedback_by_model,
-               Repository.est_feedback_recent, Repository.sources_failing_feedback, Repository.recent_opportunities):
+    for fn in (Repository.feedback_votes, Repository.pas_count, Repository.est_feedback_by_model,
+               Repository.est_feedback_recent, Repository.recent_opportunities):
         assert "OWNER_VOTE_SQL" in inspect.getsource(fn), fn.__name__
+    for fn in (Repository.market_pool, Repository.sources_failing_feedback):  # herkesi etkileyenler: herkes eşit, en az 2 oy (08.10.2026)
+        src = inspect.getsource(fn)
+        assert "VOTED_WRONG_SQL" in src and "OWNER_VOTE_SQL" not in src, fn.__name__
     from application import status
     assert "OWNER_VOTE_SQL" in inspect.getsource(status.build_status)  # /durum "Senin düğme basışların"
 
@@ -717,8 +735,8 @@ def test_learning_gate_counts_owner_votes_only(db):
 
 def test_button_press_flow_keeps_the_subscribers_vote_separate_and_edits_only_the_pressed_message(db, monkeypatch):
     """Düğme basışı uçtan uca (gerçek veritabanı, `bot_poll._handle_callback`): her kişinin mesajı ayrıdır. Abonenin basışı yalnız KENDİ mesajını
-    düzenler, oyu 'chat:<abone>' notuyla kaydolur ve sahibin sayımlarını (öğrenme kapısı, emsal havuzu) etkilemez; sahibin basışı yalnız
-    sahibin mesajını düzenler ve sayımlara girer. Oy saklama ve sayım yolu bu özellikten ÖNCEKİYLE aynıdır."""
+    düzenler, oyu 'chat:<abone>' notuyla kaydolur ve öğrenme kapısına sayılmaz; tek kişinin "yanlış"ı emsali düşürmez, ikinci kişi (burada
+    sahip) de deyince düşer (herkes eşit, en az 2 oy: 08.10.2026). Sahibin basışı yalnız sahibin mesajını düzenler."""
     from application import bot_poll, notify
     c, sid = db.conn, add_source(db.conn)
     owner, sub = "1001", "2002"
@@ -739,11 +757,11 @@ def test_button_press_flow_keeps_the_subscribers_vote_separate_and_edits_only_th
     assert press(sub, 22, "yanlis_fiyat") == [(2002, 22)]  # yalnız abonenin mesajı düzenlendi
     assert votes() == [("yanlis_fiyat", "chat:2002")]
     assert db.feedback_votes() == 0  # abonenin oyu öğrenme kapısını açmaya saymaz
-    assert {str(r["id"]) for r in db.market_pool(days=120)} == {str(lid)}  # abonenin "yanlış"ı ilanı emsalden düşürmez
+    assert {str(r["id"]) for r in db.market_pool(days=120)} == {str(lid)}  # tek kişinin "yanlış"ı ilanı emsalden düşürmez
     assert press(owner, 11, "yanlis_fiyat") == [(2002, 22), (1001, 11)]  # sahibin basışı yalnız sahibin mesajını düzenledi (abonenin ikinci kez DEĞİL)
     assert votes() == [("yanlis_fiyat", "chat:1001"), ("yanlis_fiyat", "chat:2002")]
     assert db.feedback_votes() == 1  # yalnız sahibin oyu sayılır
-    assert db.market_pool(days=120) == []  # sahibin "yanlış"ı eskisi gibi ilanı emsalden düşürür
+    assert db.market_pool(days=120) == []  # iki kişi "yanlış" dedi (çoğunluk): ilan emsalden düşer
 
 
 def test_pas_count_counts_owner_passes_only(db):
@@ -789,7 +807,8 @@ def test_estimate_guard_recent_window_counts_owner_feedback_only(db):
     assert sorted(db.est_feedback_recent(10)) == [False, True]
 
 
-def test_source_guard_counts_owner_wrong_votes_only(db):
+def test_source_guard_counts_listings_judged_wrong_by_at_least_two_people(db):
+    """Kaynak koruması (herkes eşit, en az 2 oy: 08.10.2026): tek kişinin 3 "yanlış"ı kaynağı düşürmez; her ilanda ikinci kişi de deyince düşer."""
     c, sid = db.conn, add_source(db.conn)
     c.execute("UPDATE sources SET alert_level='yesil' WHERE id=%s", (sid,))
     add_people(c)
@@ -797,13 +816,15 @@ def test_source_guard_counts_owner_wrong_votes_only(db):
     for lid in lids:
         db.save_alert(lid, "o1", "guclu", 1, evaluation_id=None, price_gbp=None)
         vote(c, lid, "yanlis_fiyat", "chat:s1")
-    assert db.sources_failing_feedback(10, 3) == []  # abonenin 3 "yanlış"ı kaynağı düşürmez
+    assert db.sources_failing_feedback(10, 3) == []  # abonenin tek başına 3 "yanlış"ı kaynağı düşürmez
     vote(c, lids[0], "yanlis_fiyat", "chat:o1")
     vote(c, lids[1], "kusurlu", "chat:o1")
-    assert db.sources_failing_feedback(10, 3) == []  # sahipten yalnız 2
-    vote(c, lids[2], "yanlis_fiyat", None)  # sahibi belli olmayan eski kayıt sahibin sayılır
+    assert db.sources_failing_feedback(10, 3) == []  # iki kişinin "yanlış" dediği yalnız 2 ilan
+    vote(c, lids[2], "yanlis_fiyat", None)  # sahibi belli olmayan eski kayıt sahibin oyu
     (row,) = db.sources_failing_feedback(10, 3)
     assert row["id"] == sid and row["n"] == 3 and row["bad_n"] == 3
+    vote(c, lids[2], "ilgilendim", "chat:o1")  # sahip fikrini değiştirdi: son oyu sayılır, 1 👎 1 👍 = eşitlik → değişiklik yok
+    assert db.sources_failing_feedback(10, 3) == []
 
 
 def test_owner_screens_show_only_the_owners_taps(db):

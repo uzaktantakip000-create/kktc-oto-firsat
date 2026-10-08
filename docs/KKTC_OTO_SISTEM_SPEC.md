@@ -686,3 +686,18 @@ Sahibin isteğiyle sistemin tamamı 9 salt-okunur Sonnet ajanıyla tarandı (pla
 - **Gönderim kuralı:** sahibe gitmezse abonelere de gitmez; sonraki turda hepsi birlikte denenir, böylece aboneye çift rapor gitmez. Aboneye gidemeyen rapor yeniden denenmez; log'a maskeli yazılır.
 - **Düzeltilen kusur:** eskiden herkesin oyu sayılıyordu. Abone oylayınca ilan sahibin listesinden düşüyordu: 08.10 raporu sahibe "4 tanesine oy verdin" dedi, gerçekte 1'i sahibin, 3'ü bir abonenin oyuydu.
 - **Bekleyen:** sahip oy sisteminin yeniden tasarlanmasını istedi: "her birinin oylarını ben etkilemek istemiyorum". Tasarım önerisi sahibe sunulacak; bu madde yalnız raporun kişiye özel olmasıdır, oyların otomatik etkisini (`OWNER_VOTE_SQL`) DEĞİŞTİRMEZ.
+
+### 24.19 Oy kuralı: herkes eşit, en az 2 oy (08.10.2026; sahip: "her birinin oylarını ben etkilemek istemiyorum" → seçim "Herkes eşit, en az 2 oy")
+- **Kapsam:** herkesi etkileyen iki iş: oyla "yanlış" denen ilanın emsal havuzundan çıkması (`market_pool`) ve son 10 🟢'sinin 3'ü "yanlış" sayılan sitenin anlık bildirimden çıkması (`sources_failing_feedback`). Tek tanım: `repository.VOTED_WRONG_SQL`.
+- **Kural:** sahip dahil herkesin oyu eşittir. Her kişinin bir ilandaki SON 👍/👎 oyu sayılır. İlan "yanlış" sayılır: en az 2 kişi 👎 (yanlış fiyat/kusurlu) dediyse VE 👎 diyenler 👍 diyenlerden çoksa. Eşitlikte değişiklik yok.
+  - Sahibin notsuz eski kaydı ile `chat:<sahip>` aynı kişidir.
+  - Reddedilmiş kişinin oyu sayılmaz.
+  - "pas" ve "satılmış" oy sayılmaz.
+  - Sahibin aylık denetimindeki "❌ Yanlış" (veri kontrolü; yalnız sahibe gelir) tek başına yeter.
+- **Değişmeyenler** (sahibin kararı: ayarlar ORTAK kalır): `OWNER_VOTE_SQL` ile yalnız sahibin oyu sayılan işler aynen sürer:
+  - 3 "pas" → model sessize alma önerisi;
+  - öğrenme kapısı ve "kusurlu" satıcı engeli;
+  - "satılmış" kapanışı;
+  - kapalı 🟠 koruması (🟠 açılırsa bu kurala geçirilecek);
+  - sahibin ekranları.
+- **Yayın anındaki etki:** 0 ilan. Canlıda hiç 👎 yok: sahibin 1 "pas", bir abonenin 3 👍 oyu var. RULES_VERSION değişmedi; oylar havuzu her zaman zamanla değiştiriyordu.
