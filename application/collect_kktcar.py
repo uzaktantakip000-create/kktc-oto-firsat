@@ -28,6 +28,7 @@ class KktcarStats:
 # Site yavaşlarsa tur 13 dk bütçesini / iş akışı 20 dk sınırını aşmasın (en kötü durum eskiden ~26 dk: 50 istek x 30 sn zaman aşımı)
 NEW_SECONDS = 150
 REFRESH_SECONDS = 90
+MIN_SITEMAP = 200  # bundan küçük site haritasında kaybolanlar pasifleştirilmez (yarım yanıt/engel; %70 küçülme koruması ayrıca)
 
 
 def _gbp(data: dict) -> float | None:
@@ -105,9 +106,10 @@ def collect_kktcar(repo: Repository, source: dict, max_new: int = 25, clock=time
                 data["inactive_reason"] = inactive_reason(data.get("urgency_signals"))
             if repo.upsert_listing(source["id"], entry.slug, data):
                 stats.new += 1
-        # Güvenlik: sitemap makul büyüklükteyse kaybolanları pasifleştir
-        shrunk = sitemap_shrunk(repo, source["id"], len(entries))
-        if len(entries) > 500 and not shrunk:
+        # Güvenlik: sitemap makul büyüklükteyse kaybolanları pasifleştir. 08.10.2026: site haritası artık yalnız yayındaki ilanlar
+        # (~500; eskisi satılmışlarla ~3.400): küçülme ölçüsü yeni anahtarda yeniden başlar, alt sınır 500 -> 200.
+        shrunk = sitemap_shrunk(repo, f"{source['id']}:yayinda", len(entries))
+        if len(entries) > MIN_SITEMAP and not shrunk:
             stats.deactivated = repo.deactivate_missing(source["id"], {e.slug for e in entries})
         refresh_active(repo, source, client, stats, clock=clock)
     repo.mark_checked(source["id"], cursor=None, last_post_at=None, listings_7d=repo.count_recent(source["id"]))

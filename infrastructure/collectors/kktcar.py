@@ -25,10 +25,24 @@ class SitemapEntry:
 
 
 def fetch_sitemap(client: httpx.Client) -> list[SitemapEntry]:
+    """İlan adresleri. 08.10.2026'dan beri sitemap.xml bir DİZİN: ilanlar /sitemaps/sitemap/listings.xml'de ve yalnız yayındaki
+    ilanları içerir (~500; eski tek dosya satılmışlarla ~3.400 idi). Eski biçim gelirse o da okunur."""
     r = client.get(f"{BASE}/sitemap.xml", timeout=60)
     r.raise_for_status()
+    text = r.text
+    if "<sitemapindex" in text:
+        children = [u for u in re.findall(r"<loc>\s*(.*?)\s*</loc>", text)
+                    if u.startswith(f"{BASE}/") and "listing" in u.rsplit("/", 1)[-1]]  # hubs/price-guides ilan değil
+        if not children:
+            raise RuntimeError("KKTCar: site haritası dizininde ilan haritası yok (biçim değişmiş olabilir)")
+        parts = []
+        for url in children:
+            c = client.get(url, timeout=60)
+            c.raise_for_status()
+            parts.append(c.text)
+        text = "\n".join(parts)
     out = []
-    for block in re.findall(r"<url>(.*?)</url>", r.text, re.S):
+    for block in re.findall(r"<url>(.*?)</url>", text, re.S):
         loc = re.search(r"<loc>(.*?)</loc>", block)
         if not loc or "/listing/" not in loc.group(1):
             continue
