@@ -966,6 +966,24 @@ def test_alerted_votes_one_row_per_alerted_listing_newest_first_with_vote_state(
     assert rows[0]["is_active"] is True and len(db.alerted_votes(60)) == 3
 
 
+
+def test_alerted_votes_per_person_counts_only_that_persons_alerts_and_vote(db):
+    """Haftalık rapor herkese (08.10.2026): herkesin listesi kendi bildirimleri, "oylandı" yalnız kendi oyu. Eskiden abonenin oyu ilanı
+    sahibin "oy bekleyenler" listesinden düşürüyordu (sahip 1 oy vermişken rapor "4 tanesine oy verdin" dedi)."""
+    c, sid = db.conn, add_source(db.conn)
+    c.execute("INSERT INTO subscribers (chat_id, status, is_owner) VALUES ('own', 'onayli', TRUE), ('sub', 'onayli', FALSE)")
+    a, b, only_owner = (add_listing(c, sid, n) for n in ("a", "b", "only_owner"))
+    for lid in (a, b):
+        db.save_alert(lid, "own", "guclu", 1, evaluation_id=None, price_gbp=None)
+        db.save_alert(lid, "sub", "guclu", 2, evaluation_id=None, price_gbp=None)
+    db.save_alert(only_owner, "own", "guclu", 3, evaluation_id=None, price_gbp=None)
+    c.execute("INSERT INTO feedback (listing_id, action, note) VALUES (%s,'yanlis_fiyat','chat:sub'), (%s,'ilgilendim','chat:own'), "
+              "(%s,'audit_dogru','chat:sub')", (a, b, b))
+    owner = {r["id"]: r["voted"] for r in db.alerted_votes(30, chat_id="own", owner=True)}
+    sub = {r["id"]: r["voted"] for r in db.alerted_votes(30, chat_id="sub", owner=False)}
+    assert owner == {a: False, b: True, only_owner: False}  # abonenin 👎'u sahibin oyu sayılmaz
+    assert sub == {a: True, b: False}  # yalnız ona gidenler; denetim oy değil, sahibin oyu onun yerine sayılmaz
+
 def test_disappeared_counts_split_by_reason_and_listing_counts(db):
     """Kaybolan ilanlar: yalnız son 7 günde pasifleşen, kopya olmayan ilanlar nedene göre (boş neden = belirsiz); pasif doğan sayılmaz."""
     c, sid = db.conn, add_source(db.conn)

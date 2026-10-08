@@ -680,17 +680,21 @@ class Repository:
         return {r["action"]: r["n"] for r in rows}
 
     # --- haftalık rapor (application/report.py): yalnız okur ---
-    def alerted_votes(self, days: int = 30) -> list[dict]:
+    def alerted_votes(self, days: int = 30, chat_id: str | None = None, owner: bool = True) -> list[dict]:
         """Son 'days' günde 🟢/🟠 bildirimi giden ilanlar (ilan başına tek satır, en yeni önce) ve oylanıp oylanmadığı: denetim dışındaki
-        her düğme cevabı (👍/👎, eski mesajlardaki pas/satılmış/kusurlu) oy sayılır."""
+        her düğme cevabı (👍/👎, eski mesajlardaki pas/satılmış/kusurlu) oy sayılır. Kişiye özel (haftalık rapor herkese gider, 08.10.2026):
+        `chat_id` verilirse yalnız o sohbete giden bildirimler; oy yalnız O KİŞİNİNKİ (sahip: OWNER_VOTE_SQL, abone: kendi 'chat:' notu).
+        Eskiden herkesin oyu sayılıyordu: abone oylayınca ilan sahibin "oy bekleyenler" listesinden düşüyordu."""
+        voter = OWNER_VOTE_SQL if owner else "f.note = 'chat:' || %(chat)s"
+        chat = " AND chat_id = %(chat)s" if chat_id else ""
         return self.conn.execute(
-            """SELECT l.id, l.url, l.year, l.brand, l.model, l.price_gbp::float8 AS price_gbp, l.is_active, x.tier, x.sent_at,
-                      EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = l.id AND f.action NOT LIKE 'audit_%%') AS voted
+            f"""SELECT l.id, l.url, l.year, l.brand, l.model, l.price_gbp::float8 AS price_gbp, l.is_active, x.tier, x.sent_at,
+                      EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = l.id AND f.action NOT LIKE 'audit_%%' AND {voter}) AS voted
                FROM (SELECT listing_id, MIN(tier) AS tier, MIN(sent_at) AS sent_at FROM alerts  -- MIN(tier): ikisi birden varsa guclu
-                     WHERE tier = ANY(%s) AND sent_at > NOW() - make_interval(days => %s) GROUP BY listing_id) x
+                     WHERE tier = ANY(%(tiers)s) AND sent_at > NOW() - make_interval(days => %(days)s){chat} GROUP BY listing_id) x
                JOIN listings l ON l.id = x.listing_id
                ORDER BY x.sent_at DESC""",
-            (SENT_ONCE_TIERS, days)).fetchall()
+            {"tiers": SENT_ONCE_TIERS, "days": days, "chat": str(chat_id) if chat_id else None}).fetchall()
 
     def unnotified_strong(self, rules_version: str, days: int = 14, limit: int = 50) -> list[dict]:
         """Bildirilmemiş 🟢'ler: EN SON değerlendirmesi bu kural sürümüyle 🟢 ve son 'days' günde yapılmış, ilan aktif, kopya/karantina değil,

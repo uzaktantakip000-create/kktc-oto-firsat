@@ -1,6 +1,6 @@
-"""Haftalık rapor (Telegram, sahibe; haftada bir, yeni mesaj türü DEĞİL). Sahibin kararı (05.10.2026, plan v4 madde 2.2) — dört bölüm, önem sırasıyla:
-  1. Oy bekleyenler: son 30 günde giden 🟢/🟠'lerden hiç düğme cevabı almamış olanlar (bağlantıyla; rapordaki numaralı düğmelerle de oylanır).
-     Sistem bu oylarla ölçülür (spec §24.5 "oy kapsamı").
+"""Haftalık rapor (Telegram, haftada bir). Sahibin kararı (05.10.2026, plan v4 madde 2.2) — dört bölüm, önem sırasıyla:
+  1. Oy bekleyenler: son 30 günde O KİŞİYE giden 🟢/🟠'lerden onun hiç düğme cevabı vermediği olanlar (bağlantıyla; rapordaki numaralı
+     düğmelerle de oylanır). Sistem sahibin oylarıyla ölçülür (spec §24.5 "oy kapsamı").
   2. Bildirilmemiş fırsatlar: kurala göre 🟢 ama tazelik süzgecine (ilk görülme 36 saat / ilan tarihi 4 gün) takıldığı için anlık gitmemiş
      ilanlar; son 14 gün, en çok 5, en iyi önce. Göstermeden önce canlılık kontrolü (application/liveness.py): satılmış, kalkmış ya da fiyatı
      değişmiş ilan gösterilmez. Sitenin eski ilanı "en yeni" listesine geri itmesiyle yeniden çıkmış KKTCarabam ilanı (tarihsiz, numarası daha
@@ -9,15 +9,18 @@
   3. Yakın kaçanlar: bu hafta gelen, gönderim kapısını geçecek kadar emsalli (≥8) ama 🟡 kalan ilanlar; yalnız bilgi, en çok 5, tek satır.
   4. Tek satır sağlık + kaybolan ilanlar: "satıldı" YALNIZ kaynağın kendi beyanı ya da sahibin düğmesiyse (domain/lifecycle.py); gerisi
      "satılıp satılmadığı belli değil".
+08.10.2026 (sahibin kararı): rapor onaylı HERKESE gider. Bölüm 2–3 ve canlılık kontrolü bir kez kurulur, herkese aynıdır; oy listesi
+kişiye özeldir; abone metninde sahibe özel satırlar (/durum, "kendiliğinden değiştirdiklerim", "sen söyledin") yoktur.
 Mesaj Telegram sınırına sığar: sığmazsa en az önemli satırlar (önce yakın kaçanlar) sondan atılır ve kaç satır atıldığı yazılır; satır ya da
 bağlantı ortasından kesilmez. Bu modül karar vermez: kurallar, eşikler ve RULES_VERSION aynen okunur."""
+import copy
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from application.health import notify_owner
 from application.liveness import can_check, recheck_before_send
-from application.notify import is_fresh, photo_stale, resurfaced_ids
+from application.notify import TelegramError, api, is_fresh, photo_stale, resurfaced_ids
 from application.settings_store import load_settings
 from application.status import late_sources
 from domain.alert_policy import MIN_COMPARABLES_TO_SEND
@@ -27,6 +30,7 @@ from domain.kktc_time import to_kktc
 from domain.lifecycle import SOLD
 from domain.profit import Tier
 from domain.settings import RULES_VERSION, Settings
+from infrastructure.config import mask_chat, redact
 from infrastructure.db.repository import DatabaseDown, Repository
 
 REPORT_KEY = "weekly_report"
@@ -43,6 +47,8 @@ SHORT_REASON = {"km_yuksek": "km yüksek", "tl_fiyat": "fiyat TL (TL ilanlar ucu
                 "model_yok": "model okunamadı", "plaka_uyari": "TR/yabancı plaka", "sessiz_model": "sessize aldığın model",
                 "deger_supheli": "değer tablosu yeni değişti", "llm_okudu": "yapay zekâ okudu"}
 PLATFORM_NAMES = {"instagram": "Instagram", "facebook": "Facebook"}
+VOTE_ASK_OWNER = "Sistemi senin oylarınla ölçüyorum: her birine 👍 (işe yarar) ya da 👎 (yanlış) bas; aşağıdaki numaralı düğmeler de olur."
+VOTE_ASK_SUBSCRIBER = "Her birine 👍 (işe yarar) ya da 👎 (yanlış) bas; oyun kaydedilir. Aşağıdaki numaralı düğmeler de olur."
 
 
 @dataclass
@@ -89,8 +95,8 @@ def _reason(code: str) -> str:
 
 
 # --- 1. oy bekleyenler ---
-def _votes_section(repo: Repository) -> tuple[_Section, list[dict]]:
-    rows = repo.alerted_votes(VOTE_DAYS)
+def _votes_section(repo: Repository, chat_id: str | None = None, owner: bool = True) -> tuple[_Section, list[dict]]:
+    rows = repo.alerted_votes(VOTE_DAYS, chat_id=chat_id, owner=owner)  # yalnız bu kişiye gidenler ve yalnız onun oyu
     todo = [r for r in rows if not r["voted"]]
     if not rows:
         return _Section("oy bekleyen", [f"🗳 Son {VOTE_DAYS} günde fırsat bildirimi gitmedi; oylanacak bir şey yok."]), []
@@ -98,7 +104,7 @@ def _votes_section(repo: Repository) -> tuple[_Section, list[dict]]:
             f"Son {VOTE_DAYS} günde {len(rows)} fırsat bildirimi gitti, {len(rows) - len(todo)} tanesine oy verdin."]
     if not todo:
         return _Section("oy bekleyen", head + ["Hepsini oyladın, teşekkürler."]), []
-    head.append("Sistemi senin oylarınla ölçüyorum: her birine 👍 (işe yarar) ya da 👎 (yanlış) bas; aşağıdaki numaralı düğmeler de olur.")
+    head.append(VOTE_ASK_OWNER if owner else VOTE_ASK_SUBSCRIBER)
     shown = todo[:VOTE_SHOW]
     items = [f"{i}) {'🟢' if r['tier'] == Tier.STRONG.value else '🟠'} {_car(r)} · {_gbp(r['price_gbp'])} · {_day(r['sent_at'])}"
              + ("" if r["is_active"] else " · artık yayında değil") + (f"\n{r['url']}" if r.get("url") else "")
@@ -191,15 +197,16 @@ def _near_section(repo: Repository, s: Settings) -> _Section:
 
 
 # --- 4. sağlık + kaybolan ilanlar ---
-def _gone_line(rows: list[dict]) -> str:
+def _gone_line(rows: list[dict], owner: bool = True) -> str:
     total = sum(r["n"] for r in rows)
     if not total:
         return "🚪 Bu hafta yayından kalkan ilan yok."
     sold = sum(r["n"] for r in rows if r["reason"] == SOLD)
     alerted = sum(r["alerted"] for r in rows)
-    text = (f"🚪 Bu hafta yayından kalkan {_num(total)} ilan: {_num(sold)} tanesi satıldı (site 'satıldı' yazdı ya da sen söyledin), "
+    told = "sen söyledin" if owner else "bize bildirildi"  # "satıldı" düğmesi yalnız sahibinki
+    text = (f"🚪 Bu hafta yayından kalkan {_num(total)} ilan: {_num(sold)} tanesi satıldı (site 'satıldı' yazdı ya da {told}), "
             f"{_num(total - sold)} tanesinin satılıp satılmadığı belli değil (sayfası kalktı, listeden düştü ya da süresi doldu).")
-    return text + (f" Bunların {alerted} tanesi sana gönderdiğim fırsattı." if alerted else "")
+    return text + (f" Bunların {alerted} tanesi {'sana gönderdiğim' if owner else 'bildirdiğim'} fırsattı." if alerted else "")
 
 
 def _learned(repo: Repository) -> list[str]:
@@ -221,14 +228,15 @@ def _learned(repo: Repository) -> list[str]:
     return out
 
 
-def _health_lines(repo: Repository, now: datetime) -> list[str]:
+def _health_lines(repo: Repository, now: datetime, owner: bool = True) -> list[str]:
     sent, counts, late = repo.week_alert_counts(WEEK_DAYS), repo.listing_counts(WEEK_DAYS), late_sources(repo, now)
     sent_txt = f"{sent.get('guclu', 0)} 🟢" + (f" ve {sent['tahmini']} 🟠" if sent.get("tahmini") else "")
-    state = f"⚠️ {len(late)} kaynakta gecikme var (ayrıntı: /durum)" if late else "tüm kaynaklar zamanında taranıyor"
-    health = (f"🩺 Sistem: 7 günde {_num(counts['new_n'])} yeni ilan tarandı, sana {sent_txt} fırsat gitti, "
+    state = (f"⚠️ {len(late)} kaynakta gecikme var" + (" (ayrıntı: /durum)" if owner else "")) if late else "tüm kaynaklar zamanında taranıyor"
+    sent_part = f"sana {sent_txt} fırsat gitti" if owner else f"{sent_txt} fırsat bildirildi"  # abone sonradan katılmış olabilir
+    health = (f"🩺 Sistem: 7 günde {_num(counts['new_n'])} yeni ilan tarandı, {sent_part}, "
               f"şu an {_num(counts['active_n'])} aktif ilan var; {state}.")
-    lines = [health, _gone_line(repo.disappeared_counts(WEEK_DAYS))]
-    learned = _learned(repo)
+    lines = [health, _gone_line(repo.disappeared_counts(WEEK_DAYS), owner)]
+    learned = _learned(repo) if owner else []  # sahibin oylarıyla ve ayarlarıyla yapılanlar: yalnız sahibe
     if learned:
         lines.append("🔧 Bu hafta kendiliğinden değiştirdiklerim: " + "; ".join(learned) + ".")
     return lines
@@ -254,25 +262,55 @@ def _fit(title: str, body: list[_Section], tail: list[str], limit: int = MAX_UNI
     return out
 
 
-def build_weekly_report(repo: Repository, recheck=None, now: datetime | None = None) -> tuple[str, dict | None]:
-    """(metin, oy düğmeleri). `recheck`: canlılık kontrolü (gönderimde `recheck_before_send`; None = önizleme, kontrol ve yazma yok)."""
-    now = now or datetime.now(timezone.utc)
-    votes, voted_rows = _votes_section(repo)
-    body = [votes, _unnotified_section(repo, recheck, now), _near_section(repo, load_settings(repo))]
+def _shared(repo: Repository, recheck, now: datetime) -> list[_Section]:
+    """Herkese aynı bölümler (bildirilmemiş fırsatlar + yakın kaçanlar): canlılık kontrolü bir kez yapılır."""
+    return [_unnotified_section(repo, recheck, now), _near_section(repo, load_settings(repo))]
+
+
+def _compose(repo: Repository, now: datetime, shared: list[_Section], chat_id: str | None, owner: bool) -> tuple[str, dict | None]:
+    votes, voted_rows = _votes_section(repo, chat_id, owner)
+    body = [votes, *copy.deepcopy(shared)]  # _fit sığdırırken satır atar: ortak bölümler bir sonraki kişiye eksik gitmesin
     title = f"📊 Haftalık rapor · {to_kktc(now - timedelta(days=WEEK_DAYS)):%d.%m}–{to_kktc(now):%d.%m}"
-    text = _fit(title, body, _health_lines(repo, now))
+    text = _fit(title, body, _health_lines(repo, now, owner))
     return text, _vote_keyboard(voted_rows[:len(votes.items)])  # yalnız mesajda kalan satırların düğmesi
 
 
+def _extra(keyboard: dict | None) -> dict:
+    return {"disable_web_page_preview": True} | ({"reply_markup": keyboard} if keyboard else {})
+
+
+def build_weekly_report(repo: Repository, recheck=None, now: datetime | None = None, chat_id: str | None = None,
+                        owner: bool = True) -> tuple[str, dict | None]:
+    """(metin, oy düğmeleri) — `chat_id` kişisinin raporu (`owner`: sahip metni). `recheck`: canlılık kontrolü (gönderimde
+    `recheck_before_send`; None = önizleme, kontrol ve yazma yok)."""
+    now = now or datetime.now(timezone.utc)
+    return _compose(repo, now, _shared(repo, recheck, now), chat_id, owner)
+
+
 def weekly_report_text(repo: Repository, recheck=None, now: datetime | None = None) -> str:
-    """Önizleme (admin_cli `report`): varsayılan olarak canlılık kontrolü yapılmaz, hiçbir şey gönderilmez."""
-    return build_weekly_report(repo, recheck, now)[0]
+    """Önizleme (admin_cli `report`, sahibin raporu): varsayılan olarak canlılık kontrolü yapılmaz, hiçbir şey gönderilmez."""
+    return build_weekly_report(repo, recheck, now, chat_id=os.environ.get("TELEGRAM_CHAT_ID"))[0]
 
 
 def send_weekly_report(repo: Repository, recheck=None, now: datetime | None = None) -> bool:
-    """Haftada bir sahibe. Zamanı gelmeden rapor KURULMAZ (eskiden her tick'te kuruluyordu: gereksiz sorgu; artık canlılık isteği de var)."""
-    if not os.environ.get("TELEGRAM_BOT_TOKEN") or not os.environ.get("TELEGRAM_CHAT_ID") or repo.alert_recent(REPORT_KEY, REPEAT_HOURS):
+    """Haftada bir herkese: önce sahibe, sonra onaylı abonelere (her biri kendi oy listesiyle). Zamanı gelmeden rapor KURULMAZ (eskiden her
+    tick'te kuruluyordu: gereksiz sorgu; artık canlılık isteği de var). Sahibe gitmezse abonelere de gitmez: sonraki turda hepsi birlikte
+    yeniden denenir (aboneye çift rapor gitmesin). Aboneye gidemeyen rapor yeniden denenmez (log'a maskeli yazılır)."""
+    token, owner_chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not owner_chat or repo.alert_recent(REPORT_KEY, REPEAT_HOURS):
         return False
-    text, keyboard = build_weekly_report(repo, recheck=recheck or recheck_before_send, now=now)
-    extra = {"disable_web_page_preview": True} | ({"reply_markup": keyboard} if keyboard else {})
-    return notify_owner(repo, REPORT_KEY, text, repeat_hours=REPEAT_HOURS, max_chars=MAX_UNITS, **extra)
+    now = now or datetime.now(timezone.utc)
+    shared = _shared(repo, recheck or recheck_before_send, now)
+    text, keyboard = _compose(repo, now, shared, owner_chat, True)
+    if not notify_owner(repo, REPORT_KEY, text, repeat_hours=REPEAT_HOURS, max_chars=MAX_UNITS, **_extra(keyboard)):
+        return False
+    for sub in repo.approved_subscribers():
+        chat = str(sub["chat_id"])
+        if sub.get("is_owner") or chat == str(owner_chat):
+            continue
+        text, keyboard = _compose(repo, now, shared, chat, False)
+        try:
+            api(token, "sendMessage", chat_id=chat, text=redact(text)[:MAX_UNITS], **_extra(keyboard))
+        except TelegramError as e:
+            print(f"haftalık rapor gönderilemedi ({mask_chat(chat)}): {e.status}")
+    return True

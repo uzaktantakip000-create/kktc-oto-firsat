@@ -36,17 +36,22 @@ def near_row(i, pct=18.0, nedenler=None):
 
 class FakeRepo:
     def __init__(self, votes=(), strong=(), near=(), gone=(), sent=None, fb=None, counts=None, marks=None, names=(), state=None, due=True,
-                 resurfaced=()):
+                 resurfaced=(), subs=(), sub_votes=None):
         self.votes, self.strong, self.near, self.gone = list(votes), list(strong), list(near), list(gone)
+        self.subs, self.sub_votes = list(subs), sub_votes or {}  # onaylı aboneler (sahip satırı dahil) ve abone -> kendi oy listesi
         self.resurfaced = set(resurfaced)  # sorgunun "yeniden çıkmış eski KKTCarabam ilanı" diyeceği ilan kimlikleri
         self.sent, self.fb = sent or {}, fb or {}
         self.counts = counts or {"new_n": 1234, "active_n": 3133}
         self.marks, self.names, self.state, self.due = marks or {}, list(names), state or {}, due
         self.calls, self.marked = {}, []
 
-    def alerted_votes(self, days=30):
+    def alerted_votes(self, days=30, chat_id=None, owner=True):
         self.calls["votes_days"] = days
-        return self.votes
+        self.calls.setdefault("votes_for", []).append((chat_id, owner))
+        return self.votes if owner else self.sub_votes.get(chat_id, [])
+
+    def approved_subscribers(self):
+        return self.subs
 
     def week_feedback_counts(self, days=7):
         return self.fb
@@ -377,3 +382,69 @@ def test_send_without_votes_sends_no_keyboard(monkeypatch):
 def test_preview_text_is_the_built_text():
     repo = FakeRepo(votes=[vote_row(1)], strong=[strong_row(1)])
     assert report.weekly_report_text(repo, now=NOW) == build(repo)[0]
+
+
+# --- herkese (sahibin kararı 08.10.2026): sahibe önce, sonra her aboneye kendi oy listesiyle ---
+SUBS = [{"chat_id": "1", "is_owner": True}, {"chat_id": "22", "is_owner": False}, {"chat_id": "33", "is_owner": False}]
+
+
+def sending(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
+    owner_sent, sub_sent, checked = [], [], []
+    monkeypatch.setattr(health, "api", lambda *a, **kw: owner_sent.append(kw))
+    monkeypatch.setattr(report, "api", lambda *a, **kw: sub_sent.append(kw))
+    monkeypatch.setattr(report, "recheck_before_send", lambda repo, cands: checked.append(len(cands)) or cands)
+    return owner_sent, sub_sent, checked
+
+
+def test_report_goes_to_everyone_each_with_own_votes_and_one_liveness_check(monkeypatch):
+    owner_sent, sub_sent, checked = sending(monkeypatch)
+    repo = FakeRepo(votes=[vote_row(1), vote_row(2, voted=True)], strong=[strong_row(1)], subs=SUBS,
+                    sub_votes={"22": [vote_row(7)], "33": [vote_row(8, voted=True)]})
+    assert report.send_weekly_report(repo, now=NOW) is True
+    assert len(owner_sent) == 1 and [m["chat_id"] for m in sub_sent] == ["22", "33"]  # sahip bir kez (sahip satırı atlanır)
+    assert checked == [1]  # canlılık kontrolü herkes için bir kez
+    assert repo.calls["votes_for"] == [("1", True), ("22", False), ("33", False)]
+    assert "2 fırsat bildirimi gitti, 1 tanesine oy verdin" in owner_sent[0]["text"]
+    sub22, sub33 = (m["text"] for m in sub_sent)
+    assert "1 fırsat bildirimi gitti, 0 tanesine oy verdin" in sub22 and "/ilan/7-bmw" in sub22 and "/ilan/1-bmw" not in sub22
+    assert sub_sent[0]["reply_markup"]["inline_keyboard"][0][0]["callback_data"].endswith("000000000007")
+    assert "Hepsini oyladın" in sub33 and "reply_markup" not in sub_sent[1]
+    assert all("BİLDİRMEDİĞİM FIRSATLAR (1 ilan)" in m["text"] and "az önce kontrol ettim" in m["text"] for m in [*owner_sent, *sub_sent])
+    assert repo.marked == ["weekly_report"]
+
+
+def test_subscriber_text_has_no_owner_only_lines(monkeypatch):
+    monkeypatch.setattr(report, "late_sources", lambda repo, now=None: [{"name": "A"}])
+    repo = FakeRepo(votes=[vote_row(1)], sub_votes={"22": [vote_row(7)]}, sent={"guclu": 3}, gone=[{"reason": "satildi", "n": 2, "alerted": 1}],
+                    marks={"est_off:": ["fiat|egea"]})
+    owner_text = build(repo)[0]
+    sub_text = report.build_weekly_report(repo, now=NOW, chat_id="22", owner=False)[0]
+    assert "Sistemi senin oylarınla ölçüyorum" in owner_text and "/durum" in owner_text and "🔧" in owner_text
+    assert "sen söyledin" in owner_text and "sana 3 🟢 fırsat gitti" in owner_text
+    assert report.VOTE_ASK_SUBSCRIBER in sub_text and "Sistemi senin oylarınla" not in sub_text
+    assert "/durum" not in sub_text and "🔧" not in sub_text and "sen söyledin" not in sub_text and "sana" not in sub_text
+    assert "3 🟢 fırsat bildirildi" in sub_text and "aktif ilan var; ⚠️ 1 kaynakta gecikme var." in sub_text
+    assert "bize bildirildi" in sub_text and "1 tanesi bildirdiğim fırsattı" in sub_text
+
+
+def test_no_subscriber_gets_it_when_the_owner_send_failed(monkeypatch):
+    owner_sent, sub_sent, _ = sending(monkeypatch)
+    monkeypatch.setattr(report, "notify_owner", lambda *a, **k: False)  # sonraki turda hepsi birlikte yeniden denenir
+    assert report.send_weekly_report(FakeRepo(subs=SUBS), now=NOW) is False and sub_sent == []
+
+
+def test_one_subscriber_failing_does_not_stop_the_others_and_logs_masked(monkeypatch, capsys):
+    owner_sent, sub_sent, _ = sending(monkeypatch)
+
+    def flaky(*a, **kw):
+        if kw["chat_id"] == "123456722":
+            raise report.TelegramError("sendMessage", 403, "Forbidden: bot was blocked by the user")
+        sub_sent.append(kw)
+    monkeypatch.setattr(report, "api", flaky)
+    subs = [{"chat_id": "1", "is_owner": True}, {"chat_id": "123456722", "is_owner": False}, {"chat_id": "33", "is_owner": False}]
+    assert report.send_weekly_report(FakeRepo(subs=subs), now=NOW) is True
+    assert [m["chat_id"] for m in sub_sent] == ["33"]
+    out = capsys.readouterr().out
+    assert "haftalık rapor gönderilemedi (chat …722): 403" in out and "123456722" not in out  # log'a kimlik tam yazılmaz
