@@ -6,7 +6,7 @@ from datetime import date
 from domain.caption_parser import ParsedCaption, normalize_phone, tr_lower
 from domain.model_year import max_model_year
 from domain.normalize import fold
-from domain.price import parse_price
+from domain.price import join_split_thousands, price_tokens
 
 _BRANDS = [  # (aranan kelime, marka)
     "toyota", "honda", "nissan", "mazda", "suzuki", "hyundai", "kia", "ford", "opel", "vauxhall", "renault", "peugeot",
@@ -23,16 +23,21 @@ _SKIP_HEAD = 150  # 'aranıyor/kiralık/jant' gibi ilan türünü belirten sözc
 # fiyat olmayan para satırları (tramer, boya, taksit...)
 _NOT_PRICE_LINE = re.compile(r"tramer|boya|kredi|taksit|pe[şs]inat|komisyon|depozito|kapora|vergi|muayene|sigorta|"
                              r"[öo]deme|masraf|bak[ıi]m", re.I)
-_CURRENCY = re.compile(r"£|₺|€|\$|(?<![a-z])(?:stg|gbp|tl|try|eur|euro|usd|sterlin|dolar)(?![a-z])", re.I)
 _PRICE_HINT = re.compile(r"fiyat|nakit|nakite|pe[şs]in|sat[ıi][şs]", re.I)
 _PHONE = re.compile(r"(?<!\d)(?:\+?\s*9?0[\s.-]*)?\(?5\d{2}\)?[\s.-]?\d{3}[\s.-]?\d{2}[\s.-]?\d{2}(?!\d)")
 # 1980–2039: kalıp 2030'ları da tanır; geleceğe dönük yıl yine reddedilir (bulunan yıl, model yılı tavanından = bu yıl + 1 büyükse elenir)
-_YEAR = re.compile(r"(?<![\d.,£€$])(19[89]\d|20[0-3]\d)(?![\d.,]?\d)(?!\s*(?:£|₺|€|\$|tl\b|stg\b|gbp\b))", re.I)
+# Ardından gelen para birimi yılı fiyat yapar ("2000 STG"); ama birimin arkasında sayı varsa birim o sayınındır ("2014 £6500")
+_YEAR = re.compile(r"(?<![\d.,£€$])(19[89]\d|20[0-3]\d)(?![\d.,]?\d)"
+                   r"(?![ \t]*(?:£|₺|€|\$|tl\b|stg\b|gbp\b|sterlin\b|str\b)(?![ \t]*\d))", re.I)
 _KM = re.compile(r"(?<![\d.,])(\d{1,3}(?:[.,]\d{3})+|\d{4,6})\s*(km|mil\w*)\b", re.I)
 _KM_LABEL = re.compile(r"\bkm\s*[:\-]?\s*(\d{1,3}(?:[.,]\d{3})+|\d{4,6})\b", re.I)
 _CC = re.compile(r"\b(\d{3,4})\s*cc\b", re.I)
 _MODEL_STOP = {"il", "ilk", "ilan", "sahibinden", "galeriden", "yeni", "temiz", "hasarsiz", "hatasiz", "boyasiz", "tek",
-               "motor", "arac", "otomobil", "arabasi", "araba", "marka", "model", "aracimiz", "gunluk", "satilik"}
+               "motor", "arac", "otomobil", "arabasi", "araba", "marka", "model", "aracimiz", "gunluk", "satilik", "benz"}
+_CHASSIS = re.compile(r"[efgu]\d{2}|w\d{3}", re.I)  # BMW F30 / Mercedes W204: şasi kodu; model arkasındaki sözcük ("F30 320i")
+_SPLIT_MODELS = [(re.compile(r"c[\s-]*h[\s-]*r(?![a-z0-9])", re.I), "C-HR"),  # "CH R", "C HR": sözcüklere bölünüp "CH" kalıyordu
+                 (re.compile(r"(cx|cr|hr|zr)[\s-]+(v|\d{1,2})(?![a-z0-9])", re.I), None)]  # "CX 5", "CR V" -> "CX-5", "CR-V"
+_UPPER_BRANDS = {"bmw", "mg", "vw", "byd"}
 _CITIES = ["girne", "lefkoşa", "lefkosa", "gazimağusa", "gazimagusa", "mağusa", "magusa", "güzelyurt", "guzelyurt",
            "iskele", "lefke", "alsancak", "lapta", "karpaz", "dikmen", "yeni boğaziçi", "boğaz", "bogaz", "ercan"]
 
@@ -49,24 +54,23 @@ def _clean_lines(text: str) -> list[str]:
 
 
 def _price(lines: list[str]) -> tuple[float, str, str] | None:
-    """Tek, açık para birimli fiyat. Birden çok farklı tutar varsa 'fiyat/nakit' ipuçlu satırdaki tek tutar; yoksa belirsiz -> None."""
+    """Tek, açık para birimli fiyat. Birden çok farklı tutar varsa 'fiyat/nakit' ipuçlu satırdaki tek tutar; yoksa belirsiz -> None.
+    Para birimi sayının HEMEN yanında olmalı (price_tokens): pencerede başka sayı varsa birim ona verilmez ('2014 £6500')."""
     found: list[tuple[float, str, str, bool]] = []
     for ln in lines:
         if re.search(r"tramer|boya", ln, re.I) and not _PRICE_HINT.search(ln):
             continue
-        scrubbed = _PHONE.sub(" ", ln)
-        # "5000£ taksitli" gibi aynı satırda birden çok tutar olabilir: her sayıyı ayrı dene
-        for m in re.finditer(r"(?<![\d.,])\d[\d.,]*(?:\s*(?:bin|k)\b)?", scrubbed, re.I):
-            window = scrubbed[max(0, m.start() - 6): m.end() + 8]
-            if not _CURRENCY.search(window):
+        scrubbed = join_split_thousands(_PHONE.sub(" ", ln))
+        # "5000£ taksitli" gibi aynı satırda birden çok tutar olabilir: her sayı ayrı aday
+        for t in price_tokens(scrubbed):
+            if not t.currency:
                 continue
-            before, after = scrubbed[max(0, m.start() - 14): m.start()], scrubbed[m.end(): m.end() + 14]
+            before, after = scrubbed[max(0, t.start - 14): t.start], scrubbed[t.end: t.end + 14]
             hint = bool(_PRICE_HINT.search(before))
             if (_NOT_PRICE_LINE.search(before) or _NOT_PRICE_LINE.search(after)) and not hint:
                 continue  # "taksitli 5000£", "peşinat 3000£", "tramer 32.000 TL"
-            p = parse_price(window.strip())
-            if p and not p.currency_guess and 300 <= p.amount <= 2_000_000:
-                found.append((p.amount, p.currency, ln, hint or bool(_PRICE_HINT.search(ln)) and not _NOT_PRICE_LINE.search(ln)))
+            if 300 <= t.amount <= 2_000_000:
+                found.append((t.amount, t.currency, ln, hint or bool(_PRICE_HINT.search(ln)) and not _NOT_PRICE_LINE.search(ln)))
     if not found:
         return None
     amounts = {(a, c) for a, c, _, _ in found}
@@ -118,27 +122,38 @@ def parse_freetext(text: str, default_steering: str | None = None, max_year: int
         if price is None:
             return None
         amount, currency, price_line = price
+    if not known_price and amount in years and any(y != amount for y in years):
+        years = [y for y in years if y != amount]  # "Fiyat 2000 STG, 2008 model": 2000 fiyattır, yıl değil
 
     out = ParsedCaption()
-    out.brand = brand_m.group(1).title() if brand_m.group(1).lower() not in ("bmw", "mg", "vw", "byd") else brand_m.group(1).upper()
+    brand = fold(brand_m.group(1))  # .title() Türkçe İ'yi bozuyordu: "NİSSAN" -> "Ni̇ssan"
+    out.brand = "Land Rover" if brand == "range rover" else brand.upper() if brand in _UPPER_BRANDS else brand.title()
     after = no_phone[brand_m.end():]
-    words = re.findall(r"[A-Za-zÇĞİÖŞÜçğıöşü]*\d*[A-Za-zÇĞİÖŞÜçğıöşü0-9\-]*", after[:60])
-    words = [w for w in words if w]
+    words = [w for w in re.finditer(r"[A-Za-zÇĞİÖŞÜçğıöşü]*\d*[A-Za-zÇĞİÖŞÜçğıöşü0-9\-]*", after[:60]) if w.group()]
     model = None
-    for i, w in enumerate(words[:4]):
+    for i, wm in enumerate(words[:4]):
+        w = wm.group()
+        nxt = words[i + 1].group() if i + 1 < len(words) else ""
         if re.fullmatch(r"(19|20)\d{2}|modeli?|otomatik|manuel|full", w, re.I) or fold(w) in _MODEL_STOP:
             continue
+        if _CHASSIS.fullmatch(w) and re.fullmatch(r"\d{3}[a-zçğıöşüİ]{0,2}|[a-z]{1,3}\d{2,3}[a-z]?", nxt, re.I):
+            continue  # "BMW F30 320i" -> "320i" (emsal 3 serisiyle eşleşir; "f30" eşleşmez)
         model = w
-        if w.lower() == "i" and i + 1 < len(words) and words[i + 1].isdigit():  # "İ 30" -> "i30"
-            model = "i" + words[i + 1]
+        split = next(((pat.match(after, wm.start()), name) for pat, name in _SPLIT_MODELS if pat.match(after, wm.start())), None)
+        if split:
+            model = split[1] or f"{split[0].group(1)}-{split[0].group(2)}".upper()
+        elif w.lower() == "i" and nxt.isdigit():  # "İ 30" -> "i30"
+            model = "i" + nxt
         break
+    if brand == "range rover":  # sitelerde marka Land Rover, model "Range Rover Evoque"
+        model = f"Range Rover {model}" if model else "Range Rover"
     out.model = model
     line_start = no_phone.rfind("\n", 0, brand_m.start()) + 1
     line_end = no_phone.find("\n", brand_m.end())
     brand_line = no_phone[line_start: line_end if line_end != -1 else None]
-    near = [int(y) for y in _YEAR.findall(brand_line) if int(y) <= max_year]
+    near = [int(y) for y in _YEAR.findall(brand_line) if int(y) <= max_year and int(y) in years]
     out.year = near[0] if near else years[0]  # önce marka satırındaki yıl ("2021 HONDA FIT"), yoksa metindeki ilk yıl
-    out.km = _km(no_phone)
+    out.km = _km(join_split_thousands(no_phone))  # "120 000 km"
     low = tr_lower(no_phone)
     if re.search(r"otomatik|automatic|\bauto\b|dsg|tiptronic", low):
         out.transmission = "otomatik"

@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from domain.freetext_parser import parse_freetext
+from domain.freetext_parser import diagnose, parse_freetext
 
 POSTS = {p["id"]: p["text"] for p in json.loads((Path(__file__).parent / "fixtures/facebook_group_posts.json").read_text())}
 
@@ -70,3 +70,46 @@ def test_diagnose_reasons():
     assert diagnose("Toyota Corolla 2015 detaylı bilgi için arayın") == "fiyat_yok"
     assert diagnose("Toyota Corolla temiz araç 5000£") == "yil_yok"
     assert diagnose("2015 Toyota Corolla 5000£") == "ok"
+
+
+def test_space_separated_prices():  # 09.10 FB denemesi: "6 500 STG" £500, "650 000 TL" yıl (2014) fiyat sanılıyordu
+    assert parse_freetext("Toyota Corolla 2015 Fiyat: 6 500 STG").price_amount == 6500
+    p = parse_freetext("Mazda Demio 2014 650 000 TL")
+    assert (p.year, p.price_amount, p.currency) == (2014, 650000, "TRY")
+    assert parse_freetext("Peugeot 308 2012 120 000 km 4.250 STG").km == 120000
+
+
+def test_pound_sign_before_price_after_year():  # "2014 £6500": yıl reddediliyordu, düzeltilince fiyat 2014 olacaktı
+    for text in ("Toyota Vitz 2014 £6500", "Toyota Vitz 2014 £ 6.500", "Toyota Aqua 2014\n£6500"):
+        p = parse_freetext(text)
+        assert (p.year, p.price_amount, p.currency) == (2014, 6500, "GBP"), text
+    p = parse_freetext("Honda Fit 7500 STG 2015 model")
+    assert (p.year, p.price_amount) == (2015, 7500)
+
+
+def test_year_followed_by_its_own_currency_is_still_a_price():
+    assert diagnose("Toyota Corolla 2000 £") == "yil_yok"
+
+
+def test_ambiguous_year_or_price_is_skipped():
+    assert parse_freetext("Toyota Vitz Fiyat 2000 STG 2008 model") is None
+
+
+def test_currency_spellings_seen_in_groups():
+    assert parse_freetext("Nissan note 2015 6100str").price_amount == 6100
+    assert parse_freetext("Range Rover Vogue 2020 49900 paund").price_amount == 49900
+
+
+def test_brand_and_model_names_match_site_keys():
+    assert parse_freetext("NİSSAN NOTE 2016 9.500 STG").brand == "Nissan"  # .title() "Ni̇ssan" yapıyordu
+    assert parse_freetext("MERCEDES BENZ CLA 220 2016 16.500 STG").model == "CLA"
+    assert parse_freetext("BMW F30 320İ 2013 11.500 STG").model == "320İ"
+    assert parse_freetext("Toyota CH R HYBRİD 2018 15.000 stg").model == "C-HR"
+    assert parse_freetext("Mazda CX 5 2017 14.500 stg").model == "CX-5"
+    p = parse_freetext("RANGE ROVER EVOQUE 2020 £38.000")
+    assert (p.brand, p.model) == ("Land Rover", "Range Rover EVOQUE")
+
+
+def test_slash_thousands_in_post():
+    p = parse_freetext("Mercedes Benz C180 model 2013\n180/000 km\n12/800 £")
+    assert (p.model, p.km, p.price_amount) == ("C180", 180000, 12800)
