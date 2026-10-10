@@ -1,5 +1,6 @@
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -24,6 +25,8 @@ class KaaStats:
     suspect: list[str] = field(default_factory=list)  # toplu "satıldı/kaldırıldı" şüphesi: hiçbiri pasifleştirilmedi, tur sonunda hata
 
 
+BLOCK_KEY = "kaa_blocked_until"  # bot_state: site haritası 403 (Cloudflare engeli, 10.10.2026) verince bu ana kadar (UTC ISO) siteye istek yok
+BLOCK_PAUSE = timedelta(hours=2)  # engel sürerken günde 96 yerine 12 deneme; engel kalkınca en geç 2 saatte normale döner
 REFRESH_SECONDS = 120  # yenileme bu süreyi aşmasın (5 sn aralıklı tarama; tick toplamı < 13 dk kalsın)
 
 
@@ -63,11 +66,37 @@ def refresh_active(repo: Repository, source: dict, client, stats: KaaStats, limi
             stats.went_inactive += repo.apply_refresh(row["id"], row, data) == "pasif"
 
 
-def collect_kibrisarabaal(repo: Repository, source: dict, max_new: int = 10) -> KaaStats:
-    """Her turda en yeni ilanlar (en çok max_new, 5 sn aralıkla: robots.txt Crawl-delay). Geçmiş doldurma yerelde: admin_cli kaa."""
+def _blocked_until(repo: Repository, now: datetime) -> datetime | None:
+    """Engel beklemesi sürüyorsa bitiş anı; kayıt yok/bozuk/saat dilimsiz/geçmiş ya da çok ileri tarihli ise None (normal tur). Hata fırlatmaz."""
+    try:
+        raw = repo.get_state(BLOCK_KEY)
+        until = datetime.fromisoformat(raw) if raw else None
+    except Exception:
+        return None
+    if until is None or until.tzinfo is None:
+        return None
+    return until if now < until <= now + BLOCK_PAUSE + timedelta(minutes=5) else None
+
+
+def collect_kibrisarabaal(repo: Repository, source: dict, max_new: int = 10, now: datetime | None = None) -> KaaStats:
+    """Her turda en yeni ilanlar (en çok max_new, 5 sn aralıkla: robots.txt Crawl-delay). Geçmiş doldurma yerelde: admin_cli kaa.
+    Site haritası 403 verirse (10.10.2026'dan beri Cloudflare botu engelliyor) BLOCK_PAUSE boyunca siteye hiç istek atılmaz; tur yine HATA
+    sayılır (kaynak alarmı sürer, sahte "düzeldi" mesajı gitmez). Engel AŞILMAZ: tarayıcı kimliği taklidi yok, karar sahibin."""
+    now = now or datetime.now(timezone.utc)
+    until = _blocked_until(repo, now)
+    if until is not None:
+        raise RuntimeError(f"{source['name']}: site botu engelliyor (403); {until:%H:%M} UTC'ye kadar istek atılmıyor")
     stats = KaaStats()
     with kibrisarabaal.new_client() as client:
-        entries = kibrisarabaal.fetch_sitemap(client)
+        try:
+            entries = kibrisarabaal.fetch_sitemap(client)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 403:
+                try:
+                    repo.set_state(BLOCK_KEY, (now + BLOCK_PAUSE).isoformat())
+                except Exception as err:  # kayıt yazılamazsa eski davranış: her tur denenir
+                    print(f"KibrisArabaAl: engel beklemesi yazılamadı ({type(err).__name__})")
+            raise
         stats.in_sitemap = len(entries)
         known = repo.known_item_ids(source["id"])
         todo = sorted((e for e in entries if e.item_id not in known), key=lambda e: int(e.item_id), reverse=True)

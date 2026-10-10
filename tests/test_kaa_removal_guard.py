@@ -114,3 +114,31 @@ def test_new_entries_few_removals_recorded_as_before(monkeypatch):
     repo = Repo()
     stats = kaa.collect_kibrisarabaal(repo, SOURCE)
     assert stats.deactivated == 2 and stats.new == 8 and sorted(a for _, a in repo.upserts if a is False) == [False, False]
+
+
+def test_cloudflare_block_pauses_requests_for_two_hours_and_still_counts_as_failure(monkeypatch):
+    """10.10.2026: site haritası 403 (Cloudflare "you have been blocked"). Engel sürerken her 15 dakikada istek atılmaz; tur yine hata sayılır."""
+    import httpx
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 10, 10, 20, 5, tzinfo=timezone.utc)
+    calls = []
+
+    def blocked(client):
+        calls.append(1)
+        raise httpx.HTTPStatusError("403", request=httpx.Request("GET", "https://x"), response=httpx.Response(403))
+
+    monkeypatch.setattr(site, "fetch_sitemap", blocked)
+    repo = Repo()
+    with pytest.raises(httpx.HTTPStatusError):
+        kaa.collect_kibrisarabaal(repo, SOURCE, now=now)
+    assert repo.state[kaa.BLOCK_KEY] == (now + timedelta(hours=2)).isoformat()
+    with pytest.raises(RuntimeError, match="403"):  # beklerken: istek yok, hata mesajında 403 (kaynak alarmı nedeni)
+        kaa.collect_kibrisarabaal(repo, SOURCE, now=now + timedelta(minutes=15))
+    assert len(calls) == 1
+    with pytest.raises(httpx.HTTPStatusError):  # 2 saat sonra yeniden denenir
+        kaa.collect_kibrisarabaal(repo, SOURCE, now=now + timedelta(hours=2, minutes=1))
+    assert len(calls) == 2
+    repo.state[kaa.BLOCK_KEY] = "bozuk"
+    monkeypatch.setattr(site, "fetch_sitemap", lambda client: [])
+    monkeypatch.setattr(kaa, "refresh_active", lambda *a, **k: None)
+    kaa.collect_kibrisarabaal(repo, SOURCE, now=now)  # bozuk kayıt beklemez
