@@ -121,3 +121,9 @@ def test_unreadable_source_gets_one_warning_line():
     rows = [listing("a", 5000, source_checked_at=NOW - timedelta(days=3)), listing("b", 6000, source_checked_at=NOW - timedelta(days=3))]
     out = search_cmd.search(Repo(rows), "vitz", Settings(), NOW)
     assert out.count("okunamıyor") == 1 and "ℹ️ KibrisArabaAl 3 gündür okunamıyor: oradaki ilanlar satılmış olabilir" in out
+
+
+def test_negotiable_line_says_how_low_the_price_must_go():
+    out = search_cmd.search(Repo([listing("y", 7000)]), "vitz", Settings(), NOW)
+    line = next(l for l in out.split("\n") if l.startswith("🟡"))
+    assert "· %20 kâr için ≤£6.600 ·" in line  # piyasa ortası £8.700 → hızlı satış £8.265; (8.265 − 300) / 1,2 = 6.637 → £50'ye aşağı

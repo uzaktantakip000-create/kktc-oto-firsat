@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from application.ad_check import MAX_PER_DAY, MAX_PER_DAY_SUBSCRIBER, quota_ok
-from application.dossier import stale_source_text
+from application.dossier import TARGET_STEP, stale_source_text
 from application.evaluate import load_book, pool_keys
 from application.notify import price_text
 from application.price_book_cmd import resolve_model
@@ -17,7 +17,7 @@ from domain.decision import decide
 from domain.kktc_time import to_kktc
 from domain.model_year import max_model_year
 from domain.normalize import fold, is_car_brand, normalize_brand
-from domain.profit import Tier
+from domain.profit import Tier, buy_ceiling
 from domain.settings import Settings
 from infrastructure.db.repository import Repository
 from infrastructure.fx.frankfurter import gbp_rate
@@ -147,7 +147,7 @@ def _filters_text(brand: str, model: str | None, q: Query) -> str:
 _RANK = {Tier.STRONG: 0, Tier.NEGOTIABLE: 1, Tier.ESTIMATED: 2}
 
 
-def _line(l: dict, a, now: datetime) -> tuple[tuple, str]:
+def _line(l: dict, a, now: datetime, s: Settings) -> tuple[tuple, str]:
     """(sıralama anahtarı, satır). Sıra: 🟢, 🟡, 🟠, ➖ (her grupta fiyat/piyasa oranına göre), en sonda piyasası olmayanlar fiyata göre.
     Fiyat sterlin; ilan başka para birimindeyse yanında ilandaki asıl fiyat (10.10 Auris dersi: okuyan ilanda aynı rakamı görsün)."""
     price = float(l["price_gbp"])
@@ -170,7 +170,12 @@ def _line(l: dict, a, now: datetime) -> tuple[tuple, str]:
     gap = price / m.median_gbp - 1
     where = f"piyasanın %{-gap * 100:.0f} altında" if gap <= -0.005 else f"piyasanın %{gap * 100:.0f} üstünde" if gap >= 0.005 else "piyasa hizasında"
     rank = 8 if a.blocking else _RANK.get(p.tier, 3)
-    return (rank, price / m.median_gbp), f"{mark} {head} · {km} · {money} · {where} · {l['source_name']}{old}"
+    target = ""
+    if p.tier is Tier.NEGOTIABLE and not a.blocking:  # 🟡: pazarlıkta nereye inmeli (dosyadaki 🎯 ile aynı hesap)
+        offer = buy_ceiling(p.exit_price_gbp, s) // TARGET_STEP * TARGET_STEP
+        if 0 < offer < price:
+            target = f" · %{round(s.strong_threshold * 100)} kâr için ≤£{offer:,.0f}".replace(",", ".")
+    return (rank, price / m.median_gbp), f"{mark} {head} · {km} · {money} · {where}{target} · {l['source_name']}{old}"
 
 
 def search(repo: Repository, args: str, s: Settings, now: datetime | None = None) -> str:
@@ -188,7 +193,7 @@ def search(repo: Repository, args: str, s: Settings, now: datetime | None = None
         return f"{title}\nŞu an taranan sitelerde bu aramaya uyan aktif ilan yok."
     pool = [r for r in repo.market_pool(days=s.comparable_window_days + 30, keys=pool_keys(rows)) if is_car_brand(r.get("brand_norm"))]
     estimates = book if s.estimated_alerts else None
-    scored = sorted(((*_line(l, decide(l, pool, s, estimates, now=now), now), l.get("url")) for l in rows), key=lambda x: x[0])
+    scored = sorted(((*_line(l, decide(l, pool, s, estimates, now=now), now, s), l.get("url")) for l in rows), key=lambda x: x[0])
     total = rows[0].get("total") or len(rows)
     found = f"{total} aktif ilan (en yeni {len(rows)} tanesine bakıldı)" if total > CANDIDATES else f"{len(rows)} aktif ilan"
     lines = [title, f"Taranan sitelerde {found}; önce fırsatlar, sonra piyasaya göre en ucuzlar ({min(SHOWN, len(scored))} tane):"]
