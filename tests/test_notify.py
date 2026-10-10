@@ -118,6 +118,18 @@ def test_guessed_currency_message_names_real_currency():
     assert "TL varsayıldı" in notify.format_alert(e)
 
 
+def test_message_shows_the_listing_own_price_when_it_is_not_sterling():
+    # sahibin şikâyeti (10.10.2026): ilanda "10.500 USD", mesajda yalnız "£7.942" vardı; okuyan fiyatı farklı sandı
+    e = ev(1)
+    e.listing.update(currency="USD", price_amount=10500, price_gbp=7942.31)
+    assert "2015 Toyota Vitz · £7.942 (ilanda 10.500 USD)" in notify.format_alert(e)
+    e.listing.update(currency="TRY", price_amount=517543, price_gbp=7959.81)
+    assert "· £7.960 (ilanda 517.543 TL)" in notify.format_alert(e)
+    e.listing.update(currency="GBP", price_amount=5000, price_gbp=5000)
+    assert "2015 Toyota Vitz · £5.000\n" in notify.format_alert(e)  # sterlinde eskisi gibi tek rakam
+    assert notify.price_text(5000, None, "USD") == "£5.000"  # asıl rakam bilinmiyorsa uydurulmaz
+
+
 def test_whatsapp_button_on_top_when_phone_valid():
     url = notify.whatsapp_url("905330000021", "Merhaba, 2015 Toyota Vitz ilanınız hâlâ satılık mı?")
     assert url.startswith("https://wa.me/905330000021?text=") and " " not in url

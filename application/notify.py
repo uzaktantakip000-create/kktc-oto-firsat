@@ -61,6 +61,15 @@ def _gbp(x: float) -> str:
     return f"£{x:,.0f}".replace(",", ".")
 
 
+def price_text(price_gbp: float, amount=None, currency: str | None = None) -> str:
+    """Mesajdaki fiyat: sterlin; ilan STG değilse yanında ilandaki asıl fiyat. Sahibin şikâyeti (10.10.2026): ilanda "10.500 USD", mesajda
+    yalnız "£7.942" yazıyordu, okuyan fiyatı farklı sandı. Kıyas hep sterlinle yapılır; asıl rakam, ilanı açan kişi aynısını görsün diye yazılır."""
+    text = _gbp(float(price_gbp))
+    if currency and currency != "GBP" and amount:
+        text += f" (ilanda {float(amount):,.0f} {CURRENCY_NAMES.get(currency, currency)})".replace(",", ".")
+    return text
+
+
 def estimate_line(price: float, value: float, lower: float) -> str:
     """🟠 mesajının ana satırı: tablo değeri, en kötü ihtimal ve değere göre ucuzluk."""
     return f"📘 Tablo değeri ~{_gbp(value)} (en kötü ihtimalle {_gbp(lower)}) → ~%{(1 - price / value) * 100:.0f} ucuz"
@@ -100,7 +109,7 @@ def format_alert(ev: Evaluated, note: dict | None = None) -> str:
                   f"kâr ~{_gbp(p.profit_gbp)} (masraf {_gbp(Settings().fixed_cost_gbp)} düşüldü)")
     lines = [
         head,
-        f"{l['year']} {l['brand']} {l['model'] or ''} · {_gbp(price)}",
+        f"{l['year']} {l['brand']} {l['model'] or ''} · {price_text(price, l.get('price_amount'), l.get('currency'))}",
         f"📍 {l['location'] or '?'} · {l['source_name']} · {km} · {(l['transmission'] or '?').capitalize()}{steering}",
         market,
         "💡 Neden: " + _reason(ev),
@@ -209,7 +218,7 @@ def _burst_summary(repo: Repository, token: str, fresh: list[Evaluated], subs: l
     lines = [f"🟠 {len(fresh)} tahmini fırsat çıktı; olağan dışı, kontrol ediyorum — en iyi {len(best)}:"]
     for ev in best:
         l = ev.listing
-        lines.append(f"• {l['year']} {l['brand']} {l['model'] or ''} · {_gbp(float(l['price_gbp']))} · "
+        lines.append(f"• {l['year']} {l['brand']} {l['model'] or ''} · {price_text(l['price_gbp'], l.get('price_amount'), l.get('currency'))} · "
                      f"~%{(1 - float(l['price_gbp']) / ev.market.median_gbp) * 100:.0f} ucuz"
                      + (f"\n  {l['url']}" if l.get("url") else ""))
     text = "\n".join(lines)

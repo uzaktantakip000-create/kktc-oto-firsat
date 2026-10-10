@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 
 from application.health import notify_owner
 from application.liveness import can_check, recheck_before_send
-from application.notify import TelegramError, api, is_fresh, photo_stale, resurfaced_ids
+from application.notify import TelegramError, api, is_fresh, photo_stale, price_text, resurfaced_ids
 from application.settings_store import load_settings
 from application.status import late_sources
 from domain.alert_policy import MIN_COMPARABLES_TO_SEND
@@ -77,6 +77,11 @@ def _gbp(x) -> str:
     return f"£{float(x):,.0f}".replace(",", ".")
 
 
+def _price(r: dict) -> str:
+    """Satırdaki fiyat: fırsat mesajıyla aynı biçim (STG değilse ilandaki asıl fiyat da)."""
+    return price_text(r["price_gbp"], r.get("price_amount"), r.get("currency"))
+
+
 def _num(n) -> str:
     return f"{n:,}".replace(",", ".")
 
@@ -106,7 +111,7 @@ def _votes_section(repo: Repository, chat_id: str | None = None, owner: bool = T
         return _Section("oy bekleyen", head + ["Hepsini oyladın, teşekkürler."]), []
     head.append(VOTE_ASK_OWNER if owner else VOTE_ASK_SUBSCRIBER)
     shown = todo[:VOTE_SHOW]
-    items = [f"{i}) {'🟢' if r['tier'] == Tier.STRONG.value else '🟠'} {_car(r)} · {_gbp(r['price_gbp'])} · {_day(r['sent_at'])}"
+    items = [f"{i}) {'🟢' if r['tier'] == Tier.STRONG.value else '🟠'} {_car(r)} · {_price(r)} · {_day(r['sent_at'])}"
              + ("" if r["is_active"] else " · artık yayında değil") + (f"\n{r['url']}" if r.get("url") else "")
              for i, r in enumerate(shown, 1)]
     tail = [f"… ve {len(todo) - len(shown)} eski bildirim daha (kendi mesajlarındaki düğmelerle oylanır)."] if len(todo) > len(shown) else []
@@ -174,7 +179,7 @@ def _unnotified_section(repo: Repository, recheck, now: datetime) -> _Section:
         when = f"ilan tarihi {_day(r['posted_at'])}" if r.get("posted_at") else f"ilk görülme {_day(r['first_seen_at'])}"
         where = r["source_name"] if can_check(r) else (
             f"{PLATFORM_NAMES.get(r['platform'], r['source_name'])} (satıldı mı izlenemiyor)")
-        items.append(f"• {_car(r)} · {_gbp(r['price_gbp'])} · ~%{r['profit_pct']:.0f} kâr "
+        items.append(f"• {_car(r)} · {_price(r)} · ~%{r['profit_pct']:.0f} kâr "
                      f"(piyasa ortası {_gbp(r['market_median_gbp'])}, {r['comparables_n']} emsal)\n  {where} · {when}"
                      + (f" · {r['url']}" if r.get("url") else ""))
     return _Section("bildirilmemiş", head, items, tail)
@@ -191,7 +196,7 @@ def _near_section(repo: Repository, s: Settings) -> _Section:
         gaps = [_reason(g) for g in (r["nedenler"] or [])[:2]]
         why = ("ama " + ", ".join(gaps) if gaps else f"(eşik %{thr:.0f})" if r["profit_pct"] < thr
                else f"ama kâr tutarı {_gbp(s.min_strong_profit_gbp)} altında")
-        items.append(f"• {_car(r, 32)} · {_gbp(r['price_gbp'])} · ~%{r['profit_pct']:.0f} kâr {why}" + (f" · {r['url']}" if r.get("url") else ""))
+        items.append(f"• {_car(r, 32)} · {_price(r)} · ~%{r['profit_pct']:.0f} kâr {why}" + (f" · {r['url']}" if r.get("url") else ""))
     head = [f"👀 YAKIN KAÇANLAR (yalnız bilgi: bu hafta gelen, {MIN_COMPARABLES_TO_SEND}+ emsalli ama 🟢 olmayan)"]
     return _Section("yakın kaçan", head, items)
 

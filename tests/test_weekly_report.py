@@ -135,6 +135,15 @@ def test_unvoted_list_says_how_the_system_is_measured_and_has_numbered_buttons()
     assert all(len(b["callback_data"].encode()) <= 64 for b in buttons)  # Telegram sınırı
 
 
+def test_report_lines_show_the_listing_own_price_when_it_is_not_sterling():
+    vote = vote_row(1) | {"price_amount": 9650.0, "currency": "USD", "price_gbp": 7300.0}
+    near = near_row(1) | {"price_amount": 400000.0, "currency": "TRY", "price_gbp": 7750.0}
+    text, _ = build(FakeRepo(votes=[vote], near=[near], strong=[strong_row(1)]))
+    assert "2011 BMW 3 Serisi 320i · £7.300 (ilanda 9.650 USD) · 14.10" in text
+    assert "2013 BMW 116i · £7.750 (ilanda 400.000 TL) · ~%18 kâr" in text
+    assert "2013 Honda Fit · £5.400 · ~%30 kâr" in text  # sterlin ilanda tek rakam
+
+
 def test_only_ten_unvoted_listed_and_the_rest_counted():
     text, kb = build(FakeRepo(votes=[vote_row(i) for i in range(1, 14)]))
     assert "10) 🟢" in text and "11) 🟢" not in text and "… ve 3 eski bildirim daha" in text
