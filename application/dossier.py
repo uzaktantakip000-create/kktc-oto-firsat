@@ -35,6 +35,18 @@ _ID_IN_PATH = (
     ("facebook.com", re.compile(r"/(?:permalink|posts)/(\d+)")),
     ("instagram.com", re.compile(r"^/(?:p|reel)/([\w-]+)")),
 )
+# İlan sayfası biçimi (site → yol): yalnız bu biçimdeki bulunamayan link "henüz görmedim" alır. Öbür linkler (Facebook grubu, Instagram hesabı,
+# site ana sayfası: sahibin kaynak ekleme linkleri) eski akışa (sources_cmd.propose_link) kalır.
+_LISTING_PATH = {
+    "kktcarabam.com": re.compile(r"^/\d+-"),
+    "kibrisarabaal.com": re.compile(r"^/ilan/\d+"),
+    "kktcar.com": re.compile(r"^/listing/."),
+    "mezunumsatiyorumkibris.com.tr": re.compile(r"^/ilan/."),
+    "kibriscars.com": re.compile(r"^/araba-ilani/."),
+    "sahibindenarabakibris.com": re.compile(r"^/vehicle/."),
+    "facebook.com": re.compile(r"/(?:permalink|posts)/\w+"),
+    "instagram.com": re.compile(r"^/(?:p|reel)/[\w-]+"),
+}
 NOT_SEEN = ("🔎 Bu ilanı henüz görmedim. Site düzenli taranıyor; yeni ilansa en geç 2 saat içinde gelir, linki o zaman tekrar gönder.\n"
             "Beklemek istemezsen ilanın yazısını (marka, yıl, km, fiyat) gönder, hemen değerlendireyim.")
 
@@ -247,6 +259,15 @@ def handle(repo: Repository, text: str, now: datetime | None = None, subscriber:
         from application.settings_store import load_settings
         return build(repo, listing, load_settings(repo) if subscriber is None else Settings(), now)
     rest = URL_RE.sub(" ", text)
-    if sum(ch.isdigit() for ch in rest) < AD_TEXT_DIGITS and any(repo.known_site(host) for _, host, _ in links):
+    if sum(ch.isdigit() for ch in rest) < AD_TEXT_DIGITS and any(looks_like_listing(canon, host) and repo.known_site(host)
+                                                                for canon, host, _ in links):
         return NOT_SEEN
     return None
+
+
+def looks_like_listing(canon: str, host: str) -> bool:
+    """Link bir ilan sayfası mı (taranan sitelerin ilan adresi biçimi)? Grup/hesap/ana sayfa linki değil."""
+    for site, pattern in _LISTING_PATH.items():
+        if host == site or host.endswith("." + site):
+            return bool(pattern.search(canon[len(host):]))
+    return False

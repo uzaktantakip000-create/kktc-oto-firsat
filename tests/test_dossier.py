@@ -154,3 +154,10 @@ def test_a_source_that_cannot_be_read_makes_the_listing_status_unknown():
     out = dossier.handle(Repo(found=listing(source_checked_at=NOW - timedelta(hours=30))), LINK, now=NOW)
     assert "ℹ️ KKTCarabam 30 saattir okunamıyor: ilanın hâlâ yayında olup olmadığını bilmiyorum" in out
     assert "okunamıyor" not in dossier.handle(Repo(found=listing(source_checked_at=NOW - timedelta(hours=1))), LINK, now=NOW)
+
+
+@pytest.mark.parametrize("link", ["https://www.facebook.com/groups/123456789/", "https://www.instagram.com/kibrisoto/",
+                                  "https://kibrisarabaal.com/", "https://www.kktcarabam.com/ikinci-el-araba"])
+def test_source_links_are_not_answered_with_not_seen(link):
+    """Sahibin kaynak ekleme linki (grup, hesap, site) dosyaya takılmaz: eski akış (kaynak önerisi) cevaplar."""
+    assert dossier.handle(Repo(sites=("facebook.com", "instagram.com", "kibrisarabaal.com", "kktcarabam.com")), link, now=NOW) is None
