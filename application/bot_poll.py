@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 import httpx
 
-from application import ad_check, discovery, history_cmd, llm_reader, price_book_cmd, settings_store, sources_cmd, status
+from application import ad_check, discovery, dossier, history_cmd, llm_reader, price_book_cmd, settings_store, sources_cmd, status
 from application.learning import learning_open
 from application.notify import TelegramError, api
 from infrastructure.config import redact
@@ -38,13 +38,16 @@ HELP_OWNER = ("📖 Komutlar (cevap en geç ~15 dk içinde gelir)\n\n"
               "/istemiyorum fiat — markayı kapat (/istiyorum fiat geri açar)\n"
               "/tahmini ac | kapat — 🟠 ayarı (şu an 🟠 mesajları zaten kapalı)\n\n"
               "İlan kontrolü: bir ilanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü gönder; piyasayla karşılaştırıp cevap veririm.\n"
+              "📂 İlan dosyası: taradığım sitelerden (KKTCar, KibrisArabaAl, KKTCarabam, Mezunum) bir ilanın linkini gönder; kararı, pazarlık hedefini, "
+              "ilanın yaşını, satıcının başka ilanlarını, aynı aracın başka sitedeki ilanını ve benzerlerini yazarım.\n"
               "Kaynak eklemek: Instagram hesabının, Facebook grubunun ya da yeni sitenin linkini gönder; eklemeden önce sorarım.\n"
               "Her fırsat mesajındaki 👍 İşe yarar / 👎 Yanlış düğmesine bas: sistemi bu oylarla ölçüyorum.")
 HELP_SUBSCRIBER = ("Bu bot KKTC'deki ikinci el araç ilanlarını tarar; piyasanın belirgin altında kalan fırsatları bu sohbete yazar. "
                    "Yalnızca öneridir: satıcıyla görüşmek ve karar vermek sana aittir.\n\n"
                    "/dur — bildirimleri durdur\n/basla — yeniden aç\n\n"
                    "İlan kontrolü: bir ilanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü bana gönder; piyasayla karşılaştırıp "
-                   f"cevap veririm (günde en çok {ad_check.MAX_PER_DAY_SUBSCRIBER}).\n\n"
+                   f"cevap veririm (günde en çok {ad_check.MAX_PER_DAY_SUBSCRIBER}). Taranan sitelerden (KKTCar, KibrisArabaAl, KKTCarabam, "
+                   "Mezunum) bir ilanın linkini gönderirsen o ilanın dosyasını (karar, pazarlık hedefi, ilanın yaşı, benzerleri) yazarım.\n\n"
                    "Mesajlardaki 👍 İşe yarar / 👎 Yanlış düğmesine basarsan sistem gelişir. Cevaplar en geç ~15 dk içinde gelir.")
 WELCOME_SUBSCRIBER = ("✅ Onaylandın! Fırsat bildirimleri bu sohbete gelecek. Bir ilanı (yazı ya da ekran görüntüsü) bana gönderirsen "
                       "piyasayla karşılaştırıp cevap veririm. Komutlar için /yardim.")
@@ -62,8 +65,8 @@ CALLBACK_ERROR_REPLY = "⚠️ İşlem yapılamadı, düğmeye tekrar bas."
 APPLY_PING_HOURS = 6  # onay bekleyenin tekrar /start'ı sahibe en çok bu aralıkla yeniden sorulur (ilk soru kaybolmuş olabilir)
 CHATTER_REPLY = ("Bunu bir ilan olarak okuyamadım. İlanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü gönder. "
                  "Komutlar için /yardim.")
-LINK_REPLY = ("Linkleri açamıyorum. İlanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü gönder. "
-              "Sistemin taradığı sitelerdeki ilanlar zaten kendiliğinden değerlendiriliyor.")
+LINK_REPLY = ("Bu linki tanımıyorum: yalnız taradığım sitelerin (KKTCar, KibrisArabaAl, KKTCarabam, Mezunum) ilan linklerinin dosyasını "
+              "çıkarabilirim, başka linkleri açmam. O ilanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü gönder.")
 ERROR_REPLY = "⚠️ Komutun işlenirken bir hata oldu; birazdan tekrar dene. (Hata kaydedildi.)"
 OWNER_COMMANDS = {"/durum", "/son", "/ayarlar", "/esik", "/butce", "/fiyat", "/satti", "/tahmini", "/istemiyorum", "/istiyorum",
                   "/kaynaklar", "/kaynak_ekle", "/kaynak_seviye", "/kaynak_ac", "/kaynak_kapat"}
@@ -266,6 +269,8 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
             image = _download_photo(token, msg["photo"])
             reply = ("Görüntüyü indiremedim (en çok 5 MB olmalı). İlanı yazı olarak da gönderebilirsin." if image is None
                      else ad_check.handle(repo, raw, image, llm_reader.from_env(repo), **extra))
+        elif (card := dossier.handle(repo, raw, subscriber=extra.get("subscriber"))) is not None:
+            reply = card  # taranan sitenin ilan linki: veritabanındaki ilanın dosyası (ya da "henüz görmedim"); link açılmaz
         elif _is_bare_link(raw) and chat_id == owner and (proposal := sources_cmd.propose_link(repo, raw)) is not None:
             body, markup = proposal  # sahibin attığı link: kaynak ekleme/açma önerisi (düğmeli) ya da "zaten taranıyor"
             api(token, "sendMessage", chat_id=chat_id, text=body, disable_web_page_preview=True, **({"reply_markup": markup} if markup else {}))

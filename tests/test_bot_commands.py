@@ -83,8 +83,10 @@ def bot(monkeypatch):
     monkeypatch.setattr(bot_poll.sources_cmd, "set_level", lambda repo, a: f"SEVIYE{a}")
     monkeypatch.setattr(bot_poll.sources_cmd, "change_status", lambda repo, a, to: f"{to}{a}")
     monkeypatch.setattr(bot_poll.llm_reader, "from_env", lambda repo: None)
-    ads = []
+    ads, cards, card_calls = [], {}, []
     monkeypatch.setattr(bot_poll.ad_check, "handle", lambda repo, raw, image, reader, **kw: ads.append((raw, image, kw)) or "ILAN-CEVABI")
+    # ilan dosyası (application/dossier): yalnız `cards`ta olan link "veritabanında bulunur"; öbür her mesajda None (eski akış)
+    monkeypatch.setattr(bot_poll.dossier, "handle", lambda repo, raw, subscriber=None: card_calls.append((raw, subscriber)) or cards.get(raw))
 
     class Bot:
         def send(self, repo, chat, text):
@@ -93,7 +95,7 @@ def bot(monkeypatch):
             return [kw["text"] for m, kw in calls if m == "sendMessage"]
 
     b = Bot()
-    b.calls, b.ads = calls, ads
+    b.calls, b.ads, b.cards, b.card_calls = calls, ads, cards, card_calls
     return b
 
 
@@ -221,6 +223,16 @@ def test_owner_can_stop_and_restart_and_poll_keeps_it_stopped(bot):
     assert "durduruldu" in bot.send(repo, OWNER, "/dur")[0] and repo.conn.subs[OWNER] == "durduruldu"
     assert "zaten durdurulmuş" in bot.send(repo, OWNER, "/dur")[0]
     assert "açıldı" in bot.send(repo, OWNER, "/basla")[0] and repo.conn.subs[OWNER] == "onayli"
+
+
+def test_a_known_listing_link_gets_its_dossier_for_owner_and_subscriber(bot):
+    link = "https://www.kktcarabam.com/259593-honda-fit-lefkosa-benzin-otomatik"
+    bot.cards[link] = "📂 İLAN DOSYASI"
+    assert bot.send(Repo(), OWNER, link) == ["📂 İLAN DOSYASI"] and bot.ads == []  # kaynak önerisi değil, ilan kontrolü değil
+    assert bot.send(Repo({FRIEND: "onayli"}), FRIEND, link) == ["📂 İLAN DOSYASI"]
+    assert bot.card_calls[-1] == (link, FRIEND)  # abonenin kendi kotası
+    assert bot.send(Repo({FRIEND: "bekliyor"}), FRIEND, link) == [bot_poll.PENDING_REPLY]  # onaysız kişiye dosya yok
+    assert bot.card_calls[-1] == (link, FRIEND) and len(bot.card_calls) == 2
 
 
 def test_owner_free_text_unknown_commands_and_links(bot):

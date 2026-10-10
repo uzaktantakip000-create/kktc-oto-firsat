@@ -29,7 +29,7 @@ from domain.data_gate import GAP_LABELS
 from domain.decision import send_allowed
 from domain.kktc_time import to_kktc
 from domain.lifecycle import SOLD
-from domain.profit import Tier
+from domain.profit import Tier, buy_ceiling
 from domain.settings import RULES_VERSION, Settings
 from infrastructure.config import mask_chat, redact
 from infrastructure.db.repository import DatabaseDown, Repository
@@ -103,7 +103,7 @@ def _target_price(r: dict, s: Settings) -> float | None:
     exit_price = r.get("exit_price_gbp")
     if not exit_price or r.get("nedenler"):
         return None
-    target = min((exit_price - s.fixed_cost_gbp) / (1 + s.strong_threshold), exit_price - s.fixed_cost_gbp - s.min_strong_profit_gbp)
+    target = buy_ceiling(exit_price, s)
     return target if 0 < target < r["price_gbp"] else None
 
 

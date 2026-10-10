@@ -579,6 +579,55 @@ class Repository:
              "price": float(listing["price_gbp"]), "amount": float(listing["price_amount"]) if listing.get("price_amount") else None,
              "km": km, "tiers": SENT_ONCE_TIERS, "limit": limit}).fetchall()
 
+    _CANON_URL = r"rtrim(regexp_replace(split_part(split_part(l.url, '#', 1), '?', 1), '^https?://(www\.|m\.)?', ''), '/')"
+
+    def listing_by_link(self, canon: str, host: str, item_ids: list[str]) -> dict | None:
+        """İlan dosyası (application/dossier): bota atılan linkin veritabanındaki ilanı. `canon`: şemasız, "www."/"m."'siz, sorgu ve sondaki "/"
+        atılmış adres ("kktcar.com/listing/2013-..."); eşleşmezse aynı sitedeki (adreste `host` geçen) ilanlardan kaynak numarası `item_ids`'ten
+        biri olan (KKTCarabam başlığı değişse de numarası aynıdır). Önce birebir adres, sonra aktif, sonra en son görülen. Salt okunur."""
+        return self.conn.execute(
+            f"""SELECT l.*, l.price_gbp::float8 AS price_gbp, l.price_amount::float8 AS price_amount, s.name AS source_name, s.platform,
+                      s.alert_level
+               FROM listings l JOIN sources s ON s.id = l.source_id
+               WHERE l.url IS NOT NULL AND ({self._CANON_URL} = %(canon)s OR (l.url LIKE %(host)s AND l.source_item_id = ANY(%(ids)s)))
+               ORDER BY {self._CANON_URL} = %(canon)s DESC, l.is_active DESC, l.last_seen_at DESC LIMIT 1""",
+            {"canon": canon, "host": f"%{host}%", "ids": list(item_ids)}).fetchone()
+
+    def known_site(self, host: str) -> bool:
+        """Bu siteden (adresinde `host` geçen) en az bir ilan kayıtlı mı? (İlan dosyası: "henüz görmedim" ile "bu siteyi taramıyorum" ayrımı.)"""
+        return self.conn.execute("SELECT 1 FROM listings WHERE url LIKE %s LIMIT 1", (f"%{host}%",)).fetchone() is not None
+
+    def price_history(self, listing_id) -> list[dict]:
+        """İlanın fiyat değişiklikleri (eskiden yeniye). Yalnız ilan sayfası yeniden okunan kaynaklarda (KibrisArabaAl, KKTCar) kaydedilir."""
+        return self.conn.execute(
+            "SELECT changed_at, old_value, new_value FROM listing_history WHERE listing_id = %s AND field = 'price_gbp' ORDER BY changed_at",
+            (listing_id,)).fetchall()
+
+    def seller_active_count(self, listing: dict) -> int | None:
+        """Aynı satıcının BU ilan dışındaki aktif ilan sayısı (kopya bağlı ilanlar sayılmaz): aynı telefon (her kaynakta) ya da aynı kaynakta
+        aynı satıcı hesabı/adı. Satıcı bilinmiyorsa None. Telefon ve ad hiçbir zaman dönmez, yalnız sayı."""
+        phone, handle = listing.get("seller_phone"), listing.get("seller_handle")
+        if not phone and not handle:
+            return None
+        return self.conn.execute(
+            """SELECT count(*) AS n FROM listings
+               WHERE is_active AND duplicate_of IS NULL AND id <> %(id)s AND id IS DISTINCT FROM %(dup)s
+                 AND ((%(phone)s::text IS NOT NULL AND seller_phone = %(phone)s)
+                      OR (%(handle)s::text IS NOT NULL AND seller_handle = %(handle)s AND source_id = %(src)s))""",
+            {"id": listing["id"], "dup": listing.get("duplicate_of"), "phone": phone, "handle": handle,
+             "src": listing["source_id"]}).fetchone()["n"]
+
+    def facebook_similar_count(self, brand_norm: str | None, model_norm: str | None, year: int | None, days: int = 14) -> int:
+        """Facebook gruplarındaki (deneme kaynağı) aynı marka/model, ±1 yıl, son `days` günde görülmüş aktif ilan sayısı (ilan dosyasında tek
+        satır; FB ilanı yeşil kapısına dek listelenmez, yalnız sayılır: sosyal oturumla ortak karar, 10.10.2026)."""
+        if not brand_norm or not year:
+            return 0
+        return self.conn.execute(
+            """SELECT count(*) AS n FROM listings l JOIN sources s ON s.id = l.source_id
+               WHERE s.platform = 'facebook' AND l.is_active AND l.duplicate_of IS NULL AND l.brand_norm = %s
+                 AND l.model_norm IS NOT DISTINCT FROM %s AND abs(l.year - %s) <= 1 AND l.first_seen_at > NOW() - make_interval(days => %s)""",
+            (brand_norm, model_norm, year, days)).fetchone()["n"]
+
     def resurfaced_kktcarabam(self, listing_ids, gap_minutes: int = RESURFACE_RUN_GAP_MINUTES) -> set:
         """Yeniden çıkmış eski KKTCarabam ilanları (verilen ilanlar arasından). Site eski ilanı "en yeni" listesine geri itince ilan bizim için
         "yeni" görünür ama numarası daha önce gördüklerimizden KÜÇÜKTÜR (ilanlar numarayla, oluşturulma sırasıyla açılır). Kural: ilan KKTCarabam'dan

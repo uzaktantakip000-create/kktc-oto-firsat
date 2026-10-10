@@ -1236,3 +1236,42 @@ def test_shadow_summary_counts_new_shadow_listings_their_last_tier_and_copies_of
     add_listing(c, fb, "g4", first_seen_at=ago(hours=7), duplicate_of=strong)  # gölge ilanın kopyası: "sitede de var" değil
     add_listing(c, fb, "old", first_seen_at=ago(hours=30))  # 24 saatten eski
     assert db.shadow_summary("facebook", 24) == {"sources": 1, "new": 4, "strong": 1, "maybe": 1, "elsewhere": 1}
+
+
+def test_listing_by_link_matches_the_canonical_address_or_the_listing_number_on_the_same_site(db):
+    """İlan dosyası (application/dossier): bota atılan link → ilan. Sorgu/"www."/sondaki "/" farkı eşleşir; KKTCarabam başlığı değişse de numara tutar;
+    aynı numara başka sitede eşleşmez; birebir adres numaradan önce gelir."""
+    c = db.conn
+    kka, kaa = add_source(c, "KKTCarabam"), add_source(c, "KibrisArabaAl")
+    me = add_listing(c, kka, "259593", url="https://www.kktcarabam.com/259593-toyota-vitz-girne")
+    add_listing(c, kaa, "259593", url="https://kibrisarabaal.com/ilan/259593-baska-arac/")
+    kaa_row = add_listing(c, kaa, "3534", url="https://kibrisarabaal.com/ilan/3534-2019-model-otomatik/")
+    assert db.listing_by_link("kktcarabam.com/259593-toyota-vitz-girne", "kktcarabam.com", [])["id"] == me
+    hit = db.listing_by_link("kktcarabam.com/259593-baslik-degisti", "kktcarabam.com", ["259593"])
+    assert hit["id"] == me and hit["source_name"] == "KKTCarabam" and isinstance(hit["price_gbp"], float)
+    assert db.listing_by_link("kibrisarabaal.com/ilan/3534-2019-model-otomatik", "kibrisarabaal.com", ["3534"])["id"] == kaa_row
+    assert db.listing_by_link("kktcarabam.com/999-yok", "kktcarabam.com", ["999"]) is None
+    assert db.known_site("kktcarabam.com") and not db.known_site("example.org")
+
+
+def test_seller_count_price_history_and_facebook_similar(db):
+    c = db.conn
+    kaa, mez, fb = add_source(c, "KAA"), add_source(c, "Mezunum"), add_source(c, "FBG", platform="facebook")
+    me = add_listing(c, kaa, "me", seller_phone="905330000001", seller_handle="Ali")
+    add_listing(c, mez, "same_phone", seller_phone="905330000001")
+    add_listing(c, kaa, "same_name_same_site", seller_handle="Ali")
+    add_listing(c, mez, "same_name_other_site", seller_handle="Ali")  # başka sitede aynı ad: farklı kişi olabilir, sayılmaz
+    add_listing(c, kaa, "copy", seller_phone="905330000001", duplicate_of=me)  # kendi kopyası sayılmaz
+    add_listing(c, kaa, "sold", seller_phone="905330000001", is_active=False)
+    row = c.execute("SELECT * FROM listings WHERE id=%s", (me,)).fetchone()
+    assert db.seller_active_count(row) == 2
+    assert db.seller_active_count(dict(row, seller_phone=None, seller_handle=None)) is None
+    c.execute("INSERT INTO listing_history (listing_id, field, old_value, new_value, changed_at) VALUES (%s,'price_gbp','6500','6000', now() - interval '1 day')", (me,))
+    c.execute("INSERT INTO listing_history (listing_id, field, old_value, new_value) VALUES (%s,'model_norm','vitz','yaris')", (me,))
+    assert [(h["old_value"], h["new_value"]) for h in db.price_history(me)] == [("6500", "6000")]
+    add_listing(c, fb, "f1", year=2016)
+    add_listing(c, fb, "f2", year=2018)  # ±1 yıl dışı
+    old = add_listing(c, fb, "f3")
+    c.execute("UPDATE listings SET first_seen_at = now() - interval '20 days' WHERE id=%s", (old,))
+    add_listing(c, kaa, "site", year=2015)  # site ilanı sayılmaz
+    assert db.facebook_similar_count("Toyota", "vitz", 2015) == 1 and db.facebook_similar_count(None, "vitz", 2015) == 0

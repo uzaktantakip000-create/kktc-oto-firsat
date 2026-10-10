@@ -75,3 +75,10 @@ def evaluate_profit(
             tier = Tier.NONE
 
     return ProfitResult(exit_price, profit, pct, confidence, tier)
+
+
+def buy_ceiling(exit_price_gbp: float, s: Settings) -> float:
+    """🟢 eşiğindeki kârı (strong_threshold, ör. %20) ve asgari 🟢 kâr tutarını birlikte tutacak EN YÜKSEK alış fiyatı: `evaluate_profit`'in
+    tersi (kâr = çıkış − fiyat − masraf; oran = kâr / fiyat). Haftalık rapordaki "£X olursa %20 kâr" ve ilan dosyasındaki pazarlık hedefi
+    bunu kullanır. Yalnız fiyat hesabıdır: emsal sayısı, çeyrek, km gibi öbür 🟢 kapılarını içermez."""
+    return min((exit_price_gbp - s.fixed_cost_gbp) / (1 + s.strong_threshold), exit_price_gbp - s.fixed_cost_gbp - s.min_strong_profit_gbp)
