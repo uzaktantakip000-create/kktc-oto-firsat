@@ -19,16 +19,17 @@ def listing(price=5000, **kw):
 
 
 class Repo:
-    def __init__(self, found=None, history=(), others=None, twins=(), fb=0, sites=("kktcarabam.com",)):
+    def __init__(self, found=None, history=(), others=None, twins=(), fb=0, sites=("kktcarabam.com",), checked=NOW):
         self.found, self.history, self.others, self._twins, self.fb, self.sites = found, list(history), others, list(twins), fb, sites
+        self.checked = checked
         self.state, self.asked = {}, []
 
     def listing_by_link(self, canon, host, ids):
         self.asked.append((canon, host, ids))
         return self.found
 
-    def known_site(self, host):
-        return host in self.sites
+    def scanned_site(self, host):
+        return {"name": "KKTCarabam", "last_checked_at": self.checked} if host in self.sites else None
 
     def market_pool(self, days, keys=None):
         return POOL
@@ -156,8 +157,35 @@ def test_a_source_that_cannot_be_read_makes_the_listing_status_unknown():
     assert "okunamıyor" not in dossier.handle(Repo(found=listing(source_checked_at=NOW - timedelta(hours=1))), LINK, now=NOW)
 
 
+def test_not_seen_on_an_unreadable_site_does_not_promise_two_hours():
+    out = dossier.handle(Repo(checked=NOW - timedelta(hours=30)), LINK, now=NOW)
+    assert "KKTCarabam 30 saattir okunamıyor" in out and "2 saat" not in out
+
+
 @pytest.mark.parametrize("link", ["https://www.facebook.com/groups/123456789/", "https://www.instagram.com/kibrisoto/",
-                                  "https://kibrisarabaal.com/", "https://www.kktcarabam.com/ikinci-el-araba"])
+                                  "https://kibrisarabaal.com/", "https://www.kktcarabam.com/ikinci-el-araba",
+                                  "https://www.facebook.com/groups/123456789/permalink/987654321/", "https://www.instagram.com/p/Cabc123/"])
 def test_source_links_are_not_answered_with_not_seen(link):
-    """Sahibin kaynak ekleme linki (grup, hesap, site) dosyaya takılmaz: eski akış (kaynak önerisi) cevaplar."""
+    """Sahibin kaynak ekleme linki (grup, hesap, site; okumadığımız gruptaki gönderi) dosyaya takılmaz: eski akış (kaynak önerisi) cevaplar."""
     assert dossier.handle(Repo(sites=("facebook.com", "instagram.com", "kibrisarabaal.com", "kktcarabam.com")), link, now=NOW) is None
+
+
+def test_quarantined_listing_is_flagged_above_the_verdict():
+    out = dossier.handle(Repo(found=listing(karantina_nedeni="km_supheli")), LINK, now=NOW)
+    assert "⚠️ Veri kontrolü bu ilanı şüpheli buldu (km makul değil)" in out
+    assert out.index("şüpheli buldu") < out.index("🟢 FIRSAT")
+
+
+def test_owner_personal_filters_do_not_turn_a_cheap_car_into_not_a_deal(monkeypatch):
+    """/istemiyorum, /butce ve engellenen satıcı: bildirim filtresidir; bakılan ilanın fiyat yorumu aynı kalır, filtre ayrıca yazılır."""
+    import application.settings_store as st
+    monkeypatch.setattr(st, "load_settings", lambda repo: Settings(blocked_brands=["Toyota"], max_buy_gbp=4000, blocked_phones=["905330000009"]))
+    out = dossier.handle(Repo(found=listing(seller_phone="905330000009")), LINK, now=NOW)
+    assert "🟢 FIRSAT" in out and "Fırsat değil" not in out
+    assert "/istemiyorum listende" in out and "Bütçenin (£4.000) üstünde" in out and "engellemiştin" in out
+    assert "905330000009" not in out
+
+
+def test_unreadable_price_history_value_does_not_stop_the_dossier():
+    hist = [{"changed_at": NOW, "old_value": "", "new_value": "5000.0"}, {"changed_at": NOW, "old_value": "5000.0", "new_value": "x"}]
+    assert "🟢 FIRSAT" in dossier.handle(Repo(found=listing(), history=hist), LINK, now=NOW)

@@ -18,6 +18,7 @@ from domain.decision import Decision, decide
 from domain.kktc_time import to_kktc
 from domain.normalize import is_car_brand
 from domain.profit import Tier, buy_ceiling
+from domain.quality import REASONS
 from domain.settings import Settings
 from infrastructure.db.repository import Repository
 
@@ -35,8 +36,9 @@ _ID_IN_PATH = (
     ("facebook.com", re.compile(r"/(?:permalink|posts)/(\d+)")),
     ("instagram.com", re.compile(r"^/(?:p|reel)/([\w-]+)")),
 )
-# İlan sayfası biçimi (site → yol): yalnız bu biçimdeki bulunamayan link "henüz görmedim" alır. Öbür linkler (Facebook grubu, Instagram hesabı,
-# site ana sayfası: sahibin kaynak ekleme linkleri) eski akışa (sources_cmd.propose_link) kalır.
+# İlan sayfası biçimi (site → yol): yalnız bu biçimdeki bulunamayan link "henüz görmedim" alır. Öbür linkler (site ana sayfası, Facebook/Instagram:
+# sahibin kaynak ekleme linkleri; okumadığımız gruptaki gönderi de "grubu eklemek ister misin?" sorusunu alsın) eski akışa (sources_cmd) kalır.
+# Veritabanında BULUNAN Facebook/Instagram ilanının dosyası yine gelir.
 _LISTING_PATH = {
     "kktcarabam.com": re.compile(r"^/\d+-"),
     "kibrisarabaal.com": re.compile(r"^/ilan/\d+"),
@@ -44,11 +46,12 @@ _LISTING_PATH = {
     "mezunumsatiyorumkibris.com.tr": re.compile(r"^/ilan/."),
     "kibriscars.com": re.compile(r"^/araba-ilani/."),
     "sahibindenarabakibris.com": re.compile(r"^/vehicle/."),
-    "facebook.com": re.compile(r"/(?:permalink|posts)/\w+"),
-    "instagram.com": re.compile(r"^/(?:p|reel)/[\w-]+"),
 }
 NOT_SEEN = ("🔎 Bu ilanı henüz görmedim. Site düzenli taranıyor; yeni ilansa en geç 2 saat içinde gelir, linki o zaman tekrar gönder.\n"
             "Beklemek istemezsen ilanın yazısını (marka, yıl, km, fiyat) gönder, hemen değerlendireyim.")
+# Site uzun süredir okunamıyorsa (10.10.2026: KibrisArabaAl Cloudflare engeli) "2 saat içinde gelir" sözü verilmez
+NOT_SEEN_UNREADABLE = ("🔎 Bu ilanı görmedim: {name} {since} okunamıyor, yeni ilanlarını şu an alamıyorum.\n"
+                       "İlanın yazısını (marka, yıl, km, fiyat) gönderirsen hemen değerlendireyim.")
 
 
 def _gbp(x: float) -> str:
@@ -95,14 +98,35 @@ def _age_line(l: dict, now: datetime) -> str | None:
     return f"{text} ({days} gündür yayında)" if days >= 2 else f"{text} (yeni)"
 
 
-def stale_source_text(l: dict, now: datetime) -> str | None:
-    """Kaynak uzun süredir okunamıyorsa (10.10.2026: KibrisArabaAl Cloudflare engeli) ilanın hâlâ yayında olup olmadığı bilinmez: söylenir."""
-    checked = l.get("source_checked_at")
+def _unread_for(checked: datetime | None, now: datetime) -> str | None:
+    """Kaynak STALE_SOURCE'tan uzun süredir başarıyla okunmadıysa "N saattir"/"N gündür"; okunuyorsa (ya da bilinmiyorsa) None."""
     if checked is None or now - checked < STALE_SOURCE:
         return None
     hours = (now - checked).total_seconds() / 3600
-    since = f"{hours:.0f} saattir" if hours < 48 else f"{hours / 24:.0f} gündür"
-    return f"ℹ️ {l['source_name']} {since} okunamıyor: ilanın hâlâ yayında olup olmadığını bilmiyorum, aramada sor"
+    return f"{hours:.0f} saattir" if hours < 48 else f"{hours / 24:.0f} gündür"
+
+
+def stale_source_text(l: dict, now: datetime) -> str | None:
+    """Kaynak uzun süredir okunamıyorsa (10.10.2026: KibrisArabaAl Cloudflare engeli) ilanın hâlâ yayında olup olmadığı bilinmez: söylenir."""
+    since = _unread_for(l.get("source_checked_at"), now)
+    return f"ℹ️ {l['source_name']} {since} okunamıyor: ilanın hâlâ yayında olup olmadığını bilmiyorum, aramada sor" if since else None
+
+
+def lookup_settings(s: Settings) -> Settings:
+    """Bakılan ilanın (dosya, /bul) kararı: sahibin KİŞİSEL bildirim filtreleri (istemediği marka, bütçe, engellediği satıcı) fiyat yorumunu
+    değiştirmez; yoksa piyasanın %40 altındaki ilan "➖ Fırsat değil" görünürdü. Filtre dosyada ayrıca söylenir (personal_lines)."""
+    return s.model_copy(update={"blocked_brands": [], "max_buy_gbp": None, "blocked_phones": []})
+
+
+def personal_lines(l: dict, s: Settings) -> list[str]:
+    out = []
+    if l.get("brand_norm") and l["brand_norm"] in s.blocked_brands:
+        out.append("ℹ️ Bu marka /istemiyorum listende: böyle ilanlar sana bildirilmez")
+    if s.max_buy_gbp and l.get("price_gbp") and float(l["price_gbp"]) > s.max_buy_gbp:
+        out.append(f"ℹ️ Bütçenin ({_gbp(s.max_buy_gbp)}) üstünde: böyle ilanlar sana bildirilmez")
+    if l.get("seller_phone") and l["seller_phone"] in s.blocked_phones:
+        out.append("ℹ️ Bu satıcıyı engellemiştin: ilanları sana bildirilmez")
+    return out
 
 
 def _price_history_line(history: list[dict]) -> str | None:
@@ -148,11 +172,11 @@ def _verdict(a: Decision, l: dict, s: Settings) -> list[str]:
         market = f"📊 Piyasa ortası {_gbp(m.median_gbp)} ({m.n} emsal) → satılabilir ~{_gbp(p.exit_price_gbp)} · {gain}"
     lines = [head, market]
     ceiling, pct = buy_ceiling(p.exit_price_gbp, s), round(s.strong_threshold * 100)
+    offer = ceiling // TARGET_STEP * TARGET_STEP  # pazarlıkta söylenecek yuvarlak rakam (aşağı: kâr payı korunur)
     if ceiling > 0 and not a.blocking:
         if ceiling >= price:
             lines.append(f"🎯 %{pct} kâr sınırı {_gbp(ceiling)}: ilan fiyatı zaten altında")
-        else:
-            offer = ceiling // TARGET_STEP * TARGET_STEP  # pazarlıkta söylenecek yuvarlak rakam (aşağı: kâr payı korunur)
+        elif offer > 0:
             only = " (yalnız fiyat hesabı; 🟢 için aşağıdaki şartlar da gerekir)" if a.gaps else ""
             lines.append(f"🎯 %{pct} kâr için en çok {_gbp(offer)}: ilandan {_gbp(price - offer)} (%{(1 - offer / price) * 100:.0f}) "
                          f"indirim gerekir{only}")
@@ -177,7 +201,9 @@ def _safe(fn, default):
 
 
 def build(repo: Repository, l: dict, s: Settings, now: datetime | None = None) -> str:
+    """s: bakanın ayarları (sahip: kayıtlı ayarları, abone: varsayılan). Karar kişisel filtresiz verilir (lookup_settings), filtre ayrıca yazılır."""
     now = now or datetime.now(timezone.utc)
+    personal, s = personal_lines(l, s), lookup_settings(s)
     km = f"{_num(l['km'])} km" if l.get("km") else "km yok"
     if l.get("km") and effective_km(l, now.date()) is None:
         km += " (şüpheli)"
@@ -197,6 +223,9 @@ def build(repo: Repository, l: dict, s: Settings, now: datetime | None = None) -
     stale = stale_source_text(l, now)
     if stale and l.get("is_active", True):
         lines.append(stale)
+    if l.get("karantina_nedeni"):  # veri bakımı (domain/quality): otomatik değerlendirme bu ilana hiç bakmaz
+        why = REASONS.get(l["karantina_nedeni"], l["karantina_nedeni"])
+        lines.append(f"⚠️ Veri kontrolü bu ilanı şüpheli buldu ({why}): aşağıdaki hesap yanıltıcı olabilir, sistem bu ilanı bildirmez")
 
     a, comps = None, []
     price = float(l["price_gbp"]) if l.get("price_gbp") else None
@@ -219,7 +248,7 @@ def build(repo: Repository, l: dict, s: Settings, now: datetime | None = None) -
 
     if age and not age.startswith("⛔"):
         lines.append(age)
-    history = _price_history_line(_safe(lambda: repo.price_history(l["id"]), []))
+    history = _safe(lambda: _price_history_line(repo.price_history(l["id"])), None)
     if history:
         lines.append(history)
     seller = _seller_line(l, _safe(lambda: repo.seller_active_count(l), None))
@@ -239,7 +268,7 @@ def build(repo: Repository, l: dict, s: Settings, now: datetime | None = None) -
             lines.append(f"• {c['year']} · {ckm} · {_gbp(float(c['price_gbp']))}" + (f" · {site}\n  {c['url']}" if c.get("url") else ""))
     if l.get("platform") == "facebook":
         lines.append(f"👥 Grup: {l['source_name']} · ilanı açmak için gruba üye olmak gerekir")
-    return "\n".join(lines)
+    return "\n".join(lines + personal)
 
 
 def handle(repo: Repository, text: str, now: datetime | None = None, subscriber: str | None = None) -> str | None:
@@ -259,9 +288,13 @@ def handle(repo: Repository, text: str, now: datetime | None = None, subscriber:
         from application.settings_store import load_settings
         return build(repo, listing, load_settings(repo) if subscriber is None else Settings(), now)
     rest = URL_RE.sub(" ", text)
-    if sum(ch.isdigit() for ch in rest) < AD_TEXT_DIGITS and any(looks_like_listing(canon, host) and repo.known_site(host)
-                                                                for canon, host, _ in links):
-        return NOT_SEEN
+    if sum(ch.isdigit() for ch in rest) >= AD_TEXT_DIGITS:
+        return None
+    for canon, host, _ in links:
+        site = repo.scanned_site(host) if looks_like_listing(canon, host) else None
+        if site:
+            since = _unread_for(site["last_checked_at"], now or datetime.now(timezone.utc))
+            return NOT_SEEN_UNREADABLE.format(name=site["name"], since=since) if since else NOT_SEEN
     return None
 
 

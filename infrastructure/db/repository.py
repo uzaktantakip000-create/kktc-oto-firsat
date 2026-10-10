@@ -5,6 +5,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from domain.comparables import KKTCAR_HANDLE_PREFIX
 from domain.lifecycle import UNKNOWN, inactive_reason
 from domain.normalize import normalize_brand, normalize_model, reclassify_non_car
 
@@ -579,23 +580,31 @@ class Repository:
              "price": float(listing["price_gbp"]), "amount": float(listing["price_amount"]) if listing.get("price_amount") else None,
              "km": km, "tiers": SENT_ONCE_TIERS, "limit": limit}).fetchall()
 
-    _CANON_URL = r"rtrim(regexp_replace(split_part(split_part(l.url, '#', 1), '?', 1), '^https?://(www\.|m\.)?', ''), '/')"
+    _CANON_URL = r"rtrim(regexp_replace(split_part(split_part(l.url, '#', 1), '?', 1), '^https?://(www\.|m\.|web\.|mobile\.)?', ''), '/')"
+    # Adresin sitesi, "www."/"m."/"web."/"mobile."'siz (application/dossier.parse_link ile aynı): alt metin (LIKE) değil birebir eşleşme
+    # ("arabam.com" linki "kktcarabam.com" ilanına uymasın)
+    _HOST = r"regexp_replace(lower(split_part(split_part({col}, '://', 2), '/', 1)), '^(www|m|web|mobile)\.', '')"
 
     def listing_by_link(self, canon: str, host: str, item_ids: list[str]) -> dict | None:
         """İlan dosyası (application/dossier): bota atılan linkin veritabanındaki ilanı. `canon`: şemasız, "www."/"m."'siz, sorgu ve sondaki "/"
-        atılmış adres ("kktcar.com/listing/2013-..."); eşleşmezse aynı sitedeki (adreste `host` geçen) ilanlardan kaynak numarası `item_ids`'ten
-        biri olan (KKTCarabam başlığı değişse de numarası aynıdır). Önce birebir adres, sonra aktif, sonra en son görülen. Salt okunur."""
+        atılmış adres ("kktcar.com/listing/2013-..."); eşleşmezse AYNI sitedeki (adresin sitesi birebir `host`) ilanlardan kaynak numarası
+        `item_ids`'ten biri olan (KKTCarabam başlığı değişse de numarası aynıdır). Önce birebir adres, sonra aktif, sonra en son görülen. Salt okunur."""
         return self.conn.execute(
             f"""SELECT l.*, l.price_gbp::float8 AS price_gbp, l.price_amount::float8 AS price_amount, s.name AS source_name, s.platform,
                       s.alert_level, s.last_checked_at AS source_checked_at
                FROM listings l JOIN sources s ON s.id = l.source_id
-               WHERE l.url IS NOT NULL AND ({self._CANON_URL} = %(canon)s OR (l.url LIKE %(host)s AND l.source_item_id = ANY(%(ids)s)))
+               WHERE l.url IS NOT NULL
+                 AND ({self._CANON_URL} = %(canon)s OR ({self._HOST.format(col="l.url")} = %(host)s AND l.source_item_id = ANY(%(ids)s)))
                ORDER BY {self._CANON_URL} = %(canon)s DESC, l.is_active DESC, l.last_seen_at DESC LIMIT 1""",
-            {"canon": canon, "host": f"%{host}%", "ids": list(item_ids)}).fetchone()
+            {"canon": canon, "host": host, "ids": list(item_ids)}).fetchone()
 
-    def known_site(self, host: str) -> bool:
-        """Bu siteden (adresinde `host` geçen) en az bir ilan kayıtlı mı? (İlan dosyası: "henüz görmedim" ile "bu siteyi taramıyorum" ayrımı.)"""
-        return self.conn.execute("SELECT 1 FROM listings WHERE url LIKE %s LIMIT 1", (f"%{host}%",)).fetchone() is not None
+    def scanned_site(self, host: str) -> dict | None:
+        """Bu siteyi tarıyor muyuz (sitesi birebir `host` olan, en az bir kez okunmuş web kaynağı)? {name, last_checked_at} ya da None.
+        İlan dosyası: "henüz görmedim" (site okunuyorsa) / "site okunamıyor" (uzun süredir okunamıyorsa) / eski akış (taramadığımız site)."""
+        return self.conn.execute(
+            f"""SELECT name, last_checked_at FROM sources
+               WHERE platform = 'web' AND last_checked_at IS NOT NULL AND {self._HOST.format(col="url")} = %s
+               ORDER BY last_checked_at DESC LIMIT 1""", (host,)).fetchone()
 
     def price_history(self, listing_id) -> list[dict]:
         """İlanın fiyat değişiklikleri (eskiden yeniye). Yalnız ilan sayfası yeniden okunan kaynaklarda (KibrisArabaAl, KKTCar) kaydedilir."""
@@ -604,9 +613,12 @@ class Repository:
             (listing_id,)).fetchall()
 
     def seller_active_count(self, listing: dict) -> int | None:
-        """Aynı satıcının BU ilan dışındaki aktif ilan sayısı (kopya bağlı ilanlar sayılmaz): aynı telefon (her kaynakta) ya da aynı kaynakta
-        aynı satıcı hesabı/adı. Satıcı bilinmiyorsa None. Telefon ve ad hiçbir zaman dönmez, yalnız sayı."""
+        """Aynı satıcının BU ilan dışındaki aktif ilan sayısı (kopya bağlı ilanlar sayılmaz): aynı telefon (her kaynakta) ya da aynı KKTCar satıcı
+        kimliği ("kktcar:" önekli). Satıcı anahtarı piyasa hesabındakiyle aynı (domain.comparables.seller_key): KibrisArabaAl yazar adı / Instagram
+        hesabı gibi adlar anahtar değildir (aynı adlı iki kişi bir sayılırdı). Satıcı bilinmiyorsa None. Telefon ve ad dönmez, yalnız sayı."""
         phone, handle = listing.get("seller_phone"), listing.get("seller_handle")
+        if not (isinstance(handle, str) and handle.startswith(KKTCAR_HANDLE_PREFIX) and len(handle) > len(KKTCAR_HANDLE_PREFIX)):
+            handle = None
         if not phone and not handle:
             return None
         return self.conn.execute(

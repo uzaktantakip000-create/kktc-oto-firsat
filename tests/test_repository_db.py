@@ -1251,21 +1251,27 @@ def test_listing_by_link_matches_the_canonical_address_or_the_listing_number_on_
     assert hit["id"] == me and hit["source_name"] == "KKTCarabam" and isinstance(hit["price_gbp"], float)
     assert db.listing_by_link("kibrisarabaal.com/ilan/3534-2019-model-otomatik", "kibrisarabaal.com", ["3534"])["id"] == kaa_row
     assert db.listing_by_link("kktcarabam.com/999-yok", "kktcarabam.com", ["999"]) is None
-    assert db.known_site("kktcarabam.com") and not db.known_site("example.org")
+    assert db.listing_by_link("arabam.com/259593-x", "arabam.com", ["259593"]) is None  # site birebir: "arabam.com" ⊂ "kktcarabam.com" değil
+    c.execute("UPDATE sources SET url = 'https://www.kktcarabam.com/', last_checked_at = now() WHERE id = %s", (kka,))
+    c.execute("UPDATE sources SET url = 'https://www.kibrisarabaal.com/test' WHERE id = %s", (kaa,))  # hiç okunmamış: taranan site sayılmaz
+    assert db.scanned_site("kktcarabam.com")["name"] == "KKTCarabam"
+    assert db.scanned_site("arabam.com") is None and db.scanned_site("kibrisarabaal.com") is None
 
 
 def test_seller_count_price_history_and_facebook_similar(db):
     c = db.conn
     kaa, mez, fb = add_source(c, "KAA"), add_source(c, "Mezunum"), add_source(c, "FBG", platform="facebook")
-    me = add_listing(c, kaa, "me", seller_phone="905330000001", seller_handle="Ali")
+    me = add_listing(c, kaa, "me", seller_phone="905330000001", seller_handle="kktcar:abc12345")
     add_listing(c, mez, "same_phone", seller_phone="905330000001")
-    add_listing(c, kaa, "same_name_same_site", seller_handle="Ali")
-    add_listing(c, mez, "same_name_other_site", seller_handle="Ali")  # başka sitede aynı ad: farklı kişi olabilir, sayılmaz
+    add_listing(c, kaa, "same_id_same_site", seller_handle="kktcar:abc12345")
+    add_listing(c, mez, "same_id_other_site", seller_handle="kktcar:abc12345")  # başka kaynakta: sayılmaz
+    add_listing(c, kaa, "same_name", seller_handle="Ali")  # ad satıcı anahtarı değil (seller_key ile aynı)
     add_listing(c, kaa, "copy", seller_phone="905330000001", duplicate_of=me)  # kendi kopyası sayılmaz
     add_listing(c, kaa, "sold", seller_phone="905330000001", is_active=False)
     row = c.execute("SELECT * FROM listings WHERE id=%s", (me,)).fetchone()
     assert db.seller_active_count(row) == 2
     assert db.seller_active_count(dict(row, seller_phone=None, seller_handle=None)) is None
+    assert db.seller_active_count(dict(row, seller_phone=None, seller_handle="Ali")) is None  # aynı adlı iki kişi bir sayılmaz
     c.execute("INSERT INTO listing_history (listing_id, field, old_value, new_value, changed_at) VALUES (%s,'price_gbp','6500','6000', now() - interval '1 day')", (me,))
     c.execute("INSERT INTO listing_history (listing_id, field, old_value, new_value) VALUES (%s,'model_norm','vitz','yaris')", (me,))
     assert [(h["old_value"], h["new_value"]) for h in db.price_history(me)] == [("6500", "6000")]
