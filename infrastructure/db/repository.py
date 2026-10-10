@@ -641,9 +641,11 @@ class Repository:
             (brand_norm, model_norm, year, days)).fetchone()["n"]
 
     def search_active(self, brand_norm: str, model_norm: str | None, year_min: int | None, year_max: int | None, price_min: float | None,
-                      price_max: float | None, km_max: int | None, transmission: str | None, limit: int) -> list[dict]:
+                      price_max: float | None, km_max: int | None, transmission: str | None, limit: int,
+                      seen_after: datetime | None = None, seen_until: datetime | None = None) -> list[dict]:
         """/bul (application/search_cmd): taranan SİTELERDEKİ aktif ilanlar (gölge/sosyal kaynak, kopya, karantina hariç), en yeni `limit` tanesi.
-        model_norm None: markanın bütün modelleri. km filtresi verilirse km'si yazmayan ilan gelmez. `total`: filtreye uyan toplam ilan."""
+        model_norm None: markanın bütün modelleri. km filtresi verilirse km'si yazmayan ilan gelmez. `total`: filtreye uyan toplam ilan.
+        seen_after/seen_until: yalnız bu aralıkta İLK KEZ görülenler (🎯 av modu, application/hunt: (seen_after, seen_until])."""
         return self.conn.execute(
             """SELECT l.*, l.price_gbp::float8 AS price_gbp, l.price_amount::float8 AS price_amount, s.name AS source_name, s.platform,
                       s.last_checked_at AS source_checked_at, count(*) OVER () AS total
@@ -654,9 +656,10 @@ class Repository:
                  AND (%(y1)s::int IS NULL OR l.year >= %(y1)s) AND (%(y2)s::int IS NULL OR l.year <= %(y2)s)
                  AND (%(p1)s::float8 IS NULL OR l.price_gbp >= %(p1)s) AND (%(p2)s::float8 IS NULL OR l.price_gbp <= %(p2)s)
                  AND (%(k)s::int IS NULL OR l.km <= %(k)s) AND (%(t)s::text IS NULL OR l.transmission = %(t)s)
+                 AND (%(sa)s::timestamptz IS NULL OR l.first_seen_at > %(sa)s) AND (%(su)s::timestamptz IS NULL OR l.first_seen_at <= %(su)s)
                ORDER BY l.first_seen_at DESC LIMIT %(limit)s""",
             {"b": brand_norm, "m": model_norm, "y1": year_min, "y2": year_max, "p1": price_min, "p2": price_max, "k": km_max,
-             "t": transmission, "limit": limit}).fetchall()
+             "t": transmission, "limit": limit, "sa": seen_after, "su": seen_until}).fetchall()
 
     def listings_by_phone(self, phone: str, limit: int = 30) -> list[dict]:
         """📞 Telefon → ilanlar (application/phone_lookup, 11.10.2026): bu telefonun geçtiği ilanlar, kopya hariç, en yeni önce; aktif ve pasif

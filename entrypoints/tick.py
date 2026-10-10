@@ -5,7 +5,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from application import feed_switch, selfwatch, social_import, source_export
+from application import feed_switch, hunt, selfwatch, social_import, source_export
 from application.health import notify_owner, report_collect_errors
 from application.notify import TelegramError, api
 from application.runner_gate import TICK_FRESH, VPS_TICK_KEY, github_should_skip, mark_vps
@@ -135,6 +135,18 @@ def timed_evaluate(label: str) -> bool:
     return ok
 
 
+def run_hunts(repo) -> None:
+    """🎯 Av modu (application/hunt): değerlendirmeden sonra, bu turda ilk kez görülen ilanlar sahibin avlarına karşı. Hata turu durdurmaz."""
+    t0 = time.monotonic()
+    try:
+        from application.settings_store import load_settings
+        owner, token = require("TELEGRAM_CHAT_ID"), require("TELEGRAM_BOT_TOKEN")
+        n = hunt.run(repo, owner, lambda text: api(token, "sendMessage", chat_id=owner, text=text), load_settings(repo))
+        print(f"iş av: {n} mesaj, {time.monotonic() - t0:.0f} sn", flush=True)
+    except Exception as e:
+        print(f"av: HATA {type(e).__name__}: {redact(str(e))[:150]}", flush=True)
+
+
 def main() -> None:
     sys.stdout.reconfigure(line_buffering=True)  # iş akışı iptal edilse bile loglar kaybolmasın
     started = time.monotonic()
@@ -184,6 +196,7 @@ def main() -> None:
     if slow:
         run_batch(slow, repo, now, started, errors)
         eval_ok = timed_evaluate("değerlendirme (2)") and eval_ok
+    run_hunts(repo)
     report_collect_errors(repo, errors)
     print(f"tur toplam: {time.monotonic() - started:.0f} sn", flush=True)
     beat = mark_vps(repo, VPS_TICK_KEY) if eval_ok else False  # kalp atışı YALNIZ başarılı turdan sonra (VPS'te); hiç başta değil

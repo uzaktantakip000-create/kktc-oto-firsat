@@ -7,12 +7,13 @@ menü düğmesi "komutlar" olarak sabitlenir (sol alttaki liste)."""
 from application.notify import api
 from infrastructure.db.repository import Repository
 
-MENU_VERSION = "2026-10-10"
+MENU_VERSION = "2026-10-11"
 STATE_KEY = "bot:menu"
 OWNER_COMMANDS = [
     ("durum", "Sistem çalışıyor mu?"),
     ("son", "Son 10 fırsat"),
     ("bul", "İlan ara: /bul fit 2015-2018 7000"),
+    ("avla", "Av kur: /avla vitz 2016 sonrası 7000"),
     ("fiyat", "Araç değeri: /fiyat corolla 2014"),
     ("satti", "Satış gir: /satti corolla 2014 120000km 7200"),
     ("ayarlar", "Eşik, bütçe, istenmeyen markalar"),

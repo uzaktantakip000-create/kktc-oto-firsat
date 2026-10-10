@@ -1318,3 +1318,14 @@ def test_listings_by_phone_lists_the_numbers_ads_active_first_without_copies(db)
     assert by_phone[0]["source_name"] == "KAA" and isinstance(by_phone[0]["price_gbp"], float)
     assert db.listings_by_phone("905339999999") == []
 
+
+def test_search_active_window_for_hunts(db):
+    """🎯 av modu (application/hunt): yalnız (seen_after, seen_until] aralığında ilk kez görülenler."""
+    c = db.conn
+    kaa = add_source(c, "KAA")
+    add_listing(c, kaa, "old", first_seen_at=ago(hours=2))
+    add_listing(c, kaa, "new", first_seen_at=ago(minutes=5))
+    add_listing(c, kaa, "later", first_seen_at=ago(minutes=3))
+    rows = db.search_active("Toyota", "vitz", None, None, None, None, None, None, 10, seen_after=ago(minutes=30), seen_until=ago(minutes=4))
+    assert items(rows) == {"new"}
+    assert items(db.search_active("Toyota", "vitz", None, None, None, None, None, None, 10)) == {"old", "new", "later"}
