@@ -148,3 +148,15 @@ def test_km_does_not_cross_lines_and_reads_bin(text, km):
 ])
 def test_service_interval_km_is_not_the_car_km(text, km):
     assert parse_freetext(text).km == km
+
+
+@pytest.mark.parametrize("text,km", [
+    ("Toyota Vitz 2014\nKİLOMETRE : 160.000\n5.500 stg", 160000),  # yalnız "km" etiketi tanınıyordu
+    ("Nissan Note 2018 | Kilometre: 123.000 | 6.000 stg", 123000),
+    ("Toyota Vitz 2014 🛣 Kilometre:120,000 | 5.500 stg", 120000),
+    ("Nissan Note 2020 Mileage: 82000 7.500 stg", 82000),
+    ("Mercedes E220d 2018\nKilometre: 129.000 mil\n20.000 stg", None),  # birim mil: km'ye çevrilmez
+    ("Toyota Vitz 2014 kilometresi gün geçtikçe artar 5.500 stg", None),
+])
+def test_kilometre_and_mileage_labels(text, km):
+    assert parse_freetext(text).km == km

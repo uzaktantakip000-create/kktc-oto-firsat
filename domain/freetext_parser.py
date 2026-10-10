@@ -31,9 +31,10 @@ _YEAR = re.compile(r"(?<![\d.,£€$])(19[89]\d|20[0-3]\d)(?![\d.,]?\d)"
                    r"(?![ \t]*(?:£|₺|€|\$|tl\b|stg\b|gbp\b|sterlin\b|str\b)(?![ \t]*\d))", re.I)
 # Sayı ile birim/etiket arası satır sonunu GEÇMEZ ([^\S\n]: satır sonu dışındaki boşluk): "2012\nkm ..." yıl, "km\n4.900 stg" fiyat olurdu.
 _KM_NUM = r"\d{1,3}(?:[.,]\d{3})+|\d{4,6}|\d{1,3}[^\S\n]*(?:bin|k)(?![a-zçğıöşü])"  # "145 bin km", "145k km"
-_KM = re.compile(rf"(?<![\d.,])({_KM_NUM})[^\S\n]*(km|mil\w*)\b", re.I)
-# Etiket ("km: 120.000"): değer yalnız ":"/"-" varsa alt satıra geçebilir ("KM:\n120.000"); arkasından para birimi gelen sayı km değildir.
-_KM_LABEL = re.compile(rf"\bkm(?:[^\S\n]*[:\-]\s*|[^\S\n]*)({_KM_NUM})(?![\d.,]?\d)"
+_KM = re.compile(rf"(?<![\d.,])({_KM_NUM})[^\S\n]*(km|mil(?!eage)\w*)\b", re.I)  # "mileage" birim değil etiket: "2020 Mileage: 82000"
+# Etiket ("km: 120.000", "KİLOMETRE : 160.000", "Mileage: 82000"): değer yalnız ":"/"-" varsa alt satıra geçebilir ("KM:\n120.000");
+# arkasından para birimi gelen sayı km değildir; arkasından "mil" gelirse ("Kilometre: 129.000 mil") km bilinmiyor sayılır (_km).
+_KM_LABEL = re.compile(rf"\b(?:km|kilometre(?:si)?|kilometer|mileage)(?:[^\S\n]*[:\-]\s*|[^\S\n]*)({_KM_NUM})(?![\d.,]?\d)"
                        r"(?![^\S\n]*(?:£|₺|€|\$|(?:tl|try|stg|gbp|sterlin|sterling|str|eur|euro|usd|dolar)(?![a-z])))", re.I)
 # Bakım/parça cümlesindeki km aracın km'si değil: "bakımları 2 bin km önce", "her 5 bin km'de bir", "40 bin km'de araçtan sökülüp takıldı".
 # Sitelerin km alanıyla karşılaştırma (10.10.2026, 5.749 ilan): bu cümleler km'yi 2.000–10.000 okutuyordu (değer kaçırılırsa km bilinmiyor
@@ -126,7 +127,9 @@ def _km(text: str) -> int | None:
             return None  # mil = mil (İngiliz yolcu araçları): km'ye çevirmek yerine bilinmiyor say, veri kapısı en fazla 🟡 yapar
         return value
     m = _KM_LABEL.search(text)
-    return _km_value(m.group(1)) if m else None
+    if m is None or re.match(r"[^\S\n]*mil", text[m.end():], re.I):
+        return None  # etiket "kilometre" dese de birim mil: km'ye çevrilmez (yukarıdaki mil kuralı)
+    return _km_value(m.group(1))
 
 
 def parse_freetext(text: str, default_steering: str | None = None, max_year: int | None = None,
