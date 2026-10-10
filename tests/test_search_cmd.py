@@ -40,6 +40,33 @@ def row(brand, model, year=2015, n=40):
 
 BOOK = PriceBook({(r.brand_norm, r.model_norm, "", r.year): r for r in (row("Toyota", "vitz"), row("Toyota", "corolla"), row("BMW", "3"),
                                                                        row("Honda", "fit"))})
+MODELS = PriceBook(BOOK.rows | {(r.brand_norm, r.model_norm, "", r.year): r for r in (
+    row("Fiat", "500"), row("Peugeot", "2008"), row("Peugeot", "3008"), row("Mercedes-Benz", "e"), row("Mercedes-Benz", "a"))})
+
+
+@pytest.mark.parametrize("text,expect,target", [  # 10.10 kalite denetimi bulguları
+    ("fit 7000 kadar", dict(price_max=7000), ("Honda", "fit")),  # "k" ile başlayan kelime "bin" sayılmaz
+    ("fit 2015 kirmizi", dict(year_min=2015, year_max=2015, price_max=None), ("Honda", "fit")),
+    ("fit ₺300.000", dict(price_max=6000), ("Honda", "fit")),  # simge silinmeden çevrilir
+    ("fit €8000", dict(price_max=6800), ("Honda", "fit")),
+    ("vitz £2000", dict(price_max=2000, year_min=None), ("Toyota", "vitz")),  # £ işaretli: yıl değil
+    ("fit 2015–2018", dict(year_min=2015, year_max=2018, price_max=None), ("Honda", "fit")),  # uzun tire
+    ("fit 2015 sonrası 2018 öncesi", dict(year_min=2015, year_max=2018, price_max=None), ("Honda", "fit")),
+    ("fit 2015 2018", dict(year_min=2015, year_max=2018, price_max=None), ("Honda", "fit")),
+    ("fit 7000-9000 tl", dict(price_min=140, price_max=180), ("Honda", "fit")),  # aralığın iki ucu da TL
+    ("fit 2015'e kadar", dict(year_min=None, year_max=2015), ("Honda", "fit")),
+    ("fiat 500", dict(price_max=None), ("Fiat", "500")),  # model adı fiyat değil
+    ("peugeot 2008", dict(year_min=None, price_max=None), ("Peugeot", "2008")),  # model adı yıl değil
+    ("peugeot 3008 2018", dict(year_min=2018, price_max=None), ("Peugeot", "3008")),
+    ("bmw 320i 2015 10bin", dict(year_min=2015, price_max=10000), ("BMW", "3")),  # ilan adıyla aynı normalleştirme
+    ("mercedes e 220", dict(price_max=None), ("Mercedes-Benz", "e")),  # tek harfli model
+    ("mercedes benz", dict(price_max=None), ("Mercedes-Benz", None)),
+    ("fit " + "9" * 400 + " km", dict(km_max=None), ("Honda", "fit")),  # devasa sayı çökertmez
+])
+def test_tricky_queries_found_in_review(text, expect, target):
+    q = search_cmd.parse_query(text, 2026, MODELS)
+    assert {k: getattr(q, k) for k in expect} == expect, (text, q)
+    assert search_cmd._target(MODELS, q.words) == target
 
 
 def listing(i, price, **kw):
@@ -127,3 +154,14 @@ def test_negotiable_line_says_how_low_the_price_must_go():
     out = search_cmd.search(Repo([listing("y", 7000)]), "vitz", Settings(), NOW)
     line = next(l for l in out.split("\n") if l.startswith("🟡"))
     assert "· %20 kâr için ≤£6.600 ·" in line  # piyasa ortası £8.700 → hızlı satış £8.265; (8.265 − 300) / 1,2 = 6.637 → £50'ye aşağı
+
+
+def test_personal_filters_do_not_relabel_results_but_blocked_seller_is_hidden():
+    s = Settings(blocked_brands=["Toyota"], max_buy_gbp=4000, blocked_phones=["905330000009"])
+    out = search_cmd.search(Repo([listing("b", 5000), listing("x", 5100, seller_phone="905330000009")]), "vitz", s, NOW)
+    assert "🟢 2015 Vitz" in out and "kibrisarabaal.com/ilan/x-x" not in out and "1 aktif ilan" in out
+
+
+def test_missing_year_is_not_printed_as_none():
+    out = search_cmd.search(Repo([listing("n", 5000, year=None)]), "vitz", Settings(), NOW)
+    assert "None" not in out and "yıl ?" in out
