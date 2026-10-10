@@ -56,3 +56,25 @@ def test_timed_evaluate_survives_a_crash(monkeypatch, capsys):
     assert "HATA" in capsys.readouterr().out
     monkeypatch.setattr(tick.cron_evaluate, "main", lambda: None)
     assert tick.timed_evaluate("değerlendirme") is True
+
+
+def test_import_social_reads_the_handoff_dir_and_never_stops_the_tick(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(tick.social_import, "import_facebook", lambda repo, d, log: calls.append((repo, d)))
+    errors = []
+    tick.import_social("repo", errors, devir_dir="/devir")
+    assert calls == [("repo", "/devir")] and errors == []
+
+    def boom(repo, d, log):
+        raise PermissionError("izin yok: /devir")
+
+    monkeypatch.setattr(tick.social_import, "import_facebook", boom)
+    tick.import_social("repo", errors, devir_dir="/devir")  # çökme turu durdurmaz; hata loga ve toplama hatalarına
+    assert errors == [("sosyal_devir", "PermissionError: izin yok: /devir")]
+    assert "sosyal_devir: HATA" in capsys.readouterr().out
+
+
+def test_social_import_runs_before_the_first_evaluation():
+    src = open(tick.__file__, encoding="utf-8").read()
+    main = src[src.index("def main()"):]
+    assert main.index("import_social(repo, errors)") < main.index('timed_evaluate("değerlendirme")')

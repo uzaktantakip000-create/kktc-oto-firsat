@@ -1136,3 +1136,31 @@ def test_resurfaced_kktcarabam_absurdly_long_ids_do_not_overflow_the_comparison(
     small = add_listing(c, arabam, "7", first_seen_at=ago(minutes=1))
     assert db.resurfaced_kktcarabam([small]) == {small}
 
+
+
+def test_social_handoff_import_writes_real_listing_rows(db, tmp_path):
+    """Devir sözleşme örneği (tests/fixtures/social/devir_ornek.jsonl) gerçek şemaya yazılır: sütun/tip hatası FakeRepo'da görünmez."""
+    import shutil
+    from pathlib import Path
+
+    from application import social_import
+
+    c = db.conn
+    open_id = c.execute("INSERT INTO sources (platform, name, url, status, alert_level) VALUES ('facebook','Grup A',"
+                        "'https://www.facebook.com/groups/1234567890/','aktif','golge') RETURNING id").fetchone()["id"]
+    closed_id = c.execute("INSERT INTO sources (platform, name, url, status) VALUES ('facebook','Grup B',"
+                          "'https://www.facebook.com/groups/5550001112/','pasif') RETURNING id").fetchone()["id"]
+    shutil.copy(Path(__file__).parent / "fixtures" / "social" / "devir_ornek.jsonl", tmp_path / "facebook-20261009.jsonl")
+    rep = social_import.import_facebook(db, tmp_path)
+    assert (rep.lines, rep.posts, rep.new_listings) == (5, 3, 2)
+    rows = c.execute("SELECT source_item_id, brand_norm, year, km, price_gbp, posted_at, url, is_active FROM listings "
+                     "WHERE source_id=%s ORDER BY source_item_id", (open_id,)).fetchall()
+    assert [(r["source_item_id"], r["brand_norm"], r["year"]) for r in rows] == [
+        ("1000000001", "Toyota", 2015), ("pfbid0OrnekKimlik1234567890", "Honda", 2012)]
+    assert all(r["is_active"] and r["price_gbp"] and r["posted_at"] for r in rows)
+    assert rows[0]["url"] == "https://www.facebook.com/groups/1234567890/posts/1000000001/"
+    assert c.execute("SELECT count(*) AS n FROM listings WHERE source_id=%s", (closed_id,)).fetchone()["n"] == 0  # kapalı kaynağa yazılmaz
+    src = c.execute("SELECT last_checked_at, listings_7d FROM sources WHERE id=%s", (open_id,)).fetchone()
+    assert src["last_checked_at"] is not None and src["listings_7d"] == 2
+    again = social_import.import_facebook(db, tmp_path)  # imleç ilerledi: aynı satırlar yeniden okunmaz
+    assert again.lines == 0 and c.execute("SELECT count(*) AS n FROM listings").fetchone()["n"] == 2

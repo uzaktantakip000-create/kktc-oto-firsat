@@ -1,11 +1,12 @@
 """Tek zamanlayıcı girişi. Dışarıdan her 15 dakikada tetiklenir (GitHub kendi saati ek yedek).
 Her tetiklemede: sırası gelen toplayıcıları çalıştırır, sonra değerlendirir (bildirimler, bot komutları).
 Hangi işin ne zaman çalıştığı veritabanında (bot_state 'tick:<iş>') tutulur: iki tetikleme üst üste gelse de iş tekrar etmez."""
+import os
 import sys
 import time
 from datetime import datetime, timedelta, timezone
 
-from application import feed_switch, selfwatch, source_export
+from application import feed_switch, selfwatch, social_import, source_export
 from application.health import notify_owner, report_collect_errors
 from application.notify import TelegramError, api
 from application.runner_gate import TICK_FRESH, VPS_TICK_KEY, github_should_skip, mark_vps
@@ -37,6 +38,8 @@ TICK_BUDGET_S = 13 * 60  # tüm tur bu süreyi aşmamalı (iş akışı sınır�
 # Bir yavaş işe başlamak için kalması gereken en az süre (en kötü durum: Apify süre sınırı + bekleme payı + okuma aşaması + değerlendirme).
 # Yetmezse iş ATLANIR ve 'tick:<iş>' yazılmaz: bir sonraki tetiklemede (15 dk) çalışır.
 MIN_LEFT_S = {"facebook": 10 * 60, "instagram": 6 * 60}
+# VPS'teki sosyal okuyucunun (kktc-social) yeni gönderileri yazdığı klasör (kktc-social:kktc-bot 2750). GitHub'da yoktur: aktarıcı boş geçer.
+SOCIAL_HANDOFF_DIR = os.environ.get("SOCIAL_DEVIR_DIR", "/var/lib/kktc-social-devir")
 
 
 def due_jobs(now: datetime, last_runs: dict[str, datetime | None]) -> list[str]:
@@ -105,6 +108,20 @@ def run_batch(batch: list[str], repo, now: datetime, started: float, errors: lis
         print(f"iş {job}: {clock() - t0:.0f} sn", flush=True)
 
 
+def import_social(repo, errors: list[tuple[str, str]], devir_dir: str = SOCIAL_HANDOFF_DIR) -> None:
+    """Sosyal okuyucunun devir klasöründeki yeni Facebook gönderilerini ilan olarak yazar (application/social_import). Gölge/yeşil ayrımı
+    sources.alert_level'da; feed:facebook anahtarı eski Apify işini durdurur, bunu değil. Çökerse tur sürer (imleç ilerlemez, satırlar
+    bir sonraki turda yeniden gelir)."""
+    t0 = time.monotonic()
+    try:
+        social_import.import_facebook(repo, devir_dir, log=print)
+    except Exception as e:
+        msg = f"{type(e).__name__}: {redact(str(e))[:150]}"
+        print(f"sosyal_devir: HATA {msg}", flush=True)
+        errors.append(("sosyal_devir", msg))
+    print(f"iş sosyal_devir: {time.monotonic() - t0:.0f} sn", flush=True)
+
+
 def timed_evaluate(label: str) -> bool:
     """Değerlendirmeyi çalıştırır. Çökerse False döner: turun geri kalanı (yavaş işler, hata raporu) yine çalışır,
     tur sonunda iş akışı hata ile biter (başarılı görünüp sessizce çökmesin)."""
@@ -162,6 +179,7 @@ def main() -> None:
 
     # Hızlı siteler önce toplanıp değerlendirilir: yavaş bir Apify turu site bildirimlerini geciktirmesin
     run_batch([j for j in jobs if j not in SLOW_JOBS], repo, now, started, errors)
+    import_social(repo, errors)  # sosyal okuyucunun yeni gönderileri de bu turun değerlendirmesine girsin
     eval_ok = timed_evaluate("değerlendirme")
     slow = [j for j in SLOW_JOBS if j in jobs]
     if slow:
