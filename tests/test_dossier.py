@@ -148,3 +148,9 @@ def test_quota_is_shared_with_ad_check():
     repo = Repo(found=listing())
     repo.state[f"adcheck:{NOW:%Y-%m-%d}"] = "30"
     assert "sınırına ulaşıldı" in dossier.handle(repo, LINK, now=NOW)
+
+
+def test_a_source_that_cannot_be_read_makes_the_listing_status_unknown():
+    out = dossier.handle(Repo(found=listing(source_checked_at=NOW - timedelta(hours=30))), LINK, now=NOW)
+    assert "ℹ️ KKTCarabam 30 saattir okunamıyor: ilanın hâlâ yayında olup olmadığını bilmiyorum" in out
+    assert "okunamıyor" not in dossier.handle(Repo(found=listing(source_checked_at=NOW - timedelta(hours=1))), LINK, now=NOW)

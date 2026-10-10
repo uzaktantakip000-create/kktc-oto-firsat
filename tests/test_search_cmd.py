@@ -115,3 +115,9 @@ def test_foreign_currency_listing_shows_the_ad_price_and_suspicious_km_is_marked
     tl = listing("tl", 5000, currency="TRY", price_amount=250_000, km=195, year=2012)
     out = search_cmd.search(Repo([tl]), "vitz", Settings(), NOW)
     assert "£5.000 (ilanda 250.000 TL)" in out and "195 km (şüpheli)" in out
+
+
+def test_unreadable_source_gets_one_warning_line():
+    rows = [listing("a", 5000, source_checked_at=NOW - timedelta(days=3)), listing("b", 6000, source_checked_at=NOW - timedelta(days=3))]
+    out = search_cmd.search(Repo(rows), "vitz", Settings(), NOW)
+    assert out.count("okunamıyor") == 1 and "ℹ️ KibrisArabaAl 3 gündür okunamıyor: oradaki ilanlar satılmış olabilir" in out

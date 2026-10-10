@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from application.ad_check import MAX_PER_DAY, MAX_PER_DAY_SUBSCRIBER, quota_ok
+from application.dossier import stale_source_text
 from application.evaluate import load_book, pool_keys
 from application.notify import price_text
 from application.price_book_cmd import resolve_model
@@ -193,6 +194,13 @@ def search(repo: Repository, args: str, s: Settings, now: datetime | None = None
     lines = [title, f"Taranan sitelerde {found}; önce fırsatlar, sonra piyasaya göre en ucuzlar ({min(SHOWN, len(scored))} tane):"]
     for _, text, url in scored[:SHOWN]:
         lines.append(text + (f"\n   {url}" if url else ""))
+    stale = {}
+    for l in rows:
+        note = stale_source_text(l, now)
+        if note:
+            stale.setdefault(l["source_name"], note)
+    for name, note in stale.items():  # okunamayan kaynak: ilanları satılmış olabilir (ilan başına değil, kaynak başına bir satır)
+        lines.append(note.replace(": ilanın hâlâ yayında olup olmadığını bilmiyorum, aramada sor", ": oradaki ilanlar satılmış olabilir"))
     lines.append("Bir ilanın tam dosyası için linkini bana gönder.")
     return "\n".join(lines)
 

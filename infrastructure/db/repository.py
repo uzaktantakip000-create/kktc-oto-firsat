@@ -587,7 +587,7 @@ class Repository:
         biri olan (KKTCarabam başlığı değişse de numarası aynıdır). Önce birebir adres, sonra aktif, sonra en son görülen. Salt okunur."""
         return self.conn.execute(
             f"""SELECT l.*, l.price_gbp::float8 AS price_gbp, l.price_amount::float8 AS price_amount, s.name AS source_name, s.platform,
-                      s.alert_level
+                      s.alert_level, s.last_checked_at AS source_checked_at
                FROM listings l JOIN sources s ON s.id = l.source_id
                WHERE l.url IS NOT NULL AND ({self._CANON_URL} = %(canon)s OR (l.url LIKE %(host)s AND l.source_item_id = ANY(%(ids)s)))
                ORDER BY {self._CANON_URL} = %(canon)s DESC, l.is_active DESC, l.last_seen_at DESC LIMIT 1""",
@@ -634,7 +634,7 @@ class Repository:
         model_norm None: markanın bütün modelleri. km filtresi verilirse km'si yazmayan ilan gelmez. `total`: filtreye uyan toplam ilan."""
         return self.conn.execute(
             """SELECT l.*, l.price_gbp::float8 AS price_gbp, l.price_amount::float8 AS price_amount, s.name AS source_name, s.platform,
-                      count(*) OVER () AS total
+                      s.last_checked_at AS source_checked_at, count(*) OVER () AS total
                FROM listings l JOIN sources s ON s.id = l.source_id
                WHERE l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL AND l.price_gbp IS NOT NULL
                  AND s.platform = 'web' AND s.alert_level IS DISTINCT FROM 'golge'

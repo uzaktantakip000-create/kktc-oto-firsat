@@ -6,7 +6,7 @@ yakın emsaller. Link AÇILMAZ, siteye istek gitmez; veritabanına yalnız ilan 
 KibrisArabaAl eski ilanları kapatmıyor (10.10 ölçümü: 2025 Kasım ilanı hâlâ "satışta"): ilanın yaşı satış hızı değil, pazarlık kozu ve
 "hâlâ satılık mı?" sorusudur."""
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 
 from application.ad_check import MAX_PER_DAY, MAX_PER_DAY_SUBSCRIBER, quota_ok
@@ -27,6 +27,7 @@ AD_TEXT_DIGITS = 6  # link bulunamadıysa mesajın geri kalanında bu kadar raka
 OLD_AD_DAYS, LONG_AD_DAYS = 60, 21
 COMPS_SHOWN = 3
 TARGET_STEP = 50  # pazarlık hedefi £50'ye aşağı yuvarlanır
+STALE_SOURCE = timedelta(hours=12)  # kaynak bundan uzun süredir başarıyla okunmadıysa ilanın durumu bilinmiyor
 # Kaynak numarası adresin neresinde (başlık değişse de numara aynı kalır); listede olmayan sitelerde adresin son parçası
 _ID_IN_PATH = (
     ("kktcarabam.com", re.compile(r"^/(\d+)(?:-|/|$)")),
@@ -80,6 +81,16 @@ def _age_line(l: dict, now: datetime) -> str | None:
     if days >= LONG_AD_DAYS:
         return f"{text} ({days} gündür yayında): uzun süredir satılmamış, pazarlıkta koz"
     return f"{text} ({days} gündür yayında)" if days >= 2 else f"{text} (yeni)"
+
+
+def stale_source_text(l: dict, now: datetime) -> str | None:
+    """Kaynak uzun süredir okunamıyorsa (10.10.2026: KibrisArabaAl Cloudflare engeli) ilanın hâlâ yayında olup olmadığı bilinmez: söylenir."""
+    checked = l.get("source_checked_at")
+    if checked is None or now - checked < STALE_SOURCE:
+        return None
+    hours = (now - checked).total_seconds() / 3600
+    since = f"{hours:.0f} saattir" if hours < 48 else f"{hours / 24:.0f} gündür"
+    return f"ℹ️ {l['source_name']} {since} okunamıyor: ilanın hâlâ yayında olup olmadığını bilmiyorum, aramada sor"
 
 
 def _price_history_line(history: list[dict]) -> str | None:
@@ -171,6 +182,9 @@ def build(repo: Repository, l: dict, s: Settings, now: datetime | None = None) -
     age = _age_line(l, now)
     if age and age.startswith("⛔"):
         lines.append(age)
+    stale = stale_source_text(l, now)
+    if stale and l.get("is_active", True):
+        lines.append(stale)
 
     a, comps = None, []
     price = float(l["price_gbp"]) if l.get("price_gbp") else None
