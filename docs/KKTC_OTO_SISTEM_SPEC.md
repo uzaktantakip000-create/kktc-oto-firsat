@@ -701,3 +701,12 @@ Sahibin isteğiyle sistemin tamamı 9 salt-okunur Sonnet ajanıyla tarandı (pla
   - kapalı 🟠 koruması (🟠 açılırsa bu kurala geçirilecek);
   - sahibin ekranları.
 - **Yayın anındaki etki:** 0 ilan. Canlıda hiç 👎 yok: sahibin 1 "pas", bir abonenin 3 👍 oyu var. RULES_VERSION değişmedi; oylar havuzu her zaman zamanla değiştiriyordu.
+
+### 24.20 KKTCar yeni ilan sayfaları boş (09.10.2026)
+- **Ne oldu:** 09.10 ~01:00 UTC'den sonra eklenen KKTCar ilanlarının sayfası normal tarayıcıda da "Araç Bulunamadı" gösteriyor (site hatası). İlanlar ana sayfada ve site haritasında listeleniyor. Eski ilanların sayfası çalışıyor; yenileme etkilenmedi (refresh_failed=0). Yeni ilan okunamadı; okuma oranı koruması her turda hata verdi. 10.10 08:13 UTC'de fark edildi; ~31 saatte 5–6 yeni ilan kaçtı (eksik değil, sırada bekliyordu).
+- **Düzeltme:** sayfadaki schema.org Vehicle verisi (JSON-LD) araç bilgilerinin tamamını içeriyor: marka, model, yıl, km, yakıt, vites, motor, konum, fiyat, açıklama, yayın tarihi. `kktcar.parse_structured` bu veriden okur.
+  - Yalnız görünür sayfada araç bilgisi YOKSA çalışır; okunabilen sayfaların sonucu değişmez.
+  - Yalnız "satışta" (InStock) ilanda çalışır.
+  - Fiyat yazımı görünür yolda olduğu gibi başlıktan alınır; böylece yenilemede sahte "fiyat değişti" olmaz.
+  - Satıcı adı okunmaz (kişisel veri). Satıcı bağlantısı bu veride yok.
+- **Bilinen yan etki:** böyle bir ilan 🟢 olursa bağlantısı KKTCar'da (site düzelene kadar) boş sayfa açabilir. İlan sitenin ana sayfasında ve uygulamasında görünür.

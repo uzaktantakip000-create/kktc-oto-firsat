@@ -1,4 +1,5 @@
 """kktcar.com: sitemap'ten ilan adreslerini bulur, ilan sayfasını ayrıştırır (robots.txt izin veriyor)."""
+import json
 import re
 import time
 from dataclasses import dataclass
@@ -138,7 +139,88 @@ def seller_handle(tree: HTMLParser) -> str | None:
     return None
 
 
+_LD = re.compile(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', re.S)
+_LD_FUEL = (("hybrid", "hibrit"), ("diesel", "dizel"), ("gasoline", "benzin"), ("petrol", "benzin"), ("electric", "elektrikli"),
+            ("lpg", "lpg"), ("autogas", "lpg"))  # sıra önemli: "HybridElectric" hibrittir
+_LD_GEAR = {"automatictransmission": "otomatik", "manualtransmission": "manuel"}
+
+
+def _ld_vehicle(html: str) -> dict | None:
+    for m in _LD.finditer(html):
+        try:
+            data = json.loads(m.group(1))
+        except ValueError:
+            continue
+        if isinstance(data, dict) and data.get("@type") == "Vehicle":
+            return data
+    return None
+
+
+def _ld_number(node) -> float | None:
+    value = node.get("value") if isinstance(node, dict) else node
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_structured(html: str, title: str) -> dict | None:
+    """09.10.2026'dan beri yeni ilanların sayfası (normal tarayıcıda da) "Araç Bulunamadı" gösteriyor; araç bilgisi yalnız sayfadaki
+    schema.org Vehicle verisinde (JSON-LD) var. Yalnız görünür sayfa okunamayınca kullanılır; yalnız "satışta" (InStock) ilan.
+    Satıcı adı OKUNMAZ (kişisel veri); satıcı bağlantısı bu veride yok."""
+    v = _ld_vehicle(html)
+    offer = (v or {}).get("offers") or {}
+    if isinstance(offer, list):
+        offer = offer[0] if offer else {}
+    if not v or "InStock" not in str(offer.get("availability", "")):
+        return None
+    brand = (v.get("brand") or {}).get("name") if isinstance(v.get("brand"), dict) else v.get("brand")
+    year = re.sub(r"\D", "", str(v.get("vehicleModelDate") or v.get("modelDate") or ""))[:4]
+    if not brand or len(year) != 4:
+        return None
+    m = re.search(r"-\s*([\d.,]+\s*[£€$₺]|[£€$₺]\s*[\d.,]+)\s*-", title)  # görünür sayfadaki gibi başlıktan: fiyat yazımı yenilemede aynı kalır
+    price = parse_price(m.group(1)) if m else None
+    raw_price = m.group(1) if price else None
+    amount, currency = (price.amount, price.currency) if price else (_ld_number(offer.get("price")), offer.get("priceCurrency"))
+    if not amount or currency not in ("GBP", "TRY", "EUR", "USD"):
+        amount, currency, raw_price = None, None, None
+    mileage = v.get("mileageFromOdometer") or {}
+    km = _ld_number(mileage) if (mileage.get("unitCode") if isinstance(mileage, dict) else None) in (None, "KMT") else None
+    fuel_txt = str(v.get("fuelType") or "").lower()
+    gear = str(v.get("vehicleTransmission") or "").rsplit("/", 1)[-1].lower()
+    engine = _ld_number(((v.get("vehicleEngine") or {}).get("engineDisplacement")) or {})
+    desc = str(v.get("description") or "").strip()
+    posted = None
+    try:
+        when = datetime.fromisoformat(str(v.get("datePosted") or offer.get("validFrom") or "").replace("Z", "+00:00"))
+        posted = datetime(when.year, when.month, when.day, tzinfo=timezone.utc)  # görünür sayfadaki gibi yalnız gün
+    except ValueError:
+        pass
+    return {
+        "seller_handle": None,
+        "brand": brand,
+        "model": v.get("model"),
+        "year": int(year),
+        "km": int(km) if km is not None else None,
+        "fuel": next((tr for key, tr in _LD_FUEL if key in fuel_txt), None),
+        "transmission": canon_transmission(_LD_GEAR.get(gear)) if gear in _LD_GEAR else None,
+        "engine_l": engine_liters(str(engine)) if engine else None,
+        "location": ((offer.get("areaServed") or {}).get("name") if isinstance(offer.get("areaServed"), dict) else None),
+        "steering": steering_from_text(f"{title}\n{desc}"),
+        "price_raw": raw_price,
+        "price_amount": amount,
+        "currency": currency,
+        "currency_guess": price.currency_guess if price else False,
+        "urgency_signals": None if amount else ["fiyatsiz"],
+        "raw_text": f"{title}\n{desc}",
+        "posted_at": posted,
+        "negotiable": bool(re.search(r"pazarl[ıi]k", desc, re.I)) if desc else None,
+        "swap": None,
+    }
+
+
 def parse_detail(html: str) -> dict | None:
+    raw_html = html
     tree = HTMLParser(html)
     for n in tree.css("script,style,noscript,svg"):
         n.decompose()
@@ -153,7 +235,7 @@ def parse_detail(html: str) -> dict | None:
         return _parse_sold(title, lines, "Bu ilan artık aktif değil.", "arsiv")
     f = _pairs(lines)
     if not f.get("Marka") or not f.get("Yıl"):
-        return None
+        return parse_structured(raw_html, title)  # görünür sayfa boş ("Araç Bulunamadı"): yapılandırılmış veriden
 
     # Güncel fiyat başlıkta: "BMW X5 2014 - 25.900£ - KKTCar" (üstü çizili eski fiyat varsa karışmaz)
     m = re.search(r"-\s*([\d.,]+\s*[£€$₺]|[£€$₺]\s*[\d.,]+)\s*-", title)

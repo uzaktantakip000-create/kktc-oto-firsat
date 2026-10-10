@@ -63,3 +63,33 @@ def test_engine_size_parsed_from_detail_page():
     from pathlib import Path
     html = Path(__file__).parent.joinpath("fixtures", "kktcar_detail_bmw_x5.html").read_text()
     assert parse_detail(html)["engine_l"] == 2.5
+
+
+# --- 09.10.2026: yeni ilanların sayfası (normal tarayıcıda da) "Araç Bulunamadı"; bilgi yalnız schema.org Vehicle verisinde (JSON-LD) ---
+LD_ONLY = (Path(__file__).parent / "fixtures/kktcar_detail_jsonld_only.html").read_text()  # gerçek sayfadan kırpıldı; satıcı adı silindi
+
+
+def test_page_without_visible_details_is_read_from_structured_data():
+    d = parse_detail(LD_ONLY)
+    assert (d["brand"], d["model"], d["year"], d["km"]) == ("Mazda", "Demio", 2013, 107000)
+    assert (d["price_raw"], d["price_amount"], d["currency"], d["currency_guess"]) == ("6.000£", 6000, "GBP", False)  # başlıktan: yenilemede aynı yazım
+    assert (d["fuel"], d["transmission"], d["engine_l"], d["location"]) == ("benzin", "otomatik", 1.3, "Lefkoşa")
+    assert d["posted_at"].isoformat() == "2026-10-09T00:00:00+00:00" and d["urgency_signals"] is None
+    assert d["raw_text"].startswith("Mazda Demio 2013 - 6.000£ - KKTCar\nTemiz, Bakımlı")
+    assert d["seller_handle"] is None and "Satıcı Adı" not in str(d)  # satıcı adı okunmaz
+
+
+def test_structured_data_only_for_listings_in_stock_and_only_when_the_page_is_empty():
+    assert parse_detail(LD_ONLY.replace("schema.org/InStock", "schema.org/SoldOut")) is None  # satışta değil: bilinmiyor say
+    assert parse_detail(LD_ONLY.replace('"@type": "Vehicle"', '"@type": "Product"')) is None
+    assert parse_detail(LD_ONLY.replace("application/ld+json", "text/plain")) is None
+    no_title_price = parse_detail(LD_ONLY.replace(" - 6.000£ - ", " - "))
+    assert (no_title_price["price_amount"], no_title_price["currency"], no_title_price["price_raw"]) == (6000, "GBP", None)
+    assert parse_detail(HTML)["seller_handle"]  # görünür sayfa okunabiliyorsa eskisi gibi (satıcı bağlantısı dahil)
+
+
+def test_structured_fuel_and_gear_mapping():
+    diesel = parse_detail(LD_ONLY.replace("schema.org/Gasoline", "schema.org/DieselFuel").replace("AutomaticTransmission", "ManualTransmission"))
+    assert (diesel["fuel"], diesel["transmission"]) == ("dizel", "manuel")
+    hybrid = parse_detail(LD_ONLY.replace("schema.org/Gasoline", "schema.org/HybridElectric"))
+    assert hybrid["fuel"] == "hibrit"
