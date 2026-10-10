@@ -710,3 +710,26 @@ Sahibin isteğiyle sistemin tamamı 9 salt-okunur Sonnet ajanıyla tarandı (pla
   - Fiyat yazımı görünür yolda olduğu gibi başlıktan alınır; böylece yenilemede sahte "fiyat değişti" olmaz.
   - Satıcı adı okunmaz (kişisel veri). Satıcı bağlantısı bu veride yok.
 - **Bilinen yan etki:** böyle bir ilan 🟢 olursa bağlantısı KKTCar'da (site düzelene kadar) boş sayfa açabilir. İlan sitenin ana sayfasında ve uygulamasında görünür.
+
+### 24.21 Facebook gölge haftası: canlı bağlantı (10.10.2026; sahip: "dördü de", "sosyal medya oturumu ile birlikte ilerle ve tüm bu işlemleri sen koordine et")
+- **Yol:** VPS'teki sosyal okuyucu (kktc-social, ayrı kullanıcı, tek proxy IP) her yeni FB gönderisini ham haliyle devir klasörüne yazar (`/var/lib/kktc-social-devir/facebook-YYYYMMDD.jsonl`, kktc-social:kktc-bot 2750, dosya 640, 14 günde silinir). Okuyucuya veritabanı şifresi verilmez. Botun turu (`entrypoints/tick.import_social` → `application/social_import.import_facebook`) hızlı toplayıcılardan sonra, ilk değerlendirmeden önce satırları okur, sosyal ayrıştırma yolundan geçirir (`social_ingest` → `collect_facebook.listing_data` → `parse_freetext`) ve `upsert_listing` ile yazar.
+  - İmleç `bot_state 'sosyal_devir:facebook'`; tur başına en çok 2.000 satır.
+  - Yalnız açık (aktif/deneme) kaynağa yazılır. Bağlantı grup + gönderi kimliğinden kurulur, dosyadaki adres kullanılmaz.
+  - Paylaşım zamanı okunamamışsa `posted_at` = ilk görülme.
+  - Çökerse tur sürer, imleç ilerlemez; yeniden okuma etkisizdir.
+  - Ortak sözleşme örneği: `tests/fixtures/social/devir_ornek.jsonl` (okuyucunun yazıcısı ile üretildi; uydurma kimlikler).
+- **Gölge (7 gün, 10.10–17.10):** FB kaynakları `alert_level='golge'` (15 kaynak; okunan 4 aktif grup). `feed:facebook` kapalı kalır (eski Apify işi; sağlık "susuyor" demez). Gölge kaynağın ilanı:
+  - değerlendirilir ama bildirim üretmez;
+  - **emsal olmaz** (`market_pool`; yayın anında havuzdan 59 FB ilanı çıktı, 2.754 aktif ilanda karar farkı 10, hiçbiri 🟢 değil);
+  - **gölge olmayan ilanın kanoniği olamaz** (`mark_duplicates` gölge satırları grubun sonunda işler; `release_orphan_duplicates` eski ters bağları çözer). Neden: araç önce gölge grupta, sonra sitede görülürse site ilanı kopya sayılıp hem bildirimden hem havuzdan düşüyordu. Yayın anında 2 site ilanı serbest kaldı (~200 saatlik; bildirim üretemez).
+- **Facebook 🟢 mesajı** (yeşile geçince): "👥 Facebook grubu: <ad> · ilanı açmak için gruba üye olmak gerekir" satırı.
+- **Günlük rapor (sahibe söz):** sabah nabzına "🧪 Facebook deneme" satırı. İçerik:
+  - son 24 saatte gelen ilan;
+  - bildirim açık olsaydı 🟢/🟡;
+  - sitelerde de olan (`Repository.shadow_summary`);
+  - VPS'te okuyucunun kendi sayımı (durum dosyası `platformlar.facebook.gunluk`: gönderi, ilan, tekrar, şüpheli okuma).
+
+  Gölge FB kaynağı kalmayınca satır kendiliğinden kalkar. "Yanlış okuma" kendiliğinden ölçülemez: 3. ve 7. günde 20 rastgele gölge ilanı elle kontrol edilir.
+- **Bilinen sınırlar:** okuyucu 13.10 15:24 UTC'ye kadar "yavaş başlangıç"ta (4 saatte bir, 4 grubun 3'ü): ilk günlerde günde ~4–5 ilan, örneklem küçük. Aynı araç FB'de sitedekinden ucuz olabilir (ör. Suzuki Swift 2022: FB £11.750, KKTCar £13.350). Gölgede FB ilanı kopya olarak değerlendirilmez; yeşile geçmeden önce bu durumun nasıl bildirileceği kararlaştırılacak.
+- **7. gün (17.10):** sonuçlar sahibe sunulur. Onay gelirse 4 grup `/kaynak_seviye … yesil` ile yeşile alınır ve `feed:facebook` açılır. Geri alma: `UPDATE sources SET alert_level='golge' WHERE platform='facebook'` (yedek: `/var/lib/kktc-bot/backups/elle-20261010-081913-fb-golge`).
+- **Serbest metin km düzeltmesi** (aynı gün, sosyal oturumdan): "145 bin km" / "145k km" okunur; km etiketi satır sonunu geçmez ("km\n4.900 stg" fiyattır); "2014 km 85.000"de yıl atlanır; bakım/parça cümlesindeki km ("bakımları 2 bin km önce", "her 5.000 km'de bir") aracın km'si sayılmaz. Sitelerin km alanına karşı 5.749 ilanda: doğru okuma 429 → 456, yanlış 132 → 119, tehlikeli yön (gerçeğin yarısından az) 25 → 5, doğruyken kaybolan 0. Bilinen kayıp: "Japonyadan getirildi 45.000 km" km'siz kalır (güvenli yön, en çok 🟡); sonraki küçük düzeltmede daraltılacak. Eski km değerlerine dokunulmadı.
