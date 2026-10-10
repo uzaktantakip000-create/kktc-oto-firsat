@@ -168,8 +168,10 @@ def pending_alerts(repo: Repository, hours: int = 36, tier: Tier = Tier.STRONG, 
     for r in repo.pending_strong(hours, tier.value, rules_version=RULES_VERSION):
         text = (r["raw_text"] or "") + " " + (r["model"] or "")
         med = r["market_median_gbp"]
+        evidence = r.get("evidence") if isinstance(r.get("evidence"), dict) else {}
         market = Market(r["comparables_n"], med, r["market_low_gbp"] or med, r["market_high_gbp"] or med,
-                        r["year_span"] or 1, r["archived_share"] or 0.0)
+                        r["year_span"] or 1, r["archived_share"] or 0.0,
+                        median_km=evidence.get("medyan_km"), median_year=evidence.get("medyan_yil"))  # mesajdaki km/yıl kıyası için
         profit = ProfitResult(r["exit_price_gbp"], r["profit_gbp"], r["profit_pct"] / 100,
                               Confidence(r["confidence"]), tier)
         flags = [f for f in (r["red_flags"] or []) if f != "tahmini_az_emsal"]  # iç işaret mesajda görünmez

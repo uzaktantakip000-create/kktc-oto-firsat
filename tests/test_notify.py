@@ -164,6 +164,65 @@ def test_message_is_short_and_has_exactly_the_decided_parts():
     assert len(lines) <= 7  # kısa
 
 
+# --- "neden" satırında km/yıl kıyası (Ürün departmanı, 10.10.2026) ---
+def kyas(km, year, median_km, median_year):
+    e = ev(1)
+    e.listing.update(km=km, year=year)
+    e.market = Market(12, 8000, 7000, 9000, 1, 0.0, median_km=median_km, median_year=median_year)
+    return [l for l in notify.format_alert(e).splitlines() if l.startswith("💡 Neden:")][0]
+
+
+def test_reason_line_compares_km_and_year_with_the_comparables():
+    assert kyas(210_000, 2012, 160_000, 2012.0) == ("💡 Neden: km 210.000, benzerlerinin ortası 160.000 (%31 fazla; benzerlerin fiyatı bu km'ye "
+                                                    "göre düzeltildi)")
+    assert kyas(90_000, 2014, 130_000, 2013.0) == "💡 Neden: km 90.000, benzerlerinin ortası 130.000 (%31 az) · benzerlerinden ~1 yıl yeni"
+    assert kyas(140_000, 2013, 135_000, 2013.0) == "💡 Neden: km ve yıl benzerlerine yakın: ucuzluğun görünür nedeni yok, aramada nedenini sor"
+    assert kyas(140_000, 2011, 135_000, 2013.0) == "💡 Neden: benzerlerinden ~2 yıl eski · km benzerlerine yakın"
+
+
+def test_reason_line_falls_back_when_nothing_can_be_compared():
+    assert kyas(None, 2013, 135_000, None) == "💡 Neden: fiyat benzer araçların en ucuz çeyreğinde"  # km yok (⚠️ satırı söyler), yıl ortası yok
+    assert kyas(214, 2014, 120_000, 2014.0) == "💡 Neden: fiyat benzer araçların en ucuz çeyreğinde"  # "214 km": şüpheli km kıyaslanmaz, yıl yakın tek başına yazılmaz
+
+
+# --- aynı/benzer ilan satırları ---
+def twin(src="KibrisArabaAl", price=10_500, amount=None, currency="GBP", km=None, bagli=False, told=None):
+    return {"source_name": src, "price_gbp": price, "price_amount": amount if amount is not None else price, "currency": currency, "km": km,
+            "bagli": bagli, "bildirildi": told}
+
+
+def test_same_number_in_another_currency_is_flagged_first():
+    # 10.10.2026: KKTCarabam "10.500 USD" (£7.942), aynı satıcının aracı KibrisArabaAl'da 10.500 STG
+    l = {"price_gbp": 7942.31, "price_amount": 10500, "currency": "USD", "km": None, "year": 2014}
+    got = notify.twin_lines(l, [twin(km=133_000), twin(src="KKTCar", price=7900, amount=7900, km=133_000, bagli=True)])
+    assert got == ["⚠️ Benzer ilan KibrisArabaAl sitesinde 10.500 STG yazıyor, bu ilanda 10.500 USD: para birimi yanlış seçilmiş olabilir, "
+                   "fiyatı satıcıyla teyit et"]
+
+
+def test_linked_copy_lines():
+    l = {"price_gbp": 4500, "price_amount": 4500, "currency": "GBP", "km": None, "year": 2014}
+    assert notify.twin_lines(l, [twin(price=4500, km=98_000, bagli=True)]) == ["📎 Aynı ilan KibrisArabaAl sitesinde de var (£4.500, orada km 98.000)"]
+    assert notify.twin_lines(l, [twin(price=4500, km=214, bagli=True)]) == ["📎 Aynı ilan KibrisArabaAl sitesinde de var (£4.500)"]  # şüpheli km yazılmaz
+    assert notify.twin_lines(l, [twin(price=5200, bagli=True)]) == ["⚠️ Aynı araç KibrisArabaAl sitesinde £5.200 yazıyor: fiyatı satıcıyla teyit et"]
+    assert notify.twin_lines(l, [twin(price=4550, km=98_000)]) == ["🔎 Benzer ilan KibrisArabaAl sitesinde: 98.000 km, £4.550 (aynı araç olabilir)"]
+    known = dict(l, km=98_000)
+    assert notify.twin_lines(known, [twin(price=4550, km=98_000)]) == []  # km zaten biliniyor: benzer ilan yeni bilgi vermez
+
+
+def test_already_alerted_similar_listing_is_mentioned():
+    now = datetime(2026, 10, 5, 16, 20, tzinfo=timezone.utc)
+    l = {"price_gbp": 4500, "price_amount": 4500, "currency": "GBP", "km": 80_000, "year": 2014}
+    got = notify.twin_lines(l, [twin(price=4500, km=80_000, told=now - timedelta(minutes=18))], now)
+    assert got == ["📎 Benzer bir ilanı KibrisArabaAl sitesinden 18 dk önce bildirmiştim (aynı araç olabilir)"]
+
+
+def test_send_alerts_never_stops_when_the_twin_query_fails(monkeypatch):
+    sent = patch_api(monkeypatch, fail=set())
+    repo = FakeRepo(["a"])
+    repo.twins = lambda listing: (_ for _ in ()).throw(RuntimeError("db"))
+    assert notify.send_alerts(repo, "t", [ev("x")]) == 1 and sent
+
+
 def dikkat_ev(km, steering, warnings, tier=Tier.STRONG):
     e = ev(1, tier)
     e.listing.update(km=km, steering=steering)

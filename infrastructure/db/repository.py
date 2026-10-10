@@ -540,7 +540,7 @@ class Repository:
                       e.market_low_gbp::float8 AS market_low_gbp, e.market_high_gbp::float8 AS market_high_gbp,
                       e.exit_price_gbp::float8 AS exit_price_gbp, e.profit_gbp::float8 AS profit_gbp,
                       e.profit_pct::float8 AS profit_pct, e.confidence, e.red_flags, e.year_span,
-                      e.archived_share::float8 AS archived_share,
+                      e.archived_share::float8 AS archived_share, e.evidence,
                       COALESCE(to_jsonb(e) ->> 'method', 'A') AS method,  -- kolon (migration 013) yoksa da çalışır
                       (SELECT MAX(h.changed_at) FROM listing_history h WHERE h.listing_id = l.id AND h.field = 'price_gbp')
                           AS price_changed_at
@@ -554,6 +554,30 @@ class Repository:
                ORDER BY e.profit_pct DESC""",
             (tier, hours, *rv_args, _tiers_blocking(tier), UNSAVED_ALERT_PREFIX),
         ).fetchall()
+
+    def twins(self, listing: dict, days: int = 7, limit: int = 5) -> list[dict]:
+        """Bildirim mesajı için aynı/benzer AKTİF ilanlar (başka kaynak, gölge değil; notify.twin_lines). 'bagli' = kopya bağı (duplicate_of, iki yön);
+        öbürü 'benzer': aynı marka/model/yıl, kendisi kopya değil, fiyat (sterlin ya da ilandaki rakam, para biriminden bağımsız) ±%3, ilk görülme
+        ±`days` gün, km ikisinde de varsa ±%3 (en az 500). Telefonsuz eşleşme %20-50 yanlış olabilir (Kapsam ölçümü, 10.10.2026): bağ KURULMAZ,
+        mesajda "benzer" denir. 'bildirildi': o ilana ilk 🟢/🟠'nin gittiği an."""
+        km = listing.get("km")
+        return self.conn.execute(
+            """SELECT t.id, s.name AS source_name, t.price_gbp::float8 AS price_gbp, t.price_amount::float8 AS price_amount, t.currency, t.km,
+                      COALESCE(t.duplicate_of = %(id)s, FALSE) OR t.id IS NOT DISTINCT FROM %(dup)s AS bagli,
+                      (SELECT MIN(a.sent_at) FROM alerts a WHERE a.listing_id = t.id AND a.tier = ANY(%(tiers)s)) AS bildirildi
+               FROM listings t JOIN sources s ON s.id = t.source_id
+               WHERE t.id <> %(id)s AND t.is_active AND t.source_id <> %(src)s AND s.alert_level IS DISTINCT FROM 'golge'
+                 AND (t.duplicate_of = %(id)s OR t.id IS NOT DISTINCT FROM %(dup)s
+                      OR (t.brand_norm = %(brand)s AND t.model_norm = %(model)s AND t.year = %(year)s AND t.duplicate_of IS NULL
+                          AND t.first_seen_at BETWEEN %(seen)s::timestamptz - make_interval(days => %(days)s)
+                                                  AND %(seen)s::timestamptz + make_interval(days => %(days)s)
+                          AND (abs(t.price_gbp - %(price)s) <= 0.03 * %(price)s OR abs(t.price_amount - %(amount)s) <= 0.03 * %(amount)s)
+                          AND (t.km IS NULL OR %(km)s::int IS NULL OR abs(t.km - %(km)s::int) <= greatest(500, 0.03 * %(km)s::int))))
+               ORDER BY t.first_seen_at LIMIT %(limit)s""",
+            {"id": listing["id"], "dup": listing.get("duplicate_of"), "src": listing["source_id"], "brand": listing.get("brand_norm"),
+             "model": listing.get("model_norm"), "year": listing.get("year"), "seen": listing["first_seen_at"], "days": days,
+             "price": float(listing["price_gbp"]), "amount": float(listing["price_amount"]) if listing.get("price_amount") else None,
+             "km": km, "tiers": SENT_ONCE_TIERS, "limit": limit}).fetchall()
 
     def resurfaced_kktcarabam(self, listing_ids, gap_minutes: int = RESURFACE_RUN_GAP_MINUTES) -> set:
         """Yeniden çıkmış eski KKTCarabam ilanları (verilen ilanlar arasından). Site eski ilanı "en yeni" listesine geri itince ilan bizim için

@@ -1025,6 +1025,32 @@ def test_alerted_votes_one_row_per_alerted_listing_newest_first_with_vote_state(
     assert rows[0]["is_active"] is True and len(db.alerted_votes(60)) == 3
 
 
+def test_twins_finds_linked_copies_and_similar_listings_elsewhere_without_linking_them(db):
+    c = db.conn
+    kka, kaa, kkt = add_source(c, "KKTCarabam"), add_source(c, "KibrisArabaAl"), add_source(c, "KKTCar")
+    fb = add_source(c, "FBGRUP", platform="facebook")
+    c.execute("UPDATE sources SET alert_level='golge' WHERE id=%s", (fb,))
+    car = dict(brand_norm="Toyota", model_norm="auris", year=2014)
+    me = add_listing(c, kka, "me", km=None, price_gbp=7942.31, price_amount=10500, currency="USD", **car)
+    same_number = add_listing(c, kaa, "gbp", km=133_000, price_gbp=10500, price_amount=10500, currency="GBP", **car)
+    copy = add_listing(c, kkt, "copy", km=None, price_gbp=9000, price_amount=9000, duplicate_of=me, **car)
+    add_listing(c, kaa, "other_year", km=None, price_gbp=7942, price_amount=7942, **(car | {"year": 2015}))
+    add_listing(c, kaa, "far_price", km=None, price_gbp=9500, price_amount=9500, **car)
+    add_listing(c, kaa, "inactive", km=None, price_gbp=7942, price_amount=7942, is_active=False, **car)
+    add_listing(c, fb, "shadow", km=None, price_gbp=7942, price_amount=7942, **car)
+    add_listing(c, kka, "same_source", km=None, price_gbp=7942, price_amount=7942, **car)
+    old = add_listing(c, kaa, "old", km=None, price_gbp=7942, price_amount=7942, **car)
+    c.execute("UPDATE listings SET first_seen_at = now() - interval '9 days' WHERE id=%s", (old,))
+    row = c.execute("SELECT * FROM listings WHERE id=%s", (me,)).fetchone()
+    got = {r["id"]: r for r in db.twins(row)}
+    assert set(got) == {same_number, copy}
+    assert got[copy]["bagli"] is True and got[same_number]["bagli"] is False and got[same_number]["bildirildi"] is None
+    assert c.execute("SELECT duplicate_of FROM listings WHERE id=%s", (same_number,)).fetchone()["duplicate_of"] is None  # bağ kurulmaz
+    km_row = dict(row, km=80_000)
+    add_listing(c, kaa, "km_far", km=120_000, price_gbp=7942, price_amount=7942, **car)
+    assert {r["id"] for r in db.twins(km_row)} == {copy}  # km ikisinde de var ve uzak (133.000 / 120.000 ↔ 80.000): benzer değil; kopya bağı kalır
+
+
 def test_retracted_alert_is_not_listed_for_votes_but_still_counts_as_sent(db):
     """10.10.2026: yanlış 🟢 (para birimi karışıklığı) 3 sohbetten silindi; haftalık raporda "oy bekleyen" olarak yeniden çıkmamalı,
     ama gitmiş sayılmalı (aynı ilan bir daha gönderilmez)."""

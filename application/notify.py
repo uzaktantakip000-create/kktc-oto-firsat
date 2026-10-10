@@ -5,6 +5,7 @@ from urllib.parse import quote
 import httpx
 
 from application.evaluate import Evaluated, confidence_label
+from domain.comparables import Market, effective_km
 from domain.data_gate import KM_UNKNOWN_WARNING
 from domain.kktc_time import kktc_hour
 from domain.photo_date import kktcarabam_photo_time
@@ -75,11 +76,102 @@ def estimate_line(price: float, value: float, lower: float) -> str:
     return f"📘 Tablo değeri ~{_gbp(value)} (en kötü ihtimalle {_gbp(lower)}) → ~%{(1 - price / value) * 100:.0f} ucuz"
 
 
+def _num(n) -> str:
+    return f"{float(n):,.0f}".replace(",", ".")
+
+
+def _money(amount, currency: str | None) -> str:
+    return f"{_num(amount)} {CURRENCY_NAMES.get(currency or 'GBP', currency)}"
+
+
+def _ago(delta: timedelta) -> str:
+    minutes = int(delta.total_seconds() // 60)
+    if minutes < 120:
+        return f"{max(minutes, 1)} dk"
+    return f"{minutes // 60} saat" if minutes < 48 * 60 else f"{minutes // 1440} gün"
+
+
+def compare_text(listing: dict, market: Market) -> str | None:
+    """🟢/🟡 mesajındaki "neden" satırının içeriği (Ürün departmanı, 10.10.2026): eski "fiyat benzer araçların en ucuz çeyreğinde" 🟢'de hep doğruydu,
+    bilgi vermiyordu. İlanın km'si (ikisi de biliniyor ve km makulse) ve yılı benzerlerinin ortasıyla kıyaslanır; ikisi de yakınsa ucuzluğun görünür
+    nedeni yoktur (aramada sorulacak soru budur). Hiçbiri kıyaslanamazsa None (eski metin kalır; km bilinmiyorsa ⚠️ satırı zaten söyler)."""
+    parts, km_near, year_near = [], False, False
+    km, mk = effective_km(listing), market.median_km
+    if km and mk:
+        diff = km - mk
+        if km >= 1.2 * mk and diff >= 15_000:
+            parts.append(f"km {_num(km)}, benzerlerinin ortası {_num(mk)} (%{diff / mk * 100:.0f} fazla; benzerlerin fiyatı bu km'ye göre düzeltildi)")
+        elif km <= 0.8 * mk and -diff >= 15_000:
+            parts.append(f"km {_num(km)}, benzerlerinin ortası {_num(mk)} (%{-diff / mk * 100:.0f} az)")
+        else:
+            km_near = True
+    year, my = listing.get("year"), market.median_year
+    if year and my is not None:
+        d = year - my
+        if d >= 1:
+            parts.append(f"benzerlerinden ~{d:.0f} yıl yeni")
+        elif d <= -1:
+            parts.append(f"benzerlerinden ~{-d:.0f} yıl eski")
+        else:
+            year_near = True
+    if km_near and year_near:
+        return "km ve yıl benzerlerine yakın: ucuzluğun görünür nedeni yok, aramada nedenini sor"
+    if parts and km_near:
+        parts.append("km benzerlerine yakın")
+    return " · ".join(parts) or None
+
+
 def _reason(ev: Evaluated) -> str:
-    """Mesajdaki TEK satır "neden": 🟢'de fiyat benzer araçların en ucuz çeyreğinde (karar kapısı bunu şart koşar), 🟠'de eğriden hesaplandığı;
-    ilan metnindeki aciliyet işareti varsa başa eklenir."""
-    base = "az benzer araç var: fiyat model eğrisinden hesaplandı" if ev.profit.tier is Tier.ESTIMATED else "fiyat benzer araçların en ucuz çeyreğinde"
+    """Mesajdaki TEK satır "neden": 🟢/🟡'de km/yıl kıyası (`compare_text`; kıyaslanamazsa "fiyat benzer araçların en ucuz çeyreğinde"),
+    🟠'de eğriden hesaplandığı; ilan metnindeki aciliyet işareti varsa başa eklenir."""
+    if ev.profit.tier is Tier.ESTIMATED:
+        base = "az benzer araç var: fiyat model eğrisinden hesaplandı"
+    else:
+        base = compare_text(ev.listing, ev.market) or "fiyat benzer araçların en ucuz çeyreğinde"
     return " · ".join([*(f"ilanda '{u}' yazıyor" for u in ev.urgency), base])
+
+
+def twin_lines(listing: dict, twins: list[dict], now: datetime | None = None) -> list[str]:
+    """Aynı/benzer ilan satırları (`Repository.twins`; en çok bir fiyat satırı + bir "bildirmiştim" satırı). Öncelik: aynı rakam başka para
+    biriminde (10.10.2026 Auris: KKTCarabam "10.500 USD", aynı araç KibrisArabaAl'da 10.500 STG) > kopyada fiyat %10'dan farklı > kopya (km'yi
+    orada görmek için) > km'si bilinmeyen ilana benzer ilanın km'si. Telefonsuz "benzer" eşleşme %20-50 yanlış olabilir: "aynı araç olabilir" denir."""
+    now = now or datetime.now(timezone.utc)
+    price, amount, cur = float(listing["price_gbp"]), listing.get("price_amount"), listing.get("currency")
+    own_km = effective_km(listing)
+    best: tuple[int, str] | None = None
+    for t in twins:
+        if t.get("price_gbp") is None:
+            continue
+        tp, where = float(t["price_gbp"]), f"{t['source_name']} sitesinde"
+        twin_km = effective_km({"km": t.get("km"), "year": listing.get("year")})  # şüpheli km ("214") gösterilmez
+        if amount and t.get("price_amount") and t.get("currency") != cur and abs(float(t["price_amount"]) - float(amount)) <= 0.01 * float(amount):
+            cand = (0, f"⚠️ Benzer ilan {where} {_money(t['price_amount'], t['currency'])} yazıyor, bu ilanda {_money(amount, cur)}: "
+                       "para birimi yanlış seçilmiş olabilir, fiyatı satıcıyla teyit et")
+        elif t.get("bagli") and abs(tp - price) > 0.10 * price:
+            cand = (1, f"⚠️ Aynı araç {where} {_gbp(tp)} yazıyor: fiyatı satıcıyla teyit et")
+        elif t.get("bagli"):
+            km = f", orada km {_num(twin_km)}" if not own_km and twin_km else ""
+            cand = (2, f"📎 Aynı ilan {where} de var ({_gbp(tp)}{km})")
+        elif not own_km and twin_km:
+            cand = (3, f"🔎 Benzer ilan {where}: {_num(twin_km)} km, {_gbp(tp)} (aynı araç olabilir)")
+        else:
+            continue
+        best = cand if best is None or cand[0] < best[0] else best
+    out = [best[1]] if best else []
+    told = [t for t in twins if t.get("bildirildi") and not t.get("bagli")]
+    if told:
+        t = min(told, key=lambda t: t["bildirildi"])
+        out.append(f"📎 Benzer bir ilanı {t['source_name']} sitesinden {_ago(now - t['bildirildi'])} önce bildirmiştim (aynı araç olabilir)")
+    return out
+
+
+def _twins(repo: Repository, listing: dict) -> list[dict]:
+    """Mesaj için aynı/benzer ilanlar; sorgu hata verirse boş (bildirim hiçbir zaman bu yüzden durmaz)."""
+    try:
+        return repo.twins(listing)
+    except Exception as e:
+        print(f"benzer ilan sorgusu başarısız: {type(e).__name__}")
+        return []
 
 
 def _dikkat(listing: dict, warnings: list[str]) -> list[str]:
@@ -91,7 +183,7 @@ def _dikkat(listing: dict, warnings: list[str]) -> list[str]:
     return [KM_STEERING_UNKNOWN_WARNING if w == KM_UNKNOWN_WARNING else w for w in warnings]
 
 
-def format_alert(ev: Evaluated, note: dict | None = None) -> str:
+def format_alert(ev: Evaluated, note: dict | None = None, twins: list[dict] | None = None) -> str:
     """Sahibin kararı (03.10.2026): her mesaj = araç, fiyat, piyasa ortası + emsal sayısı, tek satır "neden", link (+ 2 düğme). Güven etiketi, 🆕, telefon
     satırı (WhatsApp düğmesi var), emsal listesi ve gümrük hatırlatması kalktı. KALANLAR güvenlik/veri uyarısıdır (km şüpheli, para birimi tahmin,
     yapay zekâ şüphesi, doğrulama işareti...): bunlar kısaltılmaz."""
@@ -113,6 +205,7 @@ def format_alert(ev: Evaluated, note: dict | None = None) -> str:
         f"📍 {l['location'] or '?'} · {l['source_name']} · {km} · {(l['transmission'] or '?').capitalize()}{steering}",
         market,
         "💡 Neden: " + _reason(ev),
+        *twin_lines(l, twins or []),
     ]
     if l["currency_guess"]:
         lines.append(f"⚠️ Para birimi yazmıyordu, {CURRENCY_NAMES.get(l['currency'], l['currency'])} varsayıldı")
@@ -298,7 +391,7 @@ def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes:
         if not is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
                         platform=ev.listing.get("platform"), photo_urls=ev.listing.get("photo_urls")):
             continue
-        text = format_alert(ev, (notes or {}).get(ev.listing["id"]))
+        text = format_alert(ev, (notes or {}).get(ev.listing["id"]), _twins(repo, ev.listing))
         delivered = False
         for sub in subs:
             if repo.alert_exists(ev.listing["id"], sub["chat_id"], ev.profit.tier.value):
