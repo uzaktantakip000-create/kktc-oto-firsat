@@ -1,7 +1,6 @@
 """Tek zamanlayıcı girişi. Dışarıdan her 15 dakikada tetiklenir (GitHub kendi saati ek yedek).
 Her tetiklemede: sırası gelen toplayıcıları çalıştırır, sonra değerlendirir (bildirimler, bot komutları).
 Hangi işin ne zaman çalıştığı veritabanında (bot_state 'tick:<iş>') tutulur: iki tetikleme üst üste gelse de iş tekrar etmez."""
-import os
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -39,7 +38,7 @@ TICK_BUDGET_S = 13 * 60  # tüm tur bu süreyi aşmamalı (iş akışı sınır�
 # Yetmezse iş ATLANIR ve 'tick:<iş>' yazılmaz: bir sonraki tetiklemede (15 dk) çalışır.
 MIN_LEFT_S = {"facebook": 10 * 60, "instagram": 6 * 60}
 # VPS'teki sosyal okuyucunun (kktc-social) yeni gönderileri yazdığı klasör (kktc-social:kktc-bot 2750). GitHub'da yoktur: aktarıcı boş geçer.
-SOCIAL_HANDOFF_DIR = os.environ.get("SOCIAL_DEVIR_DIR", "/var/lib/kktc-social-devir")
+SOCIAL_HANDOFF_DIR = social_import.HANDOFF_DIR
 
 
 def due_jobs(now: datetime, last_runs: dict[str, datetime | None]) -> list[str]:

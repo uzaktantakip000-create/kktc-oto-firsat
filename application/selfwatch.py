@@ -337,6 +337,14 @@ def social_watch(repo, now: datetime, path: str | None = None) -> None:
             notify_owner(repo, f"social_{p.key}_{p.state}", p.alert, repeat_hours=SOCIAL_REPEAT_H)
 
 
+def handoff_check(repo, now: datetime, path: str | None = None) -> None:
+    """KKTC gündüzü: Facebook devir hattının sessiz arızaları (application/handoff_watch). Durum dosyası yoksa/bozuksa hiçbir şey yapılmaz."""
+    if not SOCIAL_DAY[0].hour <= kktc_hour(now) < SOCIAL_DAY[1].hour:
+        return
+    from application import handoff_watch  # tembel: aktarıcının bağımlılıkları yalnız VPS turunda yüklenir
+    handoff_watch.watch(repo, read_social(path), now)
+
+
 def after_tick(repo, beat_written: bool, now: datetime | None = None) -> None:
     """tick.py'nin son adımı (hata yutar). GitHub (atlamadan tarayan tur): sunucu turları durduysa uyarı.
     VPS: kalp atışı yazıldıysa kesinti sonu bildirimi; her VPS turunda (değerlendirme çökse de) dinleyici bekçisi, disk/bellek ve sosyal okuyucu kontrolü."""
@@ -349,6 +357,7 @@ def after_tick(repo, beat_written: bool, now: datetime | None = None) -> None:
         _safe("dinleyici bekçisi", lambda: listener_watch(repo, now))
         _safe("kaynak izleme", lambda: resource_watch(repo, now))
         _safe("sosyal okuyucu uyarısı", lambda: social_watch(repo, now))
+        _safe("sosyal devir izleme", lambda: handoff_check(repo, now))
 
 
 def after_browser(repo, beat_written: bool, now: datetime | None = None) -> None:

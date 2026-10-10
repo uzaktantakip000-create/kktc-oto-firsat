@@ -12,6 +12,7 @@ gönderisi bağlantısı gider). Görsel adresi yalnız Facebook CDN'i ise alın
 Aynı satır iki kez gelirse upsert anahtarı (source_id, gönderi) yüzünden etkisizdir. Kaynak eşleme: kaynaklar.json ile aynı anahtar
 (domain.source_links.key_of_url); yalnız açık (aktif/deneme) kaynağa yazılır. Gölge/yeşil ayrımı sources.alert_level'dadır, burada değil."""
 import json
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -26,6 +27,7 @@ from domain.source_links import key_of_url
 VERSION = 1
 PLATFORM = "facebook"
 STATE_KEY = "sosyal_devir:facebook"
+HANDOFF_DIR = os.environ.get("SOCIAL_DEVIR_DIR", "/var/lib/kktc-social-devir")  # okuyucunun devir klasörü (VPS)
 OPEN_STATUSES = ("aktif", "deneme")
 ALL_STATUSES = ("aktif", "deneme", "aday", "pasif", "disari", "erisim_reddediyor")
 MAX_LINES = 2000  # tur başına üst sınır (kalan bir sonraki tura)
