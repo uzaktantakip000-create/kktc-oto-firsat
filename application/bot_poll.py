@@ -224,7 +224,7 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
         api(token, "sendMessage", chat_id=chat_id, text=HELP_OWNER if chat_id == owner else _help_text(status_now), disable_web_page_preview=True)
     elif cmd == "/bul":  # sahip ve onaylı abone: taranan sitelerde arama (application/search_cmd); abonenin kendi kotası
         reply = (search_cmd.handle(repo, text[len("/bul"):], subscriber=None if chat_id == owner else chat_id)
-                 if chat_id == owner or status_now == "onayli" else NOT_APPROVED_REPLY)
+                 if chat_id == owner or status_now == "onayli" else NOT_APPROVED_REPLY if status_now is None else _guest_reply(status_now))
         api(token, "sendMessage", chat_id=chat_id, text=reply, disable_web_page_preview=True)
     elif chat_id == owner and text.startswith("/durum"):
         api(token, "sendMessage", chat_id=chat_id, text=status.build_status(repo), disable_web_page_preview=True)
