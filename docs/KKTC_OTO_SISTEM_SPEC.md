@@ -733,3 +733,15 @@ Sahibin isteğiyle sistemin tamamı 9 salt-okunur Sonnet ajanıyla tarandı (pla
 - **Bilinen sınırlar:** okuyucu 13.10 15:24 UTC'ye kadar "yavaş başlangıç"ta (4 saatte bir, 4 grubun 3'ü): ilk günlerde günde ~4–5 ilan, örneklem küçük. Aynı araç FB'de sitedekinden ucuz olabilir (ör. Suzuki Swift 2022: FB £11.750, KKTCar £13.350). Gölgede FB ilanı kopya olarak değerlendirilmez; yeşile geçmeden önce bu durumun nasıl bildirileceği kararlaştırılacak.
 - **7. gün (17.10):** sonuçlar sahibe sunulur. Onay gelirse 4 grup `/kaynak_seviye … yesil` ile yeşile alınır ve `feed:facebook` açılır. Geri alma: `UPDATE sources SET alert_level='golge' WHERE platform='facebook'` (yedek: `/var/lib/kktc-bot/backups/elle-20261010-081913-fb-golge`).
 - **Serbest metin km düzeltmesi** (aynı gün, sosyal oturumdan): "145 bin km" / "145k km" okunur; km etiketi satır sonunu geçmez ("km\n4.900 stg" fiyattır); "2014 km 85.000"de yıl atlanır; bakım/parça cümlesindeki km ("bakımları 2 bin km önce", "her 5.000 km'de bir") aracın km'si sayılmaz. Sitelerin km alanına karşı 5.749 ilanda: doğru okuma 429 → 456, yanlış 132 → 119, tehlikeli yön (gerçeğin yarısından az) 25 → 5, doğruyken kaybolan 0. Bilinen kayıp: "Japonyadan getirildi 45.000 km" km'siz kalır (güvenli yön, en çok 🟡); sonraki küçük düzeltmede daraltılacak. Eski km değerlerine dokunulmadı.
+
+### 24.22 Yanlış 🟢: para birimi karışıklığı (10.10.2026; sahip: "böyle bir sorunun asla tekrarlanmaması gerekiyor")
+- **Ne oldu:** 18:07 UTC'de 3 sohbete 🟢 gitti: KKTCarabam'da 2014 Toyota Auris, "10.500 USD". Sistem bunu £7.942'ye çevirdi; piyasa ortası £11.000, %28 kâr göründü. Aynı satıcı (aynı telefon) aynı arabayı aynı gün KibrisArabaAl'a **£10.500 STG** koymuştu. Büyük ihtimalle KKTCarabam'da para birimini yanlış seçti. Gerçek fiyatla fırsat değil. Mesajda yalnız "£7.942" yazıyordu, sitede "10.500 USD"; sahip fiyatı farklı gördü.
+- **Hemen yapılan:** mesaj 3 sohbetten de silindi (Telegram `deleteMessage`, 3/3 onaylandı).
+- **Kalıcı düzeltme 1 — para birimi koruması (`domain/decision.py` `_as_gbp_tier`, RULES_VERSION 2026-10-10):**
+  - USD/EUR fiyatlı ilanda aynı rakam STG okunur; o zaman da fırsat yoksa bildirim yok (`para_birimi_supheli`);
+  - STG okumasında yalnız 🟡 ise en fazla 🟡;
+  - 🟠 yolu USD/EUR ilanları hiç almaz;
+  - TL'ye dokunmaz (rakam çok büyük, karışmaz; TL'nin kendi kuralı `tl_fiyat` var).
+  - Fark raporu: aynı anlık görüntüde 2.810 aktif ilanda yalnız bu Auris değişti (🟢 → yok). Bugüne kadar fırsat kararı alan tek USD ilanı buydu; toplam USD/EUR ilan 16, aktif 3.
+- **Kalıcı düzeltme 2 — mesajda ilanın kendi fiyatı (`notify.price_text`):** ilan STG değilse "£7.942 (ilanda 10.500 USD)" / "£7.960 (ilanda 517.543 TL)". Bu biçim fırsat mesajında, 🟠 özetinde ve haftalık rapor satırlarında aynıdır; STG ilanda mesaj değişmez.
+- **Bilinen sınır:** KKTCarabam ilan sayfası bize 403 verdiği için km ve telefon okunamıyor. Bu yüzden başka sitedeki aynı araçla kopya bağı kurulamıyor (bu ilan sitede 133.000 km yazıyordu). Para birimi koruması bu vakayı tutar; km'siz KKTCarabam ilanında "km ve direksiyon yazmıyor" uyarısı zaten gider.
