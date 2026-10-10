@@ -74,6 +74,16 @@ def _count(reasons: dict[str, int], why: str) -> None:
     reasons[why] = reasons.get(why, 0) + 1
 
 
+DEALER_POSTS_14D = 3  # satıcı radarı eşiği (sosyal oturumun ölçümü, 10.10.2026: 5 günde 91 telefon; ≥3 FARKLI gönderi = galeri)
+
+
+def seller_kind(posts_14d: int | None) -> str | None:
+    """Satıcı radarı sayısı → seller_type: telefonu 14 günde ≥3 farklı gönderide geçen "galeri", 1-2 "bireysel"; bilinmiyorsa None (dokunulmaz)."""
+    if posts_14d is None:
+        return None
+    return "galeri" if posts_14d >= DEALER_POSTS_14D else "bireysel"
+
+
 def _save(sink: ListingSink, source: SocialSource, post: SocialPost, data: dict | None, reason: str | None) -> bool:
     """Deneme dosyası (record_post) her gönderiyi nedeniyle yazar; Repository yalnız satırı olanı (upsert_listing)."""
     record = getattr(sink, "record_post", None)
@@ -132,6 +142,9 @@ def ingest_facebook(posts: Iterable[SocialPost], source: SocialSource, sink: Lis
                     why = "okunamadi" if why == "ok" else why  # tanı "okunur" dedi ama kural okuyamadı
                     st.skipped += 1
                     _count(st.reasons, why)
+            kind = seller_kind(getattr(post, "seller_posts_14d", None))
+            if data is not None and kind is not None:
+                data["seller_type"] = kind
             if _save(sink, source, post, data, why):
                 st.new += 1
     finally:

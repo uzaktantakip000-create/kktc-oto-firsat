@@ -11,7 +11,8 @@ import pytest
 from application import social_import as si
 
 ORNEK = Path(__file__).parent / "fixtures" / "social" / "devir_ornek.jsonl"
-FIELDS = {"surum", "platform", "anahtar", "gonderi", "url", "metin", "paylasim_utc", "goruldu_utc", "foto_url"}
+FIELDS = {"surum", "platform", "anahtar", "gonderi", "url", "metin", "paylasim_utc", "goruldu_utc", "foto_url",
+          "satici_gonderi_14g", "satici_grup_14g"}  # son ikisi isteğe bağlı (satıcı radarı); eski satırlarda yoktur
 NOW = datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
 GROUP = "1234567890"
 OTHER = "5550001112"
@@ -179,3 +180,16 @@ def test_second_run_reads_nothing_and_replay_is_harmless(tmp_path):
 def test_missing_dir_is_quiet(tmp_path):
     rep = si.import_facebook(FakeRepo(_rows()), tmp_path / "yok")
     assert rep.lines == 0 and rep.summary() == ["sosyal devir: yeni satır yok"]
+
+
+def test_seller_radar_becomes_seller_type_and_bad_values_are_ignored(tmp_path):
+    """Satıcı radarı (sosyal oturum, 10.10.2026): telefonun 14 günde geçtiği FARKLI gönderi sayısı ≥3 → galeri, 1-2 → bireysel; yoksa dokunulmaz."""
+    assert si.parse_line(_line(satici_gonderi_14g=3, satici_grup_14g=2))[1].seller_posts_14d == 3
+    for bad in ("3", -1, 0, True, 3.5, None, 10**9):
+        assert si.parse_line(_line(satici_gonderi_14g=bad))[1].seller_posts_14d is None, bad
+    assert si.parse_line(_line())[1].seller_posts_14d is None  # eski satır: alan yok
+    _file(tmp_path, NOW, _line("1000000011", satici_gonderi_14g=5), _line("1000000012", satici_gonderi_14g=1), _line("1000000013"))
+    repo = FakeRepo(_rows())
+    si.import_facebook(repo, tmp_path)
+    kinds = {pid: repo.listings[("src-1", pid)].get("seller_type") for pid in ("1000000011", "1000000012", "1000000013")}
+    assert kinds == {"1000000011": "galeri", "1000000012": "bireysel", "1000000013": None}

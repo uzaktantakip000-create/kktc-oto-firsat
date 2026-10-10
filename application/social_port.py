@@ -52,6 +52,9 @@ class SocialPost:
     image_url: str | None = None  # ilk fotoğrafın CDN adresi (fiyat yazıda yoksa okunur)
     owner: str | None = None  # yalnız Instagram: paylaşan açık galeri hesabı. Facebook'ta HER ZAMAN None (yazar saklanmaz)
     pinned: bool = False
+    # yalnız Facebook devir satırı (satıcı radarı, sosyal oturum 10.10.2026): gönderideki telefonun son 14 günde geçtiği FARKLI gönderi sayısı
+    # (aynı ilanın yeniden paylaşımı bir sayılır; telefon yazılmaz). Telefon yoksa ya da eski satırda None.
+    seller_posts_14d: int | None = None
 
 
 @dataclass

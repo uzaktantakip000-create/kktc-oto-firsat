@@ -4,7 +4,9 @@ satırları okur, anahtarı sources satırına eşler, gönderileri sosyal ayrı
 collect_facebook.listing_data -> parse_freetext; ikinci bir ayrıştırma yok) ve Repository.upsert_listing ile yazar. Okuyucuya veritabanı
 şifresi verilmez, güvenlik duvarı açılmaz.
 
-Satır (surum 1): {"surum", "platform", "anahtar": "fb:<grup>", "gonderi", "url", "metin", "paylasim_utc", "goruldu_utc", "foto_url"}.
+Satır (surum 1): {"surum", "platform", "anahtar": "fb:<grup>", "gonderi", "url", "metin", "paylasim_utc", "goruldu_utc", "foto_url"}; isteğe bağlı
+(satıcı radarı, 10.10.2026; eski satırlarda yok): "satici_gonderi_14g" (telefonun 14 günde geçtiği FARKLI gönderi sayısı) ve "satici_grup_14g".
+Radar sayısı ilanın seller_type'ına çevrilir (social_ingest.seller_kind); telefon satırda yoktur.
 Dosyadaki adres KULLANILMAZ: bağlantı anahtar + gönderi kimliğinden kurulur (okuyucu tarafı ne yazarsa yazsın mesaja yalnız Facebook grup
 gönderisi bağlantısı gider). Görsel adresi yalnız Facebook CDN'i ise alınır. Paylaşım zamanı okunamamışsa ilk görülme zamanı yazılır
 (yoksa birikmiş eski satırlar aktarıldığı an "yeni" sayılırdı).
@@ -32,6 +34,7 @@ OPEN_STATUSES = ("aktif", "deneme")
 ALL_STATUSES = ("aktif", "deneme", "aday", "pasif", "disari", "erisim_reddediyor")
 MAX_LINES = 2000  # tur başına üst sınır (kalan bir sonraki tura)
 MAX_TEXT = 8000
+MAX_RADAR = 10_000  # satıcı radarı sayısının makul üst sınırı (bozuk değer yok sayılır)
 _FILE = re.compile(r"^facebook-\d{8}\.jsonl$")
 _GROUP = re.compile(r"^[a-z0-9._-]{1,64}$")  # kaynaklar.json grup anahtarı (social_files._FB_GROUP ile aynı)
 _POST_ID = re.compile(r"^(?:\d{5,25}|pfbid[A-Za-z0-9]{10,})$")  # facebook_browser._PID_OK ile aynı
@@ -121,10 +124,11 @@ def parse_line(line: str) -> tuple[str, SocialPost] | str:
     group = key[3:] if isinstance(key, str) and key.startswith("fb:") else ""
     if not (_GROUP.match(group) and isinstance(pid, str) and _POST_ID.match(pid) and isinstance(text, str)):
         return "alan"
-    photo = doc.get("foto_url")
+    photo, radar = doc.get("foto_url"), doc.get("satici_gonderi_14g")
     post = SocialPost(platform=PLATFORM, source_key=group, post_id=pid, url=f"https://www.facebook.com/groups/{group}/posts/{pid}/",
                       posted_at=_parse_time(doc.get("paylasim_utc")) or _parse_time(doc.get("goruldu_utc")), text=text[:MAX_TEXT],
-                      image_url=photo if isinstance(photo, str) and _CDN.match(photo) else None)
+                      image_url=photo if isinstance(photo, str) and _CDN.match(photo) else None,
+                      seller_posts_14d=radar if type(radar) is int and 1 <= radar <= MAX_RADAR else None)
     return key, post
 
 
