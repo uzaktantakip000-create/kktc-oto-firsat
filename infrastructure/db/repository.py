@@ -305,7 +305,8 @@ class Repository:
             args.append(new_hours)
         return self.conn.execute(
             """SELECT id, brand_norm, model_norm, year, km, seller_phone, price_gbp::float8 AS price_gbp,
-                      first_seen_at, duplicate_of, is_active
+                      first_seen_at, duplicate_of, is_active,
+                      listings.source_id IN (SELECT id FROM sources WHERE alert_level = 'golge') AS shadow
                FROM listings WHERE brand_norm IS NOT NULL AND year IS NOT NULL
                  AND first_seen_at > NOW() - make_interval(days => %s)""" + extra,
             args,
@@ -347,7 +348,9 @@ class Repository:
         aktif ilan emsale girmez ve hiç değerlendirilmez. (Aktif ilan yalnızca aktif bir ilanın kopyası sayılır: application/dedupe.py.)
         Ayrıca kopyanın (marka, model) anahtarı kanonikten FARKLIYSA bağ yanlıştır (aynı araç değil) ve çözülür: `mark_duplicates` yalnız
         aynı anahtar+yıl grubunda bağ kurar, ama model anahtarı kuralları düzeltilince (renormalize) eski karışık anahtarda kurulmuş bağlar
-        (CX-5 ↔ CX-30 gibi) kalıyordu ve bu ilanlar hiç değerlendirilmiyordu. Yıla bakılmaz (yıl farkı ayrı karar). Dönen: serbest kalan sayısı."""
+        (CX-5 ↔ CX-30 gibi) kalıyordu ve bu ilanlar hiç değerlendirilmiyordu. Yıla bakılmaz (yıl farkı ayrı karar).
+        Gölge kaynağın ilanına bağlı gölge-olmayan kopya da (aktif/pasif) serbest kalır: gölge ilan bildirim üretmez ve emsal olmaz; site ilanı
+        onun kopyası kalırsa araç hem bildirimden hem emsal havuzundan düşerdi (`mark_duplicates` artık bu yönde bağ kurmaz). Dönen: serbest kalan sayısı."""
         orphans = self.conn.execute(
             """UPDATE listings d SET duplicate_of = NULL FROM listings c
                WHERE d.duplicate_of = c.id AND d.is_active AND NOT c.is_active"""
@@ -356,7 +359,12 @@ class Repository:
             """UPDATE listings d SET duplicate_of = NULL FROM listings c
                WHERE d.duplicate_of = c.id AND ROW(d.brand_norm, d.model_norm) IS DISTINCT FROM ROW(c.brand_norm, c.model_norm)"""
         ).rowcount
-        return orphans + mislinked
+        shadowed = self.conn.execute(
+            """UPDATE listings d SET duplicate_of = NULL FROM listings c, sources cs, sources ds
+               WHERE d.duplicate_of = c.id AND cs.id = c.source_id AND ds.id = d.source_id
+                 AND cs.alert_level = 'golge' AND ds.alert_level IS DISTINCT FROM 'golge'"""
+        ).rowcount
+        return orphans + mislinked + shadowed
 
     def set_duplicate(self, listing_id, canonical_id) -> None:
         self.conn.execute("UPDATE listings SET duplicate_of=%s WHERE id=%s", (canonical_id, listing_id))

@@ -12,10 +12,13 @@ def mark_duplicates(repo: Repository, quick: bool = False, now: datetime | None 
     """Aynı aracın sonradan görülen ilanlarına duplicate_of = ilk ilan yazar; ardından kaynaklar arası ikizleri işaretler
     (`mark_cross_source_twins`, aynı hızlı/tam tur daraltmasıyla). Dönen: yeni işaretlenen sayı.
     quick=True: yalnız yakın zamanda yeni ilan görülen (marka, model, yıl) grupları taranır (aynı sonuç, çok daha az okuma);
-    quick=False: tüm adaylar (saatte bir). `now`: tur anı (şüpheli km kuralı bu güne göre; verilmezse bugün)."""
+    quick=False: tüm adaylar (saatte bir). `now`: tur anı (şüpheli km kuralı bu güne göre; verilmezse bugün).
+    Gölge kaynağın ilanı (`shadow`: yalnız ölçülür, bildirim ve emsal yok) grubun sonunda işlenir: önce görülmüş olsa bile gölge olmayan
+    ilanın kanoniği olamaz, yalnız onun (ya da başka gölge ilanın) kopyası olabilir. Böylece gölge olmayan ilanların bağları gölge
+    ilanlar hiç yokmuş gibi aynıdır."""
     today = now.date() if now else None
     rows = repo.dedupe_candidates(new_hours=QUICK_NEW_HOURS) if quick else repo.dedupe_candidates()
-    rows.sort(key=lambda r: (r["brand_norm"], r["model_norm"] or "", r["year"], r["first_seen_at"], str(r["id"])))
+    rows.sort(key=lambda r: (r["brand_norm"], r["model_norm"] or "", r["year"], bool(r.get("shadow")), r["first_seen_at"], str(r["id"])))
     marked = 0
     for _, grp in groupby(rows, key=lambda r: (r["brand_norm"], r["model_norm"], r["year"])):
         canon: list[dict] = []  # grupta ilk görülenler (kanonik ilanlar)

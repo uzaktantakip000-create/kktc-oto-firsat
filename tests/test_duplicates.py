@@ -119,6 +119,16 @@ def test_oldest_is_canonical_and_chain_points_to_it():
     assert repo.dups == {"mid": "old", "new": "old"}
 
 
+def test_shadow_listing_seen_first_never_becomes_canonical_of_a_live_listing():
+    """Facebook gölge haftası: araç önce gölge grupta, sonra sitede görüldü. Site ilanı kanonik kalır (bildirim ve emsal için görünür),
+    gölge ilan onun kopyası olur; gölge ilanlar kendi aralarında ilk görülen kuralıyla bağlanır."""
+    repo = FakeRepo([car("fb", 20, shadow=True), car("site", 1, shadow=False), car("fb2", 10, shadow=True, price_gbp=5900.0)])
+    assert mark_duplicates(repo) == 2
+    assert repo.dups == {"fb": "site", "fb2": "site"}
+    alone = FakeRepo([car("fb", 20, shadow=True), car("fb2", 10, shadow=True, price_gbp=5900.0)])
+    assert mark_duplicates(alone) == 1 and alone.dups == {"fb2": "fb"}
+
+
 def test_relisted_car_is_not_duplicate_of_old_inactive_listing():
     repo = FakeRepo([car("old", 100, is_active=False), car("relisted", 1, price_gbp=5000.0)])
     repo.rows[1]["km"] = 80_000

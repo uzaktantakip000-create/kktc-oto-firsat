@@ -201,6 +201,32 @@ def test_release_orphan_duplicates_frees_only_active_copies_of_inactive_original
     assert rows["copy_of_dead_active"] is None and rows["copy_of_dead_inactive"] == dead and rows["copy_of_live"] == live
 
 
+def test_live_copies_of_shadow_listings_are_released_and_relinked_the_other_way(db):
+    """Gölge (yalnız ölçülen) kaynağın ilanına bağlı gölge-olmayan kopya serbest kalır (aktif ve pasif: pasif ilan da emsaldir); gölge
+    ilanın gölge kopyası ve normal bağlar kalır. Sonraki mükerrer turunda bağ ters yönde kurulur: site ilanı kanonik."""
+    from application.dedupe import mark_duplicates
+    c = db.conn
+    site, other = add_source(c, "Site"), add_source(c, "Site2")
+    fb = c.execute("INSERT INTO sources (platform, name, url, status, alert_level) VALUES ('facebook','Grup','https://www.facebook.com/groups/1/',"
+                   "'aktif','golge') RETURNING id").fetchone()["id"]
+    phone = dict(seller_phone="905330000009")
+    fb_first = add_listing(c, fb, "fb_first", **phone, first_seen_at=ago(hours=20))
+    site_copy = add_listing(c, site, "site_copy", **phone, first_seen_at=ago(hours=2), duplicate_of=fb_first)  # serbest kalmalı
+    sold_copy = add_listing(c, other, "sold_copy", **phone, price_gbp=6100, is_active=False, first_seen_at=ago(hours=5),
+                            duplicate_of=fb_first)  # pasif ama emsal: serbest kalmalı
+    fb_copy = add_listing(c, fb, "fb_copy", **phone, first_seen_at=ago(hours=10), duplicate_of=fb_first)  # gölge→gölge: kalır
+    canon = add_listing(c, site, "canon", model_norm="yaris", first_seen_at=ago(hours=30))
+    normal = add_listing(c, other, "normal", model_norm="yaris", duplicate_of=canon)  # normal bağ: kalır
+    assert db.release_orphan_duplicates() == 2
+    dup = {r["id"]: r["duplicate_of"] for r in c.execute("SELECT id, duplicate_of FROM listings").fetchall()}
+    assert dup[site_copy] is None and dup[sold_copy] is None and dup[fb_copy] == fb_first and dup[normal] == canon
+    assert mark_duplicates(db) >= 1
+    dup = {r["id"]: r["duplicate_of"] for r in c.execute("SELECT id, duplicate_of FROM listings").fetchall()}
+    assert dup[site_copy] is None and dup[fb_first] == site_copy  # site ilanı kanonik, gölge ilan onun kopyası
+    assert dup[sold_copy] is None  # pasif site ilanı aktif gölge ilanın kopyası olmaz (önce işlenir, kanonik kalır)
+    assert db.release_orphan_duplicates() == 0  # yeni bağlar kararlı: bir sonraki turda çözülmez
+
+
 def test_release_orphan_duplicates_also_frees_copies_linked_to_a_different_model_key(db):
     """Model anahtarı düzeltmesinden (renormalize) sonra eski karışık anahtarda kurulmuş yanlış kopya bağı (CX-5 ↔ CX-30) çözülür; aynı modelin
     gerçek kopyası ve yıl farkı olan aynı model kalır. Aktif/pasif fark etmez (yanlış bağ her iki durumda yanlış)."""
