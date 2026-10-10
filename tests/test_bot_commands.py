@@ -235,6 +235,14 @@ def test_a_known_listing_link_gets_its_dossier_for_owner_and_subscriber(bot):
     assert bot.card_calls[-1] == (link, FRIEND) and len(bot.card_calls) == 2
 
 
+def test_search_command_for_owner_subscriber_and_guest(bot, monkeypatch):
+    asked = []
+    monkeypatch.setattr(bot_poll.search_cmd, "handle", lambda repo, args, subscriber=None: asked.append((args, subscriber)) or "ARAMA")
+    assert bot.send(Repo(), OWNER, "/bul Fit 2015-2018 7000") == ["ARAMA"] and asked[-1] == (" fit 2015-2018 7000", None)
+    assert bot.send(Repo({FRIEND: "onayli"}), FRIEND, "/bul@kktc_firsat_bot vitz") == ["ARAMA"] and asked[-1] == (" vitz", FRIEND)
+    assert bot.send(Repo({FRIEND: "bekliyor"}), FRIEND, "/bul vitz") == [bot_poll.NOT_APPROVED_REPLY] and len(asked) == 2
+
+
 def test_owner_free_text_unknown_commands_and_links(bot):
     repo = Repo()
     assert bot.send(repo, OWNER, "tamam") == [bot_poll.CHATTER_REPLY] and bot.ads == []  # kota/yapay zekâ harcanmaz

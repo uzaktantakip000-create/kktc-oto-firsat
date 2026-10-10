@@ -628,6 +628,24 @@ class Repository:
                  AND l.model_norm IS NOT DISTINCT FROM %s AND abs(l.year - %s) <= 1 AND l.first_seen_at > NOW() - make_interval(days => %s)""",
             (brand_norm, model_norm, year, days)).fetchone()["n"]
 
+    def search_active(self, brand_norm: str, model_norm: str | None, year_min: int | None, year_max: int | None, price_min: float | None,
+                      price_max: float | None, km_max: int | None, transmission: str | None, limit: int) -> list[dict]:
+        """/bul (application/search_cmd): taranan SİTELERDEKİ aktif ilanlar (gölge/sosyal kaynak, kopya, karantina hariç), en yeni `limit` tanesi.
+        model_norm None: markanın bütün modelleri. km filtresi verilirse km'si yazmayan ilan gelmez. `total`: filtreye uyan toplam ilan."""
+        return self.conn.execute(
+            """SELECT l.*, l.price_gbp::float8 AS price_gbp, l.price_amount::float8 AS price_amount, s.name AS source_name, s.platform,
+                      count(*) OVER () AS total
+               FROM listings l JOIN sources s ON s.id = l.source_id
+               WHERE l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL AND l.price_gbp IS NOT NULL
+                 AND s.platform = 'web' AND s.alert_level IS DISTINCT FROM 'golge'
+                 AND l.brand_norm = %(b)s AND (%(m)s::text IS NULL OR l.model_norm = %(m)s)
+                 AND (%(y1)s::int IS NULL OR l.year >= %(y1)s) AND (%(y2)s::int IS NULL OR l.year <= %(y2)s)
+                 AND (%(p1)s::float8 IS NULL OR l.price_gbp >= %(p1)s) AND (%(p2)s::float8 IS NULL OR l.price_gbp <= %(p2)s)
+                 AND (%(k)s::int IS NULL OR l.km <= %(k)s) AND (%(t)s::text IS NULL OR l.transmission = %(t)s)
+               ORDER BY l.first_seen_at DESC LIMIT %(limit)s""",
+            {"b": brand_norm, "m": model_norm, "y1": year_min, "y2": year_max, "p1": price_min, "p2": price_max, "k": km_max,
+             "t": transmission, "limit": limit}).fetchall()
+
     def resurfaced_kktcarabam(self, listing_ids, gap_minutes: int = RESURFACE_RUN_GAP_MINUTES) -> set:
         """Yeniden çıkmış eski KKTCarabam ilanları (verilen ilanlar arasından). Site eski ilanı "en yeni" listesine geri itince ilan bizim için
         "yeni" görünür ama numarası daha önce gördüklerimizden KÜÇÜKTÜR (ilanlar numarayla, oluşturulma sırasıyla açılır). Kural: ilan KKTCarabam'dan

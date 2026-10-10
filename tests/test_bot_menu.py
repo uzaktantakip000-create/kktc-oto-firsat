@@ -22,7 +22,7 @@ def test_menu_has_an_owner_scope_and_a_minimal_default_scope(monkeypatch):
     assert bot_menu.ensure_menu(repo, "t", "777") is True
     owner_call, default_call, button_call = calls
     assert owner_call[0] == "setMyCommands" and owner_call[1]["scope"] == {"type": "chat", "chat_id": 777}
-    assert [c["command"] for c in owner_call[1]["commands"]] == ["durum", "son", "fiyat", "satti", "ayarlar", "kaynaklar", "yardim", "dur", "basla"]
+    assert [c["command"] for c in owner_call[1]["commands"]] == ["durum", "son", "bul", "fiyat", "satti", "ayarlar", "kaynaklar", "yardim", "dur", "basla"]
     assert default_call[0] == "setMyCommands" and "scope" not in default_call[1]
     assert [c["command"] for c in default_call[1]["commands"]] == ["yardim", "dur", "basla"]  # aboneler yalnız çalışanları görür
     assert button_call == ("setChatMenuButton", {"chat_id": 777, "menu_button": {"type": "commands"}})

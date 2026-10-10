@@ -1275,3 +1275,24 @@ def test_seller_count_price_history_and_facebook_similar(db):
     c.execute("UPDATE listings SET first_seen_at = now() - interval '20 days' WHERE id=%s", (old,))
     add_listing(c, kaa, "site", year=2015)  # site ilanı sayılmaz
     assert db.facebook_similar_count("Toyota", "vitz", 2015) == 1 and db.facebook_similar_count(None, "vitz", 2015) == 0
+
+
+def test_search_active_filters_and_skips_social_copies_and_quarantine(db):
+    c = db.conn
+    kaa, fb = add_source(c, "KAA"), add_source(c, "FBG", platform="facebook")
+    want = add_listing(c, kaa, "ok", year=2016, price_gbp=6500, km=90_000, transmission="otomatik")
+    add_listing(c, kaa, "manual", year=2016, price_gbp=6500, km=90_000, transmission="manuel")
+    add_listing(c, kaa, "old_year", year=2012, price_gbp=6500, km=90_000, transmission="otomatik")
+    add_listing(c, kaa, "pricey", year=2016, price_gbp=9500, km=90_000, transmission="otomatik")
+    add_listing(c, kaa, "far_km", year=2016, price_gbp=6500, km=190_000, transmission="otomatik")
+    add_listing(c, kaa, "no_km", year=2016, price_gbp=6500, km=None, transmission="otomatik")
+    add_listing(c, kaa, "copy", year=2016, price_gbp=6500, km=90_000, transmission="otomatik", duplicate_of=want)
+    add_listing(c, kaa, "quarantine", year=2016, price_gbp=6500, km=90_000, transmission="otomatik", karantina_nedeni="x")
+    add_listing(c, kaa, "sold", year=2016, price_gbp=6500, km=90_000, transmission="otomatik", is_active=False)
+    add_listing(c, fb, "social", year=2016, price_gbp=6500, km=90_000, transmission="otomatik")
+    add_listing(c, kaa, "corolla", model_norm="corolla", year=2016, price_gbp=6500, km=90_000, transmission="otomatik")
+    rows = db.search_active("Toyota", "vitz", 2015, 2018, None, 8000, 100_000, "otomatik", 10)
+    assert items(rows) == {"ok"} and rows[0]["total"] == 1 and rows[0]["source_name"] == "KAA"
+    assert items(db.search_active("Toyota", "vitz", 2015, 2018, None, 8000, None, None, 10)) == {"ok", "manual", "no_km", "far_km"}
+    assert "corolla" in items(db.search_active("Toyota", None, None, None, None, None, None, None, 50))
+    assert items(db.search_active("Toyota", "vitz", None, None, 7000, None, None, None, 10)) == {"pricey"}

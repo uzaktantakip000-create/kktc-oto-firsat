@@ -64,6 +64,9 @@ def _resolve(book: PriceBook, query: str) -> tuple[str, str] | None:
     return None
 
 
+resolve_model = _resolve  # /bul aynı model çözümünü kullanır (application/search_cmd)
+
+
 def _status_text(row: BookRow) -> str:
     if row.status == STATUS_SETTLED:
         return "✅ oturmuş"

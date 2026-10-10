@@ -5,7 +5,18 @@ from datetime import datetime, timezone
 
 import httpx
 
-from application import ad_check, discovery, dossier, history_cmd, llm_reader, price_book_cmd, settings_store, sources_cmd, status
+from application import (
+    ad_check,
+    discovery,
+    dossier,
+    history_cmd,
+    llm_reader,
+    price_book_cmd,
+    search_cmd,
+    settings_store,
+    sources_cmd,
+    status,
+)
 from application.learning import learning_open
 from application.notify import TelegramError, api
 from infrastructure.config import redact
@@ -27,6 +38,7 @@ HELP_OWNER = ("📖 Komutlar (cevap en geç ~15 dk içinde gelir)\n\n"
               "Menüde görünenler:\n"
               "/durum — sistem çalışıyor mu, son kontrol, kaynaklar\n"
               "/son — son gönderilen 10 fırsat\n"
+              "/bul fit 2015-2018 7000 — bütün sitelerde ara, piyasaya göre en ucuzdan sırala (km, otomatik da yazılabilir)\n"
               "/fiyat corolla 2014 — bir aracın piyasa değeri\n"
               "/satti corolla 2014 120000km 7200 — gerçek bir satışı kaydet (değer tablosunu doğrular)\n"
               "/ayarlar — eşik, bütçe, istenmeyen markalar\n"
@@ -44,6 +56,7 @@ HELP_OWNER = ("📖 Komutlar (cevap en geç ~15 dk içinde gelir)\n\n"
               "Her fırsat mesajındaki 👍 İşe yarar / 👎 Yanlış düğmesine bas: sistemi bu oylarla ölçüyorum.")
 HELP_SUBSCRIBER = ("Bu bot KKTC'deki ikinci el araç ilanlarını tarar; piyasanın belirgin altında kalan fırsatları bu sohbete yazar. "
                    "Yalnızca öneridir: satıcıyla görüşmek ve karar vermek sana aittir.\n\n"
+                   "/bul fit 2015-2018 7000 — taranan bütün sitelerde ara; piyasaya göre en ucuzdan sıralarım\n"
                    "/dur — bildirimleri durdur\n/basla — yeniden aç\n\n"
                    "İlan kontrolü: bir ilanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü bana gönder; piyasayla karşılaştırıp "
                    f"cevap veririm (günde en çok {ad_check.MAX_PER_DAY_SUBSCRIBER}). Taranan sitelerden (KKTCar, KibrisArabaAl, KKTCarabam, "
@@ -70,7 +83,7 @@ LINK_REPLY = ("Bu linki tanımıyorum: yalnız taradığım sitelerin (KKTCar, K
 ERROR_REPLY = "⚠️ Komutun işlenirken bir hata oldu; birazdan tekrar dene. (Hata kaydedildi.)"
 OWNER_COMMANDS = {"/durum", "/son", "/ayarlar", "/esik", "/butce", "/fiyat", "/satti", "/tahmini", "/istemiyorum", "/istiyorum",
                   "/kaynaklar", "/kaynak_ekle", "/kaynak_seviye", "/kaynak_ac", "/kaynak_kapat"}
-SHARED_COMMANDS = {"/start", "/yardim", "/dur", "/basla"}
+SHARED_COMMANDS = {"/start", "/yardim", "/dur", "/basla", "/bul"}
 MIN_AD_DIGITS = 6  # gerçek bir ilanda en az yıl (4) + fiyat (3+) rakamı olur; "tamam", "teşekkürler" ilan kontrolüne (kota + yapay zekâ) girmez
 
 
@@ -209,6 +222,10 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
                 text="Başvurun alındı. Onaylanınca haber vereceğim." if new else "Başvurun onay bekliyor; onaylanınca haber vereceğim.")
     elif cmd == "/yardim":
         api(token, "sendMessage", chat_id=chat_id, text=HELP_OWNER if chat_id == owner else _help_text(status_now), disable_web_page_preview=True)
+    elif cmd == "/bul":  # sahip ve onaylı abone: taranan sitelerde arama (application/search_cmd); abonenin kendi kotası
+        reply = (search_cmd.handle(repo, text[len("/bul"):], subscriber=None if chat_id == owner else chat_id)
+                 if chat_id == owner or status_now == "onayli" else NOT_APPROVED_REPLY)
+        api(token, "sendMessage", chat_id=chat_id, text=reply, disable_web_page_preview=True)
     elif chat_id == owner and text.startswith("/durum"):
         api(token, "sendMessage", chat_id=chat_id, text=status.build_status(repo), disable_web_page_preview=True)
     elif chat_id == owner and text.split()[:1] == ["/son"]:
