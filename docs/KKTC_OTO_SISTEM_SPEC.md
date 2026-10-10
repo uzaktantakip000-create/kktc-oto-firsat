@@ -824,3 +824,25 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
   - Satıcı sayısı piyasa hesabıyla aynı anahtarla bulunur: telefon ya da KKTCar kimliği; yazar adı sayılmaz.
   - Okunamayan sitenin linkine "2 saatte gelir" sözü verilmez. Okumadığımız FB grubundaki gönderi, grup ekleme önerisine gider.
   - Bilerek bırakılan: /bul ve ilan dosyası, ilan kontrolüyle ortak günlük kotayı kullanır (egress koruması). Abone, varsayılan ayarla 🟠 görebilir; abone bildirimleriyle tutarlı.
+
+### 24.25 Wow paketi 2 (11.10.2026 gece; sahip: "çok güzel ama şaşırtıcı değil… ortağınla karar verin, hayata geçirin"; sosyal oturumla ortak karar)
+- **Sahibin ilkesi:** "KibrisArabaAl ya da hiçbir kaynak bize kapalı kalmamalı."
+  - Cevap: engel aşılmaz (tarayıcı kimliği taklidi, gerçek tarayıcıyla geçme yok). Site botu açıkça engelledi; gizli giriş hem kural dışı hem hukuki risk.
+  - Meşru yol: site sahibinden izin (mesaj taslağı sahibe verildi; telefonla arama önerildi). Bu arada 2 saatte bir deneme sürer.
+  - Ölçüm: KAA'nın 2.851 aktif ilanının yalnız %14'ü başka kaynakta da var; kayıp büyük.
+- **📞 Sokaktaki "SATILIK" levhası (50bdb89, yalnız sahip):**
+  - Levhanın fotoğrafı ya da yalnız numara → numaranın taranan ilanları. Tek ilansa tam dosya; çoksa aynı kararla sıralı liste, 3+ ilanda "galeri/ticari olabilir". FB/IG yalnız sayılır.
+  - Görüntüyü mevcut okuyucu okur (yeni model yok). Fotoğraftan okunan numara sahibe geri gösterilir; yalnız birebir eşleşme; numara log/DB'ye yazılmaz.
+  - İlan yazısında numara varsa ilan kontrolü yine yapılır, altına "bu numara N aktif ilanda geçiyor" eklenir.
+- **🎯 Av modu (c20f868, yalnız sahip):**
+  - "/avla vitz 2016 sonrası 7000" kalıcı arama kurar (en çok 10; /avla liste, /avla sil N).
+  - Uyan YENİ ilan, sitelere düştüğü turda (🟢 olmasa da) değerlemesiyle yazılır. Tazelik 🟢 ile aynıdır; gölge FB/IG dışarıda.
+  - En çok bir kez gider; av başına turda en çok 5 ilan. Kurulurken şu an uyanlar /bul gibi listelenir.
+- **📱 KKTC Fiyat Rehberi (sosyal oturum, yapımda):**
+  - Telefonda açılan etkileşimli sayfa: marka/model/yıl/km → piyasa değeri ve en çok alış.
+  - Formül bottakiyle aynı: `domain.profit.buy_ceiling`.
+  - Yalnız toplu veri; 5'ten az ilanlı hücre gizli; haftalık anlık görüntü.
+- **Güven notu:** 10 "👎 Yanlış" oyunun hepsi onaylı bir aboneden, 09.10 07:44'te 9 saniyede verildi. Çoğu 2006–2011, 200 bin+ km BMW 3 serisi. Gürültü kapısının fark raporunda bu 10 ilan ayrıca raporlanacak.
+- **Ertelenenler:**
+  - Ortağın "pazarlık kozu" (🟢 mesajına yaş/satıcı/açılış teklifi): mesaj biçimi değişikliği, gürültü kapısından sonra.
+  - Ava "bireysel" süzgeci: sitelerde satıcı türü çoğunlukla bilinmiyor.
