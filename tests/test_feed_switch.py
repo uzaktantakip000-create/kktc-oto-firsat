@@ -194,6 +194,39 @@ def test_status_shows_pause_not_delay():
     assert "📴 DURAKLATILANLAR" in text and "Instagram (1 kaynak)" in text and "IG ·" not in text  # kaynaklar tek satırda
     assert "SANA HABER VEREN YERLER (1)" in text  # duraklatılmış olan "haber verenler"e sayılmaz
     assert "Apify'a harcanan" not in text  # ikisi de kapalıyken harcama satırı yok
+    assert "DENEMEDE" not in text  # gölge Facebook grubu yok
+
+
+def test_status_says_shadow_facebook_groups_are_read_not_ignored():
+    """10.10.2026: eski yol (feed:facebook) kapalı ama gölge gruplar sunucudaki okuyucuyla okunuyor; "bakmıyorum" yanlıştı."""
+    rows = [dict(name="KKTCar", platform="web", url="https://kktcar.com/x", status="aktif", alert_level="yesil", hours_since_check=0.1, new_24h=4, fresh_n=10),
+            dict(name="G1", platform="facebook", url="https://www.facebook.com/groups/a", status="aktif", alert_level="golge", hours_since_check=1, new_24h=2, fresh_n=5),
+            dict(name="G2", platform="facebook", url="https://www.facebook.com/groups/b", status="aktif", alert_level="golge", hours_since_check=1, new_24h=0, fresh_n=1),
+            dict(name="IG", platform="instagram", url="https://instagram.com/a", status="aktif", alert_level="yesil", hours_since_check=200, new_24h=0, fresh_n=5)]
+
+    class Rows:
+        def __init__(self, r):
+            self.r = r
+
+        def fetchall(self):
+            return self.r
+
+        def fetchone(self):
+            return self.r[0]
+
+    class StatusRepo(FakeRepo):
+        def execute(self, sql, params=None):
+            if "FROM sources s" in sql:
+                return Rows(rows)
+            if "FROM alerts" in sql:
+                return Rows([{"strong": 0}])
+            if "LATERAL" in sql:
+                return Rows([{"total": 10, "ok": 4}])
+            return Rows([{"n": 0}])
+
+    text = status.build_status(StatusRepo({"tick:last": "2026-10-02T09:00:00+00:00"}), NOW)
+    assert "🧪 DENEMEDE (2)" in text and "Facebook'ta 2 gruba sunucudaki sosyal okuyucuyla bakıyorum" in text
+    assert "Bakmıyorum, alarm da vermiyorum: Instagram (1 kaynak)." in text  # Facebook "bakmıyorum"da değil
 
 
 # --- toplama işi ---

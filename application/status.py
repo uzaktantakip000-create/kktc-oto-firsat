@@ -93,10 +93,17 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
                   "Buralara bakıyorum ama haber vermiyorum, sadece ölçüyorum (sen kapattın ya da çok yanlış fiyat çıktığı için ben düşürdüm)."]
         lines += [_source_line(r, quiet) for r in shadow_n]
 
-    if paused_n:
-        counts = {p: sum(1 for r in paused_n if r["platform"] == p) for p in feed_switch.PLATFORMS}
+    # Eski Apify yolu duraklatılmış olsa da gölge Facebook grupları VPS'teki sosyal okuyucuyla okunuyor (gölge haftası, 10.10.2026):
+    # "bakmıyorum" demek yanlıştı (Kapsam departmanı bulgusu). Bunlar ayrı satırda; kalanlar eskisi gibi.
+    trial = [r for r in paused_n if r["platform"] == "facebook" and r["alert_level"] == "golge" and r["status"] == "aktif"]
+    rest = [r for r in paused_n if r not in trial]
+    if rest:
+        counts = {p: sum(1 for r in rest if r["platform"] == p) for p in feed_switch.PLATFORMS}
         lines += ["", "📴 DURAKLATILANLAR", "Bakmıyorum, alarm da vermiyorum: "
                   + ", ".join(f"{KIND[p]} ({n} kaynak)" for p, n in counts.items() if n) + "."]
+    if trial:
+        lines += ["", f"🧪 DENEMEDE ({len(trial)})", f"Facebook'ta {len(trial)} gruba sunucudaki sosyal okuyucuyla bakıyorum: ilanlar kaydediliyor ve "
+                  "değerlendiriliyor ama haber vermiyorum (deneme haftası; sabah mesajındaki \"🧪 Facebook deneme\" satırı)."]
     try:
         fun = json.loads(repo.get_state(f"fb_funnel:{now:%Y-%m}", "{}") or "{}")
     except ValueError:
