@@ -14,6 +14,7 @@ DatabaseDown = (psycopg.OperationalError, psycopg.InterfaceError)
 
 # "Bir kez gider": aynı ilan için 🟢 (guclu) ve 🟠 (tahmini) TEK hak paylaşır; 🟡 (pazarlik) kaydı yalnızca günlük özetin kaydıdır, hak harcamaz.
 SENT_ONCE_TIERS = ["guclu", "tahmini"]
+RETRACTED = "geri_cekildi"  # alerts.kind: mesajı sonradan silinen yanlış bildirim (10.10.2026 Auris): oylanmaz ama "gitti" sayılır, yeniden gönderilmez
 
 
 def _tiers_blocking(tier: str) -> list[str]:
@@ -731,7 +732,8 @@ class Repository:
         """Son 'days' günde 🟢/🟠 bildirimi giden ilanlar (ilan başına tek satır, en yeni önce) ve oylanıp oylanmadığı: denetim dışındaki
         her düğme cevabı (👍/👎, eski mesajlardaki pas/satılmış/kusurlu) oy sayılır. Kişiye özel (haftalık rapor herkese gider, 08.10.2026):
         `chat_id` verilirse yalnız o sohbete giden bildirimler; oy yalnız O KİŞİNİNKİ (sahip: OWNER_VOTE_SQL, abone: kendi 'chat:' notu).
-        Eskiden herkesin oyu sayılıyordu: abone oylayınca ilan sahibin "oy bekleyenler" listesinden düşüyordu."""
+        Eskiden herkesin oyu sayılıyordu: abone oylayınca ilan sahibin "oy bekleyenler" listesinden düşüyordu.
+        Geri çekilen (mesajı silinen, `kind = RETRACTED`) bildirim listelenmez: silinen yanlış mesaj raporda düğmeleriyle yeniden çıkmasın."""
         voter = OWNER_VOTE_SQL if owner else "f.note = 'chat:' || %(chat)s"
         chat = " AND chat_id = %(chat)s" if chat_id else ""
         return self.conn.execute(
@@ -739,10 +741,11 @@ class Repository:
                       l.is_active, x.tier, x.sent_at,
                       EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = l.id AND f.action NOT LIKE 'audit_%%' AND {voter}) AS voted
                FROM (SELECT listing_id, MIN(tier) AS tier, MIN(sent_at) AS sent_at FROM alerts  -- MIN(tier): ikisi birden varsa guclu
-                     WHERE tier = ANY(%(tiers)s) AND sent_at > NOW() - make_interval(days => %(days)s){chat} GROUP BY listing_id) x
+                     WHERE tier = ANY(%(tiers)s) AND sent_at > NOW() - make_interval(days => %(days)s){chat}
+                       AND kind IS DISTINCT FROM %(retracted)s GROUP BY listing_id) x
                JOIN listings l ON l.id = x.listing_id
                ORDER BY x.sent_at DESC""",
-            {"tiers": SENT_ONCE_TIERS, "days": days, "chat": str(chat_id) if chat_id else None}).fetchall()
+            {"tiers": SENT_ONCE_TIERS, "days": days, "chat": str(chat_id) if chat_id else None, "retracted": RETRACTED}).fetchall()
 
     def unnotified_strong(self, rules_version: str, days: int = 14, limit: int = 50) -> list[dict]:
         """Bildirilmemiş 🟢'ler: EN SON değerlendirmesi bu kural sürümüyle 🟢 ve son 'days' günde yapılmış, ilan aktif, kopya/karantina değil,

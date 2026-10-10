@@ -7,6 +7,7 @@ import psycopg
 import pytest
 
 from application.evaluate import clamp_pct
+from infrastructure.db.repository import RETRACTED
 from tests.conftest import safe_test_dsn
 
 pytestmark = pytest.mark.db
@@ -1022,6 +1023,19 @@ def test_alerted_votes_one_row_per_alerted_listing_newest_first_with_vote_state(
     rows = db.alerted_votes(30)
     assert [(r["id"], r["tier"], r["voted"]) for r in rows] == [(b, "tahmini", False), (a, "guclu", True)]
     assert rows[0]["is_active"] is True and len(db.alerted_votes(60)) == 3
+
+
+def test_retracted_alert_is_not_listed_for_votes_but_still_counts_as_sent(db):
+    """10.10.2026: yanlış 🟢 (para birimi karışıklığı) 3 sohbetten silindi; haftalık raporda "oy bekleyen" olarak yeniden çıkmamalı,
+    ama gitmiş sayılmalı (aynı ilan bir daha gönderilmez)."""
+    c, sid = db.conn, add_source(db.conn)
+    bad, ok = add_listing(c, sid, "bad"), add_listing(c, sid, "ok")
+    db.save_alert(bad, "c1", "guclu", 1, evaluation_id=None, price_gbp=None)
+    db.save_alert(ok, "c1", "guclu", 2, evaluation_id=None, price_gbp=None)
+    c.execute("UPDATE alerts SET kind = %s WHERE listing_id = %s", (RETRACTED, bad))
+    assert [r["id"] for r in db.alerted_votes(30)] == [ok]
+    assert [r["id"] for r in db.alerted_votes(30, chat_id="c1", owner=False)] == [ok]
+    assert db.alert_exists(bad, "c1", "guclu")
 
 
 
