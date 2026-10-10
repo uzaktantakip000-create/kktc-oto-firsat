@@ -815,3 +815,11 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
   - Sahip işi: Supabase Usage → Egress sayısını okumak.
   - Diğer öneriler: DB'ye bağlanılamazsa DB'siz doğrudan Telegram uyarısı; anında "yedek eskidi" uyarısı ve geri yükleme provası; VPS sürüm sapması uyarısı; 06.11 ölçütleri için günlük sayaçlar.
   - Zaman bombası taraması (sahte saatle 01.01.2027, 29.02.2028 vb.) temiz. 21.12'de 8+ emsalli ilanların ~%22'si 8'in altına iner (plandaki %30 eşiğinin altında).
+- **Kalite departmanı denetimi (ilan dosyası + /bul, yayından önce):**
+  - Çökme ya da canlıyı durduran hata bulunmadı. Yanlış sonuç veren 12 bulgu düzeltildi (467fdf6, 16f05a9, bcce620).
+  - /bul okuma hataları: "7000 kadar" fiyatı 1000 katına çıkarıyordu; £ ₺ € simgeleri kayboluyordu; "fiat 500", "peugeot 2008", "bmw 320i" ve "mercedes e 220" yanlış okunuyordu.
+  - Kişisel filtreler: sahibin /istemiyorum ve /butce ayarları ucuz ilanı "➖ Fırsat değil" gösteriyordu. Artık yalnız ayrı bir satırla söylenir.
+  - Karantinadaki ilan artık uyarıyla gösterilir.
+  - Satıcı sayısı piyasa hesabıyla aynı anahtarla bulunur: telefon ya da KKTCar kimliği; yazar adı sayılmaz.
+  - Okunamayan sitenin linkine "2 saatte gelir" sözü verilmez. Okumadığımız FB grubundaki gönderi, grup ekleme önerisine gider.
+  - Bilerek bırakılan: /bul ve ilan dosyası, ilan kontrolüyle ortak günlük kotayı kullanır (egress koruması). Abone, varsayılan ayarla 🟠 görebilir; abone bildirimleriyle tutarlı.
