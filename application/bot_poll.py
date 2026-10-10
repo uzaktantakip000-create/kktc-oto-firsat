@@ -52,6 +52,8 @@ HELP_OWNER = ("📖 Komutlar (cevap en geç ~15 dk içinde gelir)\n\n"
               "İlan kontrolü: bir ilanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü gönder; piyasayla karşılaştırıp cevap veririm.\n"
               "📂 İlan dosyası: taradığım sitelerden (KKTCar, KibrisArabaAl, KKTCarabam, Mezunum) bir ilanın linkini gönder; kararı, pazarlık hedefini, "
               "ilanın yaşını, satıcının başka ilanlarını, aynı aracın başka sitedeki ilanını ve benzerlerini yazarım.\n"
+              "📞 Sokakta \"SATILIK\" yazan bir aracın levhasının fotoğrafını ya da yalnız telefon numarasını gönder: numara taradığım ilanlarda "
+              "geçiyorsa o satıcının ilanlarını kararlarıyla yazarım.\n"
               "Kaynak eklemek: Instagram hesabının, Facebook grubunun ya da yeni sitenin linkini gönder; eklemeden önce sorarım.\n"
               "Her fırsat mesajındaki 👍 İşe yarar / 👎 Yanlış düğmesine bas: sistemi bu oylarla ölçüyorum.")
 HELP_SUBSCRIBER = ("Bu bot KKTC'deki ikinci el araç ilanlarını tarar; piyasanın belirgin altında kalan fırsatları bu sohbete yazar. "

@@ -1302,3 +1302,19 @@ def test_search_active_filters_and_skips_social_copies_and_quarantine(db):
     assert items(db.search_active("Toyota", "vitz", 2015, 2018, None, 8000, None, None, 10)) == {"ok", "manual", "no_km", "far_km"}
     assert "corolla" in items(db.search_active("Toyota", None, None, None, None, None, None, None, 50))
     assert items(db.search_active("Toyota", "vitz", None, None, 7000, None, None, None, 10)) == {"pricey"}
+
+
+def test_listings_by_phone_lists_the_numbers_ads_active_first_without_copies(db):
+    """📞 telefon (application/phone_lookup): numaranın ilanları, kopya hariç, aktif önce."""
+    c = db.conn
+    kaa = add_source(c, "KAA")
+    old = add_listing(c, kaa, "old", first_seen_at=ago(hours=2), seller_phone="905330000001")
+    new = add_listing(c, kaa, "new", first_seen_at=ago(minutes=5), seller_phone="905330000001")
+    add_listing(c, kaa, "copy", first_seen_at=ago(minutes=4), seller_phone="905330000001", duplicate_of=new)
+    sold = add_listing(c, kaa, "sold", first_seen_at=ago(days=20), seller_phone="905330000001", is_active=False)
+    add_listing(c, kaa, "other", first_seen_at=ago(minutes=3), seller_phone="905330000002")
+    by_phone = db.listings_by_phone("905330000001")
+    assert [r["id"] for r in by_phone][-1] == sold and {r["id"] for r in by_phone} == {old, new, sold}
+    assert by_phone[0]["source_name"] == "KAA" and isinstance(by_phone[0]["price_gbp"], float)
+    assert db.listings_by_phone("905339999999") == []
+

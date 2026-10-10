@@ -658,6 +658,16 @@ class Repository:
             {"b": brand_norm, "m": model_norm, "y1": year_min, "y2": year_max, "p1": price_min, "p2": price_max, "k": km_max,
              "t": transmission, "limit": limit}).fetchall()
 
+    def listings_by_phone(self, phone: str, limit: int = 30) -> list[dict]:
+        """📞 Telefon → ilanlar (application/phone_lookup, 11.10.2026): bu telefonun geçtiği ilanlar, kopya hariç, en yeni önce; aktif ve pasif
+        (pasif ilanın telefonu saklama süresinde silinir). Telefon zaten bilindiği için dönen satırlar onu yazdırmaz; çağıran yalnız ilanı gösterir."""
+        return self.conn.execute(
+            """SELECT l.*, l.price_gbp::float8 AS price_gbp, l.price_amount::float8 AS price_amount, s.name AS source_name, s.platform,
+                      s.alert_level, s.last_checked_at AS source_checked_at
+               FROM listings l JOIN sources s ON s.id = l.source_id
+               WHERE l.seller_phone = %s AND l.duplicate_of IS NULL
+               ORDER BY l.is_active DESC, l.first_seen_at DESC LIMIT %s""", (phone, limit)).fetchall()
+
     def resurfaced_kktcarabam(self, listing_ids, gap_minutes: int = RESURFACE_RUN_GAP_MINUTES) -> set:
         """Yeniden çıkmış eski KKTCarabam ilanları (verilen ilanlar arasından). Site eski ilanı "en yeni" listesine geri itince ilan bizim için
         "yeni" görünür ama numarası daha önce gördüklerimizden KÜÇÜKTÜR (ilanlar numarayla, oluşturulma sırasıyla açılır). Kural: ilan KKTCarabam'dan

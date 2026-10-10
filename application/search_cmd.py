@@ -223,6 +223,32 @@ def _line(l: dict, a, now: datetime, s: Settings) -> tuple[tuple, str]:
     return (rank, price / m.median_gbp), f"{mark} {head} · {km} · {money} · {where}{target} · {l['source_name']}{old}"
 
 
+def plausible(rows: list[dict], s: Settings) -> list[dict]:
+    """Fiyatı yazan ve mantıklı aralıkta olan ilanlar (£1 yer tutucu, eksik/fazla rakam elenir)."""
+    return [r for r in rows if r.get("price_gbp") and s.min_plausible_price_gbp <= float(r["price_gbp"]) <= s.max_plausible_price_gbp]
+
+
+def scored_lines(repo: Repository, rows: list[dict], s: Settings, now: datetime, book=None) -> list[tuple]:
+    """Her ilan taranan ilanla aynı kararla (decide) tek satır; sıralı [(sıra anahtarı, satır, link)]. rows: `plausible`dan geçmiş ilanlar.
+    /bul, 📞 telefon araması ve 🎯 av modu aynı satırı kullanır."""
+    pool = [r for r in repo.market_pool(days=s.comparable_window_days + 30, keys=pool_keys(rows)) if is_car_brand(r.get("brand_norm"))]
+    if s.estimated_alerts and book is None:
+        book = load_book(repo)
+    estimates = book if s.estimated_alerts else None
+    return sorted(((*_line(l, decide(l, pool, s, estimates, now=now), now, s), l.get("url")) for l in rows), key=lambda x: x[0])
+
+
+def stale_lines(rows: list[dict], now: datetime) -> list[str]:
+    """Okunamayan kaynak: oradaki ilanlar satılmış olabilir (ilan başına değil, kaynak başına bir satır)."""
+    stale = {}
+    for l in rows:
+        note = stale_source_text(l, now)
+        if note:
+            stale.setdefault(l["source_name"], note)
+    return [note.replace(": ilanın hâlâ yayında olup olmadığını bilmiyorum, aramada sor", ": oradaki ilanlar satılmış olabilir")
+            for note in stale.values()]
+
+
 def search(repo: Repository, args: str, s: Settings, now: datetime | None = None) -> str:
     """s: arayanın ayarları. Kişisel bildirim filtreleri karar etiketini değiştirmez (aranan marka/bütçe bilerek yazıldı); engellenen satıcının
     ilanı listelenmez."""
@@ -235,26 +261,17 @@ def search(repo: Repository, args: str, s: Settings, now: datetime | None = None
         return HELP if not q.words else f"\"{' '.join(q.words)}\" diye bir araç bulamadım (değer tablosunda yok olabilir).\n\n{HELP}"
     brand, model = target
     rows = repo.search_active(brand, model, q.year_min, q.year_max, q.price_min, q.price_max, q.km_max, q.transmission, CANDIDATES)
-    rows = [r for r in rows if r.get("price_gbp") and s.min_plausible_price_gbp <= float(r["price_gbp"]) <= s.max_plausible_price_gbp
-            and not (r.get("seller_phone") and r["seller_phone"] in blocked)]
+    rows = [r for r in plausible(rows, s) if not (r.get("seller_phone") and r["seller_phone"] in blocked)]
     title = "🔎 " + _filters_text(brand, model, q)
     if not rows:
         return f"{title}\nŞu an taranan sitelerde bu aramaya uyan aktif ilan yok."
-    pool = [r for r in repo.market_pool(days=s.comparable_window_days + 30, keys=pool_keys(rows)) if is_car_brand(r.get("brand_norm"))]
-    estimates = book if s.estimated_alerts else None
-    scored = sorted(((*_line(l, decide(l, pool, s, estimates, now=now), now, s), l.get("url")) for l in rows), key=lambda x: x[0])
+    scored = scored_lines(repo, rows, s, now, book)
     total = rows[0].get("total") or len(rows)
     found = f"{total} aktif ilan (en yeni {len(rows)} tanesine bakıldı)" if total > CANDIDATES else f"{len(rows)} aktif ilan"
     lines = [title, f"Taranan sitelerde {found}; önce fırsatlar, sonra piyasaya göre en ucuzlar ({min(SHOWN, len(scored))} tane):"]
     for _, text, url in scored[:SHOWN]:
         lines.append(text + (f"\n   {url}" if url else ""))
-    stale = {}
-    for l in rows:
-        note = stale_source_text(l, now)
-        if note:
-            stale.setdefault(l["source_name"], note)
-    for name, note in stale.items():  # okunamayan kaynak: ilanları satılmış olabilir (ilan başına değil, kaynak başına bir satır)
-        lines.append(note.replace(": ilanın hâlâ yayında olup olmadığını bilmiyorum, aramada sor", ": oradaki ilanlar satılmış olabilir"))
+    lines += stale_lines(rows, now)
     lines.append("Bir ilanın tam dosyası için linkini bana gönder.")
     return "\n".join(lines)
 

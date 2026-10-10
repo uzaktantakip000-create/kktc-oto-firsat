@@ -156,6 +156,7 @@ def handle(repo: Repository, text: str, image: bytes | None, reader: LlmReader |
     (eşik, bütçe, istenmeyen marka...) onun kontrolüne uygulanmaz: sistemin standart kuralları geçerlidir."""
     if not quota_ok(repo, now, subscriber):
         return f"Günlük {MAX_PER_DAY if subscriber is None else MAX_PER_DAY_SUBSCRIBER} ilan kontrol sınırına ulaşıldı; yarın tekrar dene."
+    raw_text = text
     if image is not None:
         if reader is None:
             return "Ekran görüntüsünü okumak için yapay zekâ anahtarı tanımlı değil. İlanı yazı olarak gönder."
@@ -164,5 +165,22 @@ def handle(repo: Repository, text: str, image: bytes | None, reader: LlmReader |
             extra = f" ({reader.last_error})" if reader.last_error else ""
             return f"🤔 Görüntüden yazı okuyamadım{extra}. Daha net bir görüntü ya da yazı olarak gönder."
         text = (text + "\n" + seen).strip() if text else seen
+    from application import phone_lookup  # içeride: phone_lookup → dossier → ad_check döngüsü
     from application.settings_store import load_settings
-    return analyze_text(repo, text, reader, load_settings(repo) if subscriber is None else Settings(), from_image=image is not None)
+    s = load_settings(repo) if subscriber is None else Settings()
+    # 📞 Sahip: levha fotoğrafı ya da yalnız numara → o numaranın ilanları (application/phone_lookup). İlan yazısında numara varsa ilan
+    # kontrolü yine yapılır, altına numaranın taranan sitelerdeki aktif ilan sayısı eklenir.
+    phones = phone_lookup.find_phones(text) if subscriber is None else []
+    if phones and phone_lookup.is_sign(text):
+        return phone_lookup.reply(repo, phones, s, now, from_image=image is not None and not phone_lookup.find_phones(raw_text))
+    out = analyze_text(repo, text, reader, s, from_image=image is not None)
+    if phones:
+        try:
+            n = phone_lookup.active_count(repo, phones)
+        except Exception as e:  # ek satır: ilan kontrolünü bozmasın
+            print(f"telefon sayımı başarısız: {type(e).__name__}")
+            n = 0
+        if n:
+            out += f"\n📞 Bu numara taranan sitelerde {n} aktif ilanda geçiyor" + (" → galeri/ticari olabilir" if n >= phone_lookup.DEALER_ADS else "") \
+                   + ". Numarayı tek başına gönderirsen ilanlarını listelerim."
+    return out
