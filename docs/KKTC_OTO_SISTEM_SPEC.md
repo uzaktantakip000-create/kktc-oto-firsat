@@ -745,3 +745,73 @@ Sahibin isteğiyle sistemin tamamı 9 salt-okunur Sonnet ajanıyla tarandı (pla
   - Fark raporu: aynı anlık görüntüde 2.810 aktif ilanda yalnız bu Auris değişti (🟢 → yok). Bugüne kadar fırsat kararı alan tek USD ilanı buydu; toplam USD/EUR ilan 16, aktif 3.
 - **Kalıcı düzeltme 2 — mesajda ilanın kendi fiyatı (`notify.price_text`):** ilan STG değilse "£7.942 (ilanda 10.500 USD)" / "£7.960 (ilanda 517.543 TL)". Bu biçim fırsat mesajında, 🟠 özetinde ve haftalık rapor satırlarında aynıdır; STG ilanda mesaj değişmez.
 - **Bilinen sınır:** KKTCarabam ilan sayfası bize 403 verdiği için km ve telefon okunamıyor. Bu yüzden başka sitedeki aynı araçla kopya bağı kurulamıyor (bu ilan sitede 133.000 km yazıyordu). Para birimi koruması bu vakayı tutar; km'siz KKTCarabam ilanında "km ve direksiyon yazmıyor" uyarısı zaten gider.
+
+### 24.23 Ekip çalışması: departmanlar + sosyal oturum (10.10.2026; sahip: "ekip olun… bana sormadan en iyi hale getirin… mevcut yol haritasını ve sistemi bozmasın")
+Dört alt ajan "departman" (salt okunur, kişisel veri yok) ve sosyal medya oturumu ölçtü. Bulgular ve yapılanlar:
+- **Doğruluk:**
+  - 10 👎'nin hepsi tek abonenin, 08.10'da elle herkese giden raporun satırlarına 10 saniyede verdiği toplu oylar. Satırlarda km/piyasa yoktu; bu ilanlar o aboneye canlı gitmemişti. Bugünkü kurallarla 8/10'u zaten 🟢 değil.
+  - Asıl risk km'si bilinmeyen ilan: gizli-km deneyinde 🟢'lerin %45'i sahte. KKTCarabam'dan giden 3 🟢'nin üçü de sorunlu.
+  - "%20 ucuz"un ~2/3'ü fiyat gürültüsüyle uyumlu.
+- **Kapsam:**
+  - KibrisArabaAl %99,9 kapsanıyor.
+  - KKTCarabam liste sayfası 2 saatte bir okunuyor; sayfa dolunca tahminen %10–40 kayıp.
+  - Telefonsuz "aynı araç" eşleşmesi %20–50 yanlış: bağ kurulmaz, mesajda "benzer ilan" denir.
+- **Ürün:** eski "neden" satırı 🟢'de hep aynıydı. Aynı/benzer ilan bildirimlerin %25'inde var.
+- **Yapılanlar (kod; DB yazması yok):**
+  - Mesajda km/yıl kıyası ve aynı/benzer ilan satırı (para birimi çelişkisi, fiyat çelişkisi, kopyadaki km, "benzer ilanı N dk önce bildirmiştim").
+  - Haftalık rapor oy satırlarında km + piyasa ortası; yakın kaçanlarda "£X olursa %20 kâr".
+  - Hacim alarmı: çok ilanlı kaynakta gündüz 6 saat yeni ilan yok.
+  - /durum'da gölge Facebook grupları "denemede" satırında.
+  - Facebook devir bekçisi (sosyal oturumla ortak): devir kapalı/bayat/eksik, aktarım geride, sessiz grup, kesik metin.
+  - Serbest metinde "kilometre/mileage" etiketi (sosyal oturumdan).
+- **🟢 gürültü kapısı (RULES_VERSION 2026-10-11; kural sürümü günde bir artar, 11.10'da canlıya çıkar):**
+  - km'si bilinen ilanda fiyat, emsallerin log-fiyat yayılımına göre en az 2 sigma ucuz olmalı; değilse en fazla 🟡. Anlık görüntüde 🟢 19 → 14.
+  - **Temkinli km kapısı kodda ama kapalı:** sahibin 04.10 kararını daraltır, açılması sahip onayına bağlı. Açılırsa 🟢 19 → 8.
+- **Sahip kararı bekleyenler:**
+  1. Temkinli km kapısı.
+  2. KKTCarabam liste sayfasını gündüz saatlik okumak (siteye daha çok istek).
+  3. 7. gün: kesik Facebook gönderilerini açmak (hesap riski) ya da galerilerin sayfasını okumak.
+  4. Mil → km çevirisi.
+  5. /izle (izleme listesi; migration gerekir).
+- **Facebook yeşil kapısı (sosyal oturumla):**
+  - devir eşitliği;
+  - 2×20 elle kontrol, en az 19/20 doğru;
+  - her "olsaydı 🟡/🟢" elle kontrol;
+  - site eşleri %100 bağlı;
+  - kademeli açılış: 14 gün boyunca günde en çok 1 FB 🟢, "Facebook, yeni kaynak" etiketi, oylar ayrı sayılır.
+
+### 24.24 "Cebindeki piyasa uzmanı" (10.10.2026 gece; sahip: "beni şaşırtın, wow diyeyim"; sosyal oturumla ortak)
+Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış istek, migration ve DB yazması yok (ilan kontrolüyle ortak günlük kota sayacı hariç).
+- **📂 İlan dosyası (`application/dossier.py`):**
+  - Sahip ya da onaylı abone taranan bir sitenin ilan linkini gönderir; ilan veritabanında bulunur (adres ya da sitenin ilan numarası). Link açılmaz, siteye istek gitmez.
+  - Dosyada: taranan ilanla AYNI karar (`decide`), piyasa ortası, 🎯 %20 kâr için en çok alış fiyatı (`domain.profit.buy_ceiling`, haftalık raporla aynı formül, £50'ye aşağı), km/yıl kıyası (yalnız 🟢/🟡), ilanın yaşı, fiyat geçmişi, satıcının başka aktif ilan sayısı, aynı araç başka sitede, en yakın 3 emsal.
+  - İlanın yaşı: 21+ gün "pazarlıkta koz", 60+ gün "araç satılmış olabilir, önce sor".
+  - Satıcı sayısı: telefon (her kaynakta) ya da aynı kaynakta aynı hesap. Telefon ve ad yazılmaz.
+  - Facebook gruplarındaki benzer ilanlar yalnız SAYI olarak (deneme kaynağı; yeşil kapısına dek listelenmez).
+  - Bulunamayan ilan sayfası linkine "henüz görmedim". Grup, hesap ya da site linki eskisi gibi kaynak önerisine gider.
+- **🔎 /bul (`application/search_cmd.py`):**
+  - Örnekler: "/bul fit 2015-2018 7000", "/bul bmw 3 2012 sonrası 10bin", "/bul corolla 150bin km otomatik".
+  - Model /fiyat'la aynı yolla tanınır; yalnız marka yazılırsa markanın bütün modelleri aranır.
+  - Her ilan aynı kararla işaretlenir. Sıra: önce 🟢/🟡, sonra piyasaya göre en ucuz; 6 sonuç ve link.
+  - 🟡 satırında "%20 kâr için ≤£X" (🟡 özeti sahibin kararıyla kapalı; 🟡'ler artık burada görünür).
+  - TL/$/€ ilanda asıl fiyat da yazar (Auris dersi). Şüpheli km ve 60+ günlük ilan işaretlidir. Facebook ve Instagram listelenmez.
+- **Satıcı radarı (sosyal oturum, okuyucu tarafı 653cdca; bot tarafı burada):**
+  - Devir satırında isteğe bağlı `satici_gonderi_14g` alanı: telefonun 14 günde geçtiği FARKLI gönderi sayısı (telefon yazılmaz).
+  - ≥3 ise "galeri", 1-2 ise "bireysel", yoksa dokunulmaz.
+  - Ölçüm: 23 FB ilanının 14'ü galeri, 4'ü bireysel, 5'i telefonsuz.
+- **KibrisArabaAl Cloudflare engeli (20:05 UTC'den beri):**
+  - Site haritası ve robots.txt botumuza (UA "KKTCOtoBot") "Sorry, you have been blocked" (403) veriyor. Engel başka IP'den de aynı; robots.txt bize hâlâ izin veriyor; site tarayıcıyla açılıyor.
+  - Engelden hemen önce (19:50) sunucudan 8 sayfalık tek seferlik bir teşhis denemesi turla aynı anda çalıştı. Tetikleyici olmuş olabilir.
+  - Kural: siteye teşhis isteği atılmaz, ölçüm DB/logdan yapılır. Engel AŞILMAZ (tarayıcı kimliği taklidi yok).
+  - Karar sahibin: siteyle iletişim ya da kaybı kabul. KAA en büyük kaynak (~2.850 aktif, günde ~80 yeni).
+  - Site haritası 403 verince 2 saat siteye istek atılmaz (`collect_kibrisarabaal.BLOCK_PAUSE`; günde 96 yerine 12 deneme); tur hata sayılır, kaynak alarmı sürer.
+  - Kaynak 12 saatten uzun okunamazsa dosya ve /bul "ilan satılmış olabilir" der. Hacim alarmı, taraması hata veren kaynakta çalmaz; kaynak alarmı söyler.
+- **Bulgular:**
+  - KAA'da 4 günde 8.042 yeniden okuma yapıldı; fiyat değişikliği 0, satış 0. 8 ilanın canlı kontrolü DB ile birebir tuttu. Site eski ilanları kapatmıyor (2025 Kasım ilanı hâlâ "satışta"); ilanın yaşı satış hızı ölçüsü olarak kullanılamaz.
+  - KKTCarabam ve Mezunum liste kartındaki fiyat değişikliği bugün yok sayılıyor (`upsert_listing` var olan ilanda yalnız last_seen yazar). KKTCarabam listesinde yalnız en yeni 18 kart görünüyor; kazanç önce ölçülecek.
+- **Operasyon departmanı (salt okunur denetim):**
+  - Supabase çıkış trafiği tahmini 3,25 GB/ay ve ilan sayısıyla büyüyor; Kasım ortasında ~5 GB (ücretsiz plan sınırı). Aşılırsa DB kısılır ve uyarılar susar.
+  - Kod-only öneriler: değer tablosunu yalnız aday anahtarlarla yüklemek; mükerrer taramasının tam turunu 4–6 saate çekmek (birlikte ~%40).
+  - Sahip işi: Supabase Usage → Egress sayısını okumak.
+  - Diğer öneriler: DB'ye bağlanılamazsa DB'siz doğrudan Telegram uyarısı; anında "yedek eskidi" uyarısı ve geri yükleme provası; VPS sürüm sapması uyarısı; 06.11 ölçütleri için günlük sayaçlar.
+  - Zaman bombası taraması (sahte saatle 01.01.2027, 29.02.2028 vb.) temiz. 21.12'de 8+ emsalli ilanların ~%22'si 8'in altına iner (plandaki %30 eşiğinin altında).
