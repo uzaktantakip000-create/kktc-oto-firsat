@@ -1,6 +1,6 @@
 from pydantic import BaseModel, model_validator
 
-RULES_VERSION = "2026-10-10"  # değerleme kuralları değişince artır (günde en çok bir kez): sonraki TAM turda bildirime aday ilanlar yeni kurallarla yeniden değerlendirilir (EKLEME-YALNIZ: eski satır silinmez), kalanı 3 günlük yeniden bakışla yenilenir
+RULES_VERSION = "2026-10-11"  # değerleme kuralları değişince artır (günde en çok bir kez): sonraki TAM turda bildirime aday ilanlar yeni kurallarla yeniden değerlendirilir (EKLEME-YALNIZ: eski satır silinmez), kalanı 3 günlük yeniden bakışla yenilenir
 
 
 class Settings(BaseModel):
@@ -36,6 +36,16 @@ class Settings(BaseModel):
     max_comparables_per_seller: int = 2  # bir satıcının (telefon ya da KKTCar satıcı kimliği) piyasaya katacağı en fazla emsal; 0 = sınırsız
     social_max_age_hours: int = 48  # Instagram/Facebook gönderisi bundan eskiyse anlık 🟢 gitmez (satılmış olabilir)
     low_confidence_can_alert: bool = False  # 3-7 emsalli ilan 🟢 olmaz (en fazla 🟡): küçük havuzlarda sahte fırsat çok çıkıyor
+    # Doğruluk departmanı (10.10.2026; RULES_VERSION 2026-10-11): "%20 ucuz"un ~2/3'ü dağınık pazarlarda simetrik fiyat gürültüsüyle uyumluydu
+    # (ayna testi: ucuz taraf %4,6, pahalı taraf %3,2). 🟢 için fiyat, emsallerin (ilanın km'sine çekilmiş) log-fiyat yayılımına (MAD-sigma, en az 0,03)
+    # göre en az 2 sigma ucuz olmalı; değilse en fazla 🟡 (`fiyat_gurultu`). %20 kuralının YERİNE değil, YANINA.
+    strong_max_z: float = -2.0
+    # km'si bilinmeyen/şüpheli, en az 5 yaşındaki ilanda 🟢 ancak km "emsal km medyanı + 45.000" varsayılınca da 🟢 kalıyorsa (yoksa en fazla 🟡,
+    # `km_temkinli`). Ölçüm: km'si bilinen 4.408 ilanın km'si gizlenince çıkan 31 🟢'nin 14'ü sahteydi; bu kuralla 2'ye iner (doğru 🟢 17 → 12).
+    # KAPALI: sahibin 04.10 kararını ("km eksik tek başına engel değil"; altın dosyada g19/g21 'yesil') daraltır: açılması sahip onayına bağlı.
+    unknown_km_check: bool = False
+    unknown_km_extra: int = 45_000
+    unknown_km_min_age: int = 5
     # --- kullanıcı kararları (Telegram komutlarıyla değişir, application/settings_store.py) ---
     max_buy_gbp: float | None = None  # bundan pahalı ilan için bildirim yok (/butce)
     blocked_brands: list[str] = []  # /istemiyorum <marka>

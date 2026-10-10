@@ -7,11 +7,13 @@ Kural değişikliği tek yerde yapılır; kural dosyaları (comparables, profit,
 
 `Decision`: karar + kanıt (emsal özeti, tahmin, nedenler). Mesaj/kayıt biçimi ve G/Ç (tazelik, canlılık, yapay zekâ doğrulaması,
 Telegram) bu modülün işi DEĞİLDİR; bunlar kararın üstüne uygulanan gönderim koşullarıdır (application katmanı)."""
+import math
+import statistics
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from domain.alert_policy import send_floor_ok
-from domain.comparables import Market, find_market
+from domain.comparables import Market, effective_km, find_market, km_adjusted_price
 from domain.data_gate import KM_UNKNOWN_WARNING, below_cheap_quartile, data_gaps, km_unknown
 from domain.model_ambiguity import model_ambiguous
 from domain.price_book import STATUS_SUSPECT, Estimate, PriceBook, estimate_from_book
@@ -141,12 +143,49 @@ def _estimated_assessment(listing: dict, market: Market | None, a: Decision | No
     return Decision(mk, result, [], warnings, ["tahmini_az_emsal"], text, "B", est)
 
 
+def price_z(listing: dict, market: Market, pool: list[dict], s: Settings, now: datetime) -> float | None:
+    """Fiyatın, piyasayı kuran emsallerin (ilanın km'sine çekilmiş) log-fiyat yayılımına göre uzaklığı: ln(fiyat/medyan) / MAD-sigma (en az 0,03).
+    5'ten az emsal fiyatı varsa None (ölçülemez: kural uygulanmaz)."""
+    ids, today = set(market.comparable_ids), now.date()
+    target_km = effective_km(listing, today)
+    prices = [km_adjusted_price(float(r["price_gbp"]), target_km, effective_km(r, today), s.km_adjust_per_10k) for r in pool if r["id"] in ids]
+    if len(prices) < 5 or market.median_gbp <= 0:
+        return None
+    logs = [math.log(p) for p in prices]
+    mid = statistics.median(logs)
+    sigma = 1.4826 * statistics.median(abs(x - mid) for x in logs)
+    return (math.log(float(listing["price_gbp"])) - math.log(market.median_gbp)) / max(sigma, 0.03)
+
+
+def _strong_checks(listing: dict, a: Decision, pool: list[dict], s: Settings, book: PriceBook | None, now: datetime) -> Decision:
+    """🟢'nin son iki kapısı (RULES_VERSION 2026-10-11, Doğruluk departmanı): fiyat gürültüsü (`price_z` > strong_max_z) ve km'si bilinmeyen
+    yaşlı araçta temkinli km varsayımı. Biri tutmazsa en fazla 🟡; kâr hesabı (mesajdaki rakamlar) değişmez. km'si bilinmeyen ilanda İKİSİ DE
+    yalnız `unknown_km_check` açıkken uygulanır (km'siz ilanda emsaller km'ye çekilemez, yayılım büyür: kapı fiilen km'sizliği cezalandırır;
+    sahibin 04.10 kararı "km eksik tek başına engel değil", altın dosyada g17/g19/g21 'yesil')."""
+    gaps = []
+    known_km = effective_km(listing, now.date()) is not None
+    z = price_z(listing, a.market, pool, s, now) if known_km or s.unknown_km_check else None  # km'siz ilan: sahibin 04.10 kararı (aşağıda)
+    if z is not None and z > s.strong_max_z:
+        gaps.append("fiyat_gurultu")
+    year = listing.get("year")
+    if s.unknown_km_check and not known_km and year and now.year - year >= s.unknown_km_min_age and a.market.median_km:
+        assumed = decide(dict(listing, km=a.market.median_km + s.unknown_km_extra), pool, s, book, now, strong_checks=False)
+        if assumed is None or assumed.profit.tier is not Tier.STRONG:
+            gaps.append("km_temkinli")
+    if not gaps:
+        return a
+    p = a.profit
+    capped = ProfitResult(p.exit_price_gbp, p.profit_gbp, p.profit_pct, p.confidence, Tier.NEGOTIABLE)
+    return Decision(a.market, capped, a.blocking, a.warnings, a.gaps + gaps, a.text, a.method, a.estimate)
+
+
 def decide(listing: dict, pool: list[dict], s: Settings, book: PriceBook | None = None, now: datetime | None = None,
-           exclude_ids: tuple | frozenset = ()) -> Decision | None:
+           exclude_ids: tuple | frozenset = (), strong_checks: bool = True) -> Decision | None:
     """Tek ilanın piyasa değerlendirmesi. Emsal yoksa (ve 🟠 de yoksa) None.
     `book` verilirse: şüpheli tablo satırında 🟢 bekler, az emsalde 🟠 tahmini fırsat denenir.
     `now`: karar anı (verilmezse şimdi); emsal penceresi ve "eksik km" kuralı bu ana göre işler.
-    `exclude_ids`: emsal sayılmayacak ilan kimlikleri (ör. kullanıcının ilettiği ilanın veritabanındaki ikizi: ilan kendi emsali olmasın)."""
+    `exclude_ids`: emsal sayılmayacak ilan kimlikleri (ör. kullanıcının ilettiği ilanın veritabanındaki ikizi: ilan kendi emsali olmasın).
+    `strong_checks`: 🟢'nin gürültü ve temkinli km kapıları (`_strong_checks`); yalnız temkinli km denemesinin iç çağrısında kapalıdır."""
     now = now or datetime.now(timezone.utc)
     if exclude_ids:
         pool = [r for r in pool if r["id"] not in exclude_ids]
@@ -155,6 +194,8 @@ def decide(listing: dict, pool: list[dict], s: Settings, book: PriceBook | None 
     text = (listing.get("raw_text") or "") + " " + (listing.get("model") or "")
     blocking, warnings = blocking_flags(text), warning_flags(text)
     a = _market_assessment(listing, market, price, text, blocking, warnings, s, book, now) if market is not None else None
+    if a is not None and strong_checks and a.profit.tier is Tier.STRONG:
+        a = _strong_checks(listing, a, pool, s, book, now)
     if book is None:
         return a
     return _estimated_assessment(listing, market, a, price, text, blocking, warnings, s, book, now) or a

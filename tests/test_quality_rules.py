@@ -94,6 +94,39 @@ def test_gbp_and_try_prices_are_not_touched_by_the_currency_check():
     assert "para_birimi_supheli" not in repo.saved[0][1]["red_flags"]
 
 
+# --- 🟢 gürültü kapısı ve temkinli km (Doğruluk departmanı, RULES_VERSION 2026-10-11) ---
+WIDE = [car(f"w{i}", p) for i, p in enumerate([5000, 6000, 7000, 8000, 9000, 10000, 11000, 12000, 13000])]  # çok dağınık pazar (medyan 9.000)
+
+
+def test_discount_inside_the_normal_price_spread_is_not_green():
+    repo = FakeRepo([car("t", 6500)], WIDE)  # medyandan %28 ucuz ama bu pazarda fiyatlar ±%37 oynuyor (z ≈ -0,9)
+    (e,) = evaluate_new(repo)
+    assert e.profit.tier is Tier.NEGOTIABLE and "fiyat_gurultu" in repo.saved[0][1]["red_flags"]
+    (tight,) = evaluate_new(FakeRepo([car("t", 5000)], POOL))  # dar pazarda (8.000–9.400) aynı oranda ucuzluk gürültü değil
+    assert tight.profit.tier is Tier.STRONG
+
+
+def test_unknown_km_listing_is_not_judged_by_the_spread_unless_the_owner_turns_it_on():
+    from domain.decision import decide
+    from domain.settings import Settings
+    l = car("t", 6500, km=None)
+    assert decide(l, WIDE, Settings(), now=NOW).profit.tier is Tier.STRONG  # sahibin 04.10 kararı: km eksik tek başına engel değil
+    assert decide(l, WIDE, Settings(unknown_km_check=True), now=NOW).profit.tier is Tier.NEGOTIABLE
+
+
+def test_conservative_km_assumption_caps_unknown_km_old_cars_when_turned_on():
+    from domain.decision import decide
+    from domain.settings import Settings
+    near = [car(f"n{i}", p, km=80_000 + i * 2_000) for i, p in enumerate([7400, 7600, 7800, 8000, 8000, 8200, 8400, 8600])]
+    l = car("t", 5900, km=None, year=2015)  # km bilinse ve ortalama olsa %25 kâr; +45.000 km varsayılınca fiyatlar ~%5 düşer, kâr %20 altına iner
+    on = decide(l, near, Settings(unknown_km_check=True), now=NOW)
+    assert decide(l, near, Settings(), now=NOW).profit.tier is Tier.STRONG
+    assert on.profit.tier is Tier.NEGOTIABLE and "km_temkinli" in on.gaps
+    young = car("t", 5900, km=None, year=NOW.year - 2)
+    young_pool = [dict(r, year=NOW.year - 2) for r in near]
+    assert decide(young, young_pool, Settings(unknown_km_check=True), now=NOW).profit.tier is Tier.STRONG  # 5 yaşından küçük: kural yok
+
+
 # --- gümrük / evrak filtresi ----------------------------------------------------------------------------------
 @pytest.mark.parametrize("text", ["Gümrüksüz araç", "GÜMRÜKSÜZ", "evrakı yok", "evraksız", "evrak eksik", "ICRALIK araç",
                                   "gümrük borcu var", "haciz var", "gümrüğü ödenmedi"])
