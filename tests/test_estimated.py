@@ -81,6 +81,8 @@ def test_eight_or_more_comparables_never_estimated(monkeypatch):
     ({"raw_text": "hasarlı araç"}, {}),
     ({"currency_guess": True}, {}),
     ({"karantina_nedeni": "uc_fiyat"}, {}),
+    ({"currency": "USD", "price_amount": 7900}, {}),  # USD/EUR: satıcı STG yerine yanlış seçmiş olabilir
+    ({"currency": "EUR", "price_amount": 6900}, {}),
 ])
 def test_blockers_no_estimated(monkeypatch, over, setting):
     s = Settings(**setting)

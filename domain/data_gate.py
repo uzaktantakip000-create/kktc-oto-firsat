@@ -11,6 +11,7 @@ KM_UNKNOWN_WARNING = "km yazmıyor ya da şüpheli: aracı görmeden km'ye güve
 GAP_LABELS = {
     "km_yok": "km yazmıyor",  # ESKİ kayıtlar için etiket: km eksikliği artık 🟢'yi engellemez, uyarı olarak gider (KM_UNKNOWN_WARNING)
     "para_birimi_tahmin": "para birimi tahmin",
+    "para_birimi_supheli": "fiyat USD/EUR yazıyor; aynı rakam STG olsaydı fırsat değil (satıcı para birimini yanlış seçmiş olabilir)",
     "tl_fiyat": "fiyat TL: TL ilanlar GBP ilanlara göre ortalama %12-23 ucuz görünüyor; kontrol et",
     "fiyat_asiri_dusuk": "fiyat emsallerin yarısından düşük: yazım hatası ya da tuzak olabilir",
     "model_yok": "model okunamadı",

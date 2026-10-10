@@ -55,6 +55,23 @@ def _apply_user_decisions(listing: dict, s: Settings, price: float, tier: Tier, 
     return tier, gaps
 
 
+CONFUSABLE_CURRENCIES = ("USD", "EUR")  # rakamı sterline yakın para birimleri (TL'de rakam çok büyük, karışmaz)
+
+
+def _as_gbp_tier(listing: dict, market: Market, s: Settings) -> Tier | None:
+    """USD/EUR fiyatlı ilanda AYNI rakam sterlin olsaydı verilecek seviye; başka para biriminde None.
+    KKTC'de araç fiyatı neredeyse hep STG; satıcı STG yerine yanlışlıkla USD/EUR seçebiliyor (10.10.2026: aynı 2014 Auris, aynı satıcı,
+    KibrisArabaAl'da £10.500, KKTCarabam'da "10.500 USD" -> £7.942'ye çevrildi ve yanlış 🟢 gitti). Fırsat yalnız kur çevriminden doğuyorsa
+    (rakam STG okununca fırsat yok) bildirim gitmez; STG okumasında yalnız 🟡 ise en fazla 🟡."""
+    if listing.get("currency") not in CONFUSABLE_CURRENCIES or not listing.get("price_amount"):
+        return None
+    amount = float(listing["price_amount"])
+    tier = evaluate_profit(amount, market.median_gbp, market.n, s).tier
+    if tier is Tier.STRONG and not below_cheap_quartile(amount, market):
+        tier = Tier.NEGOTIABLE
+    return tier
+
+
 def _market_assessment(listing: dict, market: Market, price: float, text: str, blocking: list[str], warnings: list[str],
                        s: Settings, book: PriceBook | None, now: datetime) -> Decision:
     """Bugünkü 🟢/🟡 yolu (emsal medyanı)."""
@@ -74,6 +91,11 @@ def _market_assessment(listing: dict, market: Market, price: float, text: str, b
         if row is not None and row.status == STATUS_SUSPECT:
             gaps = gaps + ["deger_supheli"]  # tablo bu modelde bir gecede çok oynadı: 🟢 bekler
     tier, gaps = _apply_user_decisions(listing, s, price, tier, gaps)
+    as_gbp = _as_gbp_tier(listing, market, s) if tier in (Tier.STRONG, Tier.NEGOTIABLE) else None
+    if as_gbp is Tier.NONE:
+        tier = Tier.NONE  # fırsat yalnız USD/EUR çevriminden: aynı rakam STG ise sıradan fiyat, bildirim yok
+    elif as_gbp is Tier.NEGOTIABLE and tier is Tier.STRONG:
+        gaps = gaps + ["para_birimi_supheli"]
     downgraded = tier is Tier.STRONG and bool(gaps)
     if downgraded:  # eksik/şüpheli veriyle 🟢 yok: en fazla 🟡
         tier = Tier.NEGOTIABLE
@@ -81,7 +103,8 @@ def _market_assessment(listing: dict, market: Market, price: float, text: str, b
     absurd = price < market.median_gbp * s.absurd_price_ratio  # evaluate_profit: n<8'de 'yok', ≥8'de en fazla 🟡 (yazım hatası/tuzak): kırmızı bayrak her n'de kayda geçer
     if tier in (Tier.STRONG, Tier.NEGOTIABLE) and km_unknown(listing, now):
         warnings = warnings + [KM_UNKNOWN_WARNING]  # km eksik/şüpheli tek başına engel değil (sahip kararı 04.10.2026): uyarıyla gider
-    return Decision(market, final, blocking, warnings, gaps if downgraded else ["fiyat_asiri_dusuk"] if absurd else [], text)
+    noted = gaps if downgraded else ["para_birimi_supheli"] if as_gbp is Tier.NONE else ["fiyat_asiri_dusuk"] if absurd else []
+    return Decision(market, final, blocking, warnings, noted, text)
 
 
 def _estimated_assessment(listing: dict, market: Market | None, a: Decision | None, price: float, text: str,
@@ -91,6 +114,7 @@ def _estimated_assessment(listing: dict, market: Market | None, a: Decision | No
     if (not s.estimated_alerts or blocking or listing.get("karantina_nedeni") or listing.get("currency_guess")
             or listing.get("steering") == "LHD"  # sol direksiyon: eğri sağ direksiyonla kurulu
             or listing.get("currency") == "TRY"  # TL ilanlar tabloya göre %6-10 ucuz görünür: 🟠 olmaz
+            or listing.get("currency") in CONFUSABLE_CURRENCIES  # USD/EUR: satıcı STG yerine yanlış seçmiş olabilir (az emsal + para şüphesi: 🟠 olmaz)
             or model_ambiguous(listing)):  # karışık model anahtarında eğri de karışıktır
         return None
     if market is not None and market.n >= 8:

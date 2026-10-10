@@ -41,9 +41,9 @@ VOTE_DAYS, VOTE_SHOW = 30, 10  # 30 günlük ölçüm penceresi (spec §24.5); e
 UNNOTIFIED_DAYS, UNNOTIFIED_SHOW = 14, 5  # sahibin kararı: en çok 5
 LIVENESS_MAX_CHECKS = 10  # haftada bir en çok bu kadar sayfa isteği (KibrisArabaAl 5 sn aralıkla: ~1 dk)
 NEAR_SHOW = 5
-NEAR_SKIP = ("fiyat_asiri_dusuk", "okuma_satildi", "model_belirsiz")  # yazım hatası/tuzak, yapay zekâya göre satılmış, karışık model: "kâr" sahte
+NEAR_SKIP = ("fiyat_asiri_dusuk", "okuma_satildi", "model_belirsiz", "para_birimi_supheli")  # yazım hatası/tuzak, yapay zekâya göre satılmış, karışık model, USD/EUR şüphesi: "kâr" sahte
 SHORT_REASON = {"km_yuksek": "km yüksek", "tl_fiyat": "fiyat TL (TL ilanlar ucuz görünür)", "emsal_yili_yeni": "emsaller daha yeni model",
-                "ucuz_ceyrek_degil": "benzerlerin en ucuz çeyreğinde değil", "para_birimi_tahmin": "para birimi yazmıyor",
+                "ucuz_ceyrek_degil": "benzerlerin en ucuz çeyreğinde değil", "para_birimi_tahmin": "para birimi yazmıyor", "para_birimi_supheli": "USD/EUR yazıyor, STG olabilir",
                 "model_yok": "model okunamadı", "plaka_uyari": "TR/yabancı plaka", "sessiz_model": "sessize aldığın model",
                 "deger_supheli": "değer tablosu yeni değişti", "llm_okudu": "yapay zekâ okudu"}
 PLATFORM_NAMES = {"instagram": "Instagram", "facebook": "Facebook"}

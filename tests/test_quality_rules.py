@@ -60,6 +60,40 @@ def test_tr_plate_caps_at_yellow():
     assert ev_.profit.tier is Tier.NEGOTIABLE and "plaka_uyari" in repo.saved[0][1]["red_flags"]
 
 
+# --- USD/EUR: satıcı STG yerine yanlış para birimi seçmiş olabilir (10.10.2026 yanlış 🟢: 2014 Auris "10.500 USD", aynı araç başka sitede £10.500) ---
+USD_RATE, EUR_RATE = 0.7564, 0.8691
+
+
+def test_usd_price_that_is_a_normal_price_as_gbp_gets_no_alert():
+    # POOL medyanı 8.700: 8.500 USD (£6.429) çevrilince 🟢, ama aynı rakam STG olsa sıradan fiyat -> bildirim yok
+    as_gbp_control = FakeRepo([car("t", round(8500 * USD_RATE, 2))], POOL)
+    assert evaluate_new(as_gbp_control)[0].profit.tier is Tier.STRONG
+    repo = FakeRepo([car("t", round(8500 * USD_RATE, 2), currency="USD", price_amount=8500)], POOL)
+    evs = evaluate_new(repo)
+    assert all(e.profit.tier is Tier.NONE for e in evs)
+    assert "para_birimi_supheli" in repo.saved[0][1]["red_flags"] and repo.saved[0][1]["tier"] == "yok"
+
+
+def test_usd_price_that_is_still_cheap_as_gbp_stays_strong():
+    repo = FakeRepo([car("t", round(5500 * EUR_RATE, 2), currency="EUR", price_amount=5500)], POOL)
+    (e,) = evaluate_new(repo)
+    assert e.profit.tier is Tier.STRONG and "para_birimi_supheli" not in repo.saved[0][1]["red_flags"]
+
+
+def test_usd_price_only_yellow_as_gbp_caps_at_yellow():
+    repo = FakeRepo([car("t", round(6900 * USD_RATE, 2), currency="USD", price_amount=6900)], POOL)
+    (e,) = evaluate_new(repo)  # STG okunursa %15 kâr: en fazla 🟡
+    assert e.profit.tier is Tier.NEGOTIABLE and "para_birimi_supheli" in repo.saved[0][1]["red_flags"]
+
+
+def test_gbp_and_try_prices_are_not_touched_by_the_currency_check():
+    (e,) = evaluate_new(FakeRepo([car("t", 5000, currency="GBP", price_amount=5000)], POOL))
+    assert e.profit.tier is Tier.STRONG
+    repo = FakeRepo([car("t", 5000, currency="TRY", price_amount=5000 / 0.0185)], POOL)  # TL'nin kendi kuralı var (tl_fiyat: en fazla 🟡)
+    evaluate_new(repo)
+    assert "para_birimi_supheli" not in repo.saved[0][1]["red_flags"]
+
+
 # --- gümrük / evrak filtresi ----------------------------------------------------------------------------------
 @pytest.mark.parametrize("text", ["Gümrüksüz araç", "GÜMRÜKSÜZ", "evrakı yok", "evraksız", "evrak eksik", "ICRALIK araç",
                                   "gümrük borcu var", "haciz var", "gümrüğü ödenmedi"])
