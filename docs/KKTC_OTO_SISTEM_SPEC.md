@@ -804,7 +804,7 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
   - Engelden hemen önce (19:50) sunucudan 8 sayfalık tek seferlik bir teşhis denemesi turla aynı anda çalıştı. Tetikleyici olmuş olabilir.
   - Kural: siteye teşhis isteği atılmaz, ölçüm DB/logdan yapılır. Engel AŞILMAZ (tarayıcı kimliği taklidi yok).
   - Karar sahibin: siteyle iletişim ya da kaybı kabul. KAA en büyük kaynak (~2.850 aktif, günde ~80 yeni).
-  - **Sahip kararı (10.10.2026 21:10 UTC): "Sadece bekleyelim".** Siteye yazılmaz, kapatılmaz; sistem 2 saatte bir dener, engel kalkarsa kaldığı yerden sürer. Kaynak alarmı 48 saatte bir hatırlatır.
+  - **Sahip kararı (10.10.2026 ~21:30 UTC): "Sadece bekleyelim".** Siteye yazılmaz, kapatılmaz; sistem 2 saatte bir dener, engel kalkarsa kaldığı yerden sürer. Kaynak alarmı 48 saatte bir hatırlatır.
   - Site haritası 403 verince 2 saat siteye istek atılmaz (`collect_kibrisarabaal.BLOCK_PAUSE`; günde 96 yerine 12 deneme); tur hata sayılır, kaynak alarmı sürer.
   - Kaynak 12 saatten uzun okunamazsa dosya ve /bul "ilan satılmış olabilir" der. Hacim alarmı, taraması hata veren kaynakta çalmaz; kaynak alarmı söyler.
 - **Bulgular:**
