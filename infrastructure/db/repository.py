@@ -201,7 +201,9 @@ class Repository:
                  AND karantina_nedeni IS NULL
                  AND COALESCE(posted_at, data_as_of, first_seen_at) > NOW() - make_interval(days => %s)
                  -- oyla "yanlış" denen ilan emsal olmaz: herkes eşit, en az 2 kişi ve çoğunluk; sahibin denetimi tek başına yeter
-                 AND listings.id NOT IN ({VOTED_WRONG_SQL})""" + key_sql,
+                 AND listings.id NOT IN ({VOTED_WRONG_SQL})
+                 -- gölge kaynağın ilanı emsal olmaz (yalnız ölçülür; sahip onayı 10.10.2026: Facebook gölge haftası fiyatları bozmasın)
+                 AND listings.source_id NOT IN (SELECT id FROM sources WHERE alert_level = 'golge')""" + key_sql,
             args,
         ).fetchall()
 

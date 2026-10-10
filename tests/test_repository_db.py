@@ -697,6 +697,17 @@ def test_market_pool_drops_a_listing_only_when_at_least_two_people_say_wrong_and
     assert dropped == {"two_bad", "two_subs", "changed_mind", "audit", "kusurlu_mix"}
 
 
+
+def test_market_pool_leaves_out_listings_of_shadow_sources(db):
+    """Gölge kaynak (yalnız ölçülür) ilanı emsal olmaz; kaynak yeşile/sarıya dönünce yeniden emsaldir (sahip onayı 10.10.2026)."""
+    c = db.conn
+    web, fb = add_source(c, "W"), add_source(c, "F", "facebook")
+    c.execute("UPDATE sources SET alert_level='golge' WHERE id=%s", (fb,))
+    on_site, in_shadow = add_listing(c, web, "site"), add_listing(c, fb, "fb")
+    assert {str(r["id"]) for r in db.market_pool(days=120)} == {str(on_site)}
+    c.execute("UPDATE sources SET alert_level='sari' WHERE id=%s", (fb,))
+    assert {str(r["id"]) for r in db.market_pool(days=120)} == {str(on_site), str(in_shadow)}
+
 # --- abone oyu otomatik davranışı yönlendirmez (repository.OWNER_VOTE_SQL): her okuma için abone oyu sayılmaz, sahibinki sayılır ---
 def add_people(conn):
     conn.execute("INSERT INTO subscribers (chat_id, name, status, is_owner) VALUES ('o1','sahip','onayli',TRUE), ('s1','abone','onayli',FALSE)")
