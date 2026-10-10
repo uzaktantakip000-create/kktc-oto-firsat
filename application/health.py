@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from application import feed_switch
 from application.notify import TelegramError, api
+from domain.kktc_time import kktc_hour, to_kktc
 from infrastructure.config import redact
 from infrastructure.db.repository import Repository
 
@@ -64,9 +65,34 @@ def _older_than_week(repo: Repository, source: dict) -> bool:
     return repo.conn.execute("SELECT %s < NOW() - interval '7 days' AS old", (source["created_at"],)).fetchone()["old"]
 
 
+VOLUME_MIN_PER_DAY = 30  # hacim alarmı yalnız günde ortalama en az bu kadar yeni ilan getiren kaynakta (KibrisArabaAl ~90, KKTCarabam ~55; KKTCar ~6: hariç)
+VOLUME_SILENT = timedelta(hours=6)  # bu kaynaklarda gündüz 6 saat hiç yeni ilan yoksa toplayıcı sessizce ilan kaçırıyor olabilir
+VOLUME_DAY_KKTC = (10, 22)  # yalnız bu KKTC saatlerinde bakılır
+VOLUME_DAY_START = 8  # sessizlik en erken KKTC 08:00'den sayılır: gece boşluğu sayılmaz (geçen haftaya karşı: yalnız 09.10 gerçek gecikmesinde çalardı)
+
+
+def volume_problems(repo: Repository, now: datetime | None = None) -> list[tuple[str, str]]:
+    """Kapsam departmanı (10.10.2026): tarama "başarılı" görünür ama yeni ilan gelmez (KKTCar'da site haritası değişince olduğu gibi). Çok ilan
+    getiren kaynakta gündüz VOLUME_SILENT boyunca hiç yeni ilan yoksa sahibe uyarı. Tarama hiç yapılmıyorsa `source_problems` zaten söyler."""
+    now = now or datetime.now(timezone.utc)
+    if not VOLUME_DAY_KKTC[0] <= kktc_hour(now) < VOLUME_DAY_KKTC[1]:
+        return []
+    day_start = to_kktc(now).replace(hour=VOLUME_DAY_START, minute=0, second=0, microsecond=0)
+    out = []
+    for s in repo.source_volume():
+        last, per_day = s["last_new"], s["per_day"] or 0
+        if (repo.get_state(f"fail:{s['name']}", "0") or "0") != "0":  # tarama hata veriyor: kaynak alarmı (source_alarm) söyler; burada
+            continue  # "tarama çalışıyor görünüyor" demek yanlış olur (10.10.2026: KibrisArabaAl Cloudflare 403)
+        if per_day >= VOLUME_MIN_PER_DAY and last is not None and now - max(last, day_start) > VOLUME_SILENT:
+            hours = (now - last).total_seconds() / 3600
+            out.append((f"volume:{s['id']}", f"📉 {s['name']}: {hours:.0f} saattir hiç yeni ilan gelmedi (normalde günde ~{per_day:.0f}). "
+                        "Tarama çalışıyor görünüyor ama site düzeni değişmiş, ilanlar kaçıyor olabilir."))
+    return out
+
+
 def check_sources(repo: Repository) -> int:
     sent = 0
-    for key, text in source_problems(repo):
+    for key, text in source_problems(repo) + volume_problems(repo):
         sent += notify_owner(repo, key, "⚠️ Sistem uyarısı\n" + text, repeat_hours=24)
     return sent
 

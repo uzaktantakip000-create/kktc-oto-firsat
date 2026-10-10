@@ -692,6 +692,18 @@ class Repository:
                   OR (platform = 'web' AND status = 'aktif' AND (url LIKE '%kktcar.com%' OR url LIKE '%kktcarabam.com%' OR url LIKE '%kibrisarabaal.com%' OR url LIKE '%mezunumsatiyorumkibris.com.tr%'))"""
         ).fetchall()
 
+    def source_volume(self) -> list[dict]:
+        """Anlık bildirim veren web kaynakları: son 7 günün (bugünden önceki 24 saat hariç) günlük ortalama yeni ilan sayısı ve son yeni ilan anı
+        (hacim alarmı: health.volume_problems). Kopyalar da sayılır: sitenin kendi yayın akışı ölçülür."""
+        return self.conn.execute(
+            """SELECT s.id, s.name,
+                      count(l.id) FILTER (WHERE l.first_seen_at BETWEEN NOW() - interval '8 days' AND NOW() - interval '1 day')::float8 / 7 AS per_day,
+                      max(l.first_seen_at) AS last_new
+               FROM sources s LEFT JOIN listings l ON l.source_id = s.id AND l.first_seen_at > NOW() - interval '8 days'
+               WHERE s.platform = 'web' AND s.status = 'aktif' AND s.alert_level = 'yesil'
+               GROUP BY s.id, s.name"""
+        ).fetchall()
+
     def sources_failing_feedback(self, window: int = 10, max_bad: int = 3) -> list[dict]:
         """Anlık bildirim veren kaynaklardan, SON 'window' 🟢'sinin en az 'max_bad' tanesi oyla "yanlış" sayılanlar (VOTED_WRONG_SQL:
         herkes eşit, en az 2 kişi ve çoğunluk)."""

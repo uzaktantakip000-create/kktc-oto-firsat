@@ -151,3 +151,46 @@ def test_check_fx_alerts_only_after_24_hours_of_fallback(monkeypatch):
     assert health.check_fx(FxRepo({"TRY": (now - timedelta(hours=30)).isoformat()}), now) == 1
     assert "30 saattir" in sent[0] and "TRY" in sent[0]
     assert health.check_fx(FxRepo({"TRY": "bozuk değer"}), now) == 0  # okunamayan kayıt hata vermez
+
+
+# --- hacim alarmı (Kapsam departmanı, 10.10.2026): tarama başarılı görünür ama yeni ilan gelmez ---
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+from domain.kktc_time import KKTC  # noqa: E402
+
+
+class VolumeRepo:
+    def __init__(self, rows, state=None):
+        self.rows, self.state = rows, state or {}
+
+    def source_volume(self):
+        return self.rows
+
+    def get_state(self, k, default=None):
+        return self.state.get(k, default)
+
+
+def vol(per_day, hours_ago, now, name="KibrisArabaAl"):
+    return {"id": "s1", "name": name, "per_day": per_day, "last_new": now - timedelta(hours=hours_ago)}
+
+
+def test_busy_source_silent_six_daytime_hours_is_flagged():
+    now = datetime(2026, 10, 12, 17, 0, tzinfo=KKTC).astimezone(timezone.utc)
+    (key, text), = health.volume_problems(VolumeRepo([vol(90, 7, now)]), now)
+    assert key == "volume:s1" and "KibrisArabaAl: 7 saattir hiç yeni ilan gelmedi (normalde günde ~90)" in text
+    assert health.volume_problems(VolumeRepo([vol(90, 5, now)]), now) == []  # 5 saat: henüz değil
+    assert health.volume_problems(VolumeRepo([vol(6, 30, now, "KKTCar")]), now) == []  # az ilanlı kaynak: sessizlik olağan
+    assert health.volume_problems(VolumeRepo([{"id": "s2", "name": "x", "per_day": 50, "last_new": None}]), now) == []
+    # tarama hata veriyorsa (403 vb.) kaynak alarmı söyler; hacim alarmı "tarama çalışıyor görünüyor" diye ikinci, yanlış mesaj atmaz
+    assert health.volume_problems(VolumeRepo([vol(90, 7, now)], {"fail:KibrisArabaAl": "2"}), now) == []
+    assert len(health.volume_problems(VolumeRepo([vol(90, 7, now)], {"fail:KibrisArabaAl": "0"}), now)) == 1
+
+
+def test_volume_is_not_checked_at_night_or_early_morning():
+    for hour in (23, 3, 9):
+        now = datetime(2026, 10, 12, hour, 0, tzinfo=KKTC).astimezone(timezone.utc)
+        assert health.volume_problems(VolumeRepo([vol(90, 12, now)]), now) == []
+    morning = datetime(2026, 10, 12, 11, 0, tzinfo=KKTC).astimezone(timezone.utc)  # son ilan gece 02:00: sessizlik 08:00'den sayılır (3 saat)
+    assert health.volume_problems(VolumeRepo([vol(90, 9, morning)]), morning) == []
+    afternoon = datetime(2026, 10, 12, 14, 30, tzinfo=KKTC).astimezone(timezone.utc)  # 08:00'den beri hiç yok: 6,5 saat
+    assert len(health.volume_problems(VolumeRepo([vol(90, 12, afternoon)]), afternoon)) == 1

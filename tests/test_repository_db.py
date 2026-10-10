@@ -1052,6 +1052,19 @@ def test_twins_finds_linked_copies_and_similar_listings_elsewhere_without_linkin
     assert {r["id"] for r in db.twins(km_row)} == {copy}  # km ikisinde de var ve uzak (133.000 / 120.000 ↔ 80.000): benzer değil; kopya bağı kalır
 
 
+def test_source_volume_is_the_daily_average_of_the_previous_week_and_the_last_new_listing(db):
+    c = db.conn
+    busy, shadow = add_source(c, "KAA"), add_source(c, "FB", platform="facebook")
+    c.execute("UPDATE sources SET alert_level='yesil' WHERE id=%s", (busy,))
+    for i in range(14):
+        lid = add_listing(c, busy, f"k{i}")
+        c.execute("UPDATE listings SET first_seen_at = now() - make_interval(days => %s) - interval '2 hours' WHERE id=%s", (1 + i % 7, lid))
+    fresh = add_listing(c, busy, "today")
+    rows = {r["name"]: r for r in db.source_volume()}
+    assert "FB" not in rows and rows["KAA"]["per_day"] == 2.0  # yalnız web; bugünkü ilan ortalamaya girmez (migration'ların kaynakları da listede)
+    assert rows["KAA"]["last_new"] == c.execute("SELECT first_seen_at FROM listings WHERE id=%s", (fresh,)).fetchone()["first_seen_at"]
+
+
 def test_retracted_alert_is_not_listed_for_votes_but_still_counts_as_sent(db):
     """10.10.2026: yanlış 🟢 (para birimi karışıklığı) 3 sohbetten silindi; haftalık raporda "oy bekleyen" olarak yeniden çıkmamalı,
     ama gitmiş sayılmalı (aynı ilan bir daha gönderilmez)."""
