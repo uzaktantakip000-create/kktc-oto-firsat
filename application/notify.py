@@ -119,6 +119,8 @@ def format_alert(ev: Evaluated, note: dict | None = None) -> str:
     age = posted_age_text(l.get("posted_at"), l.get("platform"))
     if age:
         lines.append(age)
+    if l.get("platform") == "facebook":  # sahibin kararı (09.10.2026): grup gönderisi üye olmayana açılmaz
+        lines.append(f"👥 Facebook grubu: {l['source_name']} · ilanı açmak için gruba üye olmak gerekir")
     if l["url"]:
         lines.append(f"🔗 {l['url']}")
     return "\n".join(lines)

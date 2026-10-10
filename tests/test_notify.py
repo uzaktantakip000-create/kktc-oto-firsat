@@ -243,3 +243,15 @@ def test_persistently_failing_alert_record_leaves_a_fallback_trace_so_the_messag
     assert "bildirim gitti ama kaydı yazılamadı" in capsys.readouterr().out
     assert notify.send_alerts(repo, "t", [ev(1), ev(2)]) == 0 and sent == ["a", "a"]  # tekrar yok
 
+
+
+def test_facebook_alert_names_the_group_and_says_membership_is_needed():
+    """Sahibin kararı (09.10.2026): FB 🟢 mesajında grup adı + "açmak için gruba üye olmak gerekir" + bağlantı."""
+    e = ev(1)
+    e.listing.update(platform="facebook", source_name="KKTC ARABA PAZARI", url="https://www.facebook.com/groups/1/posts/2/")
+    lines = notify.format_alert(e).splitlines()
+    assert lines[-2:] == ["👥 Facebook grubu: KKTC ARABA PAZARI · ilanı açmak için gruba üye olmak gerekir",
+                          "🔗 https://www.facebook.com/groups/1/posts/2/"]
+    site = ev(2)
+    site.listing.update(platform="web", url="https://kktcar.com/listing/x")
+    assert "👥" not in notify.format_alert(site) and "👥" not in notify.format_alert(ev(3))  # site ve platformu bilinmeyen: satır yok
