@@ -762,7 +762,9 @@ class Repository:
         chat = " AND chat_id = %(chat)s" if chat_id else ""
         return self.conn.execute(
             f"""SELECT l.id, l.url, l.year, l.brand, l.model, l.price_gbp::float8 AS price_gbp, l.price_amount::float8 AS price_amount, l.currency,
-                      l.is_active, x.tier, x.sent_at,
+                      l.is_active, x.tier, x.sent_at, l.km,
+                      (SELECT e.market_median_gbp::float8 FROM alerts a2 JOIN evaluations e ON e.id = a2.evaluation_id
+                       WHERE a2.listing_id = l.id ORDER BY a2.sent_at LIMIT 1) AS median_gbp,  -- bildirim anındaki piyasa ortası (oy verirken görülsün)
                       EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id = l.id AND f.action NOT LIKE 'audit_%%' AND {voter}) AS voted
                FROM (SELECT listing_id, MIN(tier) AS tier, MIN(sent_at) AS sent_at FROM alerts  -- MIN(tier): ikisi birden varsa guclu
                      WHERE tier = ANY(%(tiers)s) AND sent_at > NOW() - make_interval(days => %(days)s){chat}
@@ -800,7 +802,8 @@ class Repository:
         Nedenlerinden biri 'skip_reasons' içinde olan (ör. yazım hatası şüphesi, karışık model) atlanır. En iyi kâr önce."""
         return self.conn.execute(
             """SELECT l.id, l.url, l.year, l.brand, l.model, l.price_gbp::float8 AS price_gbp, l.price_amount::float8 AS price_amount, l.currency,
-                      s.name AS source_name, e.comparables_n, e.profit_pct::float8 AS profit_pct, e.nedenler
+                      s.name AS source_name, e.comparables_n, e.profit_pct::float8 AS profit_pct, e.nedenler,
+                      e.exit_price_gbp::float8 AS exit_price_gbp
                FROM (SELECT DISTINCT ON (listing_id) * FROM evaluations ORDER BY listing_id, evaluated_at DESC) e
                JOIN listings l ON l.id = e.listing_id JOIN sources s ON s.id = l.source_id
                WHERE e.tier = 'pazarlik' AND e.rules_version = %s AND e.comparables_n >= %s

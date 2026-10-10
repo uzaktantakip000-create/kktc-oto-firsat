@@ -1022,6 +1022,7 @@ def test_alerted_votes_one_row_per_alerted_listing_newest_first_with_vote_state(
     c.execute("INSERT INTO feedback (listing_id, action) VALUES (%s,'ilgilendim'), (%s,'audit_dogru')", (a, b))  # denetim oy değildir
     rows = db.alerted_votes(30)
     assert [(r["id"], r["tier"], r["voted"]) for r in rows] == [(b, "tahmini", False), (a, "guclu", True)]
+    assert rows[1]["km"] == 80_000 and rows[1]["median_gbp"] is None  # evaluation_id yok: piyasa ortası bilinmiyor
     assert rows[0]["is_active"] is True and len(db.alerted_votes(60)) == 3
 
 

@@ -24,6 +24,7 @@ from application.notify import TelegramError, api, is_fresh, photo_stale, price_
 from application.settings_store import load_settings
 from application.status import late_sources
 from domain.alert_policy import MIN_COMPARABLES_TO_SEND
+from domain.comparables import effective_km
 from domain.data_gate import GAP_LABELS
 from domain.decision import send_allowed
 from domain.kktc_time import to_kktc
@@ -82,6 +83,30 @@ def _price(r: dict) -> str:
     return price_text(r["price_gbp"], r.get("price_amount"), r.get("currency"))
 
 
+def _km(r: dict) -> str:
+    """Oy satırında km (10.10.2026: abone yalnız yıl/marka/fiyat görüp toplu 👎 vermişti; km ve piyasa ortası olmadan "yanlış mı" bilinemez).
+    Alan yoksa (eski kayıt) boş; varsa "· 210.000 km" ya da "· km yok"."""
+    if "km" not in r:
+        return ""
+    if not r["km"]:
+        return " · km yok"
+    return f" · {_num(r['km'])} km" + ("" if effective_km(r) else " (şüpheli)")  # "214 km": eski araçta bin eksik
+
+
+def _median(r: dict) -> str:
+    return f" (piyasa ortası {_gbp(r['median_gbp'])})" if r.get("median_gbp") else ""
+
+
+def _target_price(r: dict, s: Settings) -> float | None:
+    """Yakın kaçan 🟡 için %20 kâr (ve asgari kâr tutarı) tutacak en yüksek fiyat: çıkış fiyatından geri hesap (domain/profit ile aynı formül:
+    kâr = çıkış − fiyat − masraf). Yalnız kâr yüzünden 🟡 olan (başka nedeni yok) ilanda anlamlı; başka kapılar (km, çeyrek) bunu söylemez."""
+    exit_price = r.get("exit_price_gbp")
+    if not exit_price or r.get("nedenler"):
+        return None
+    target = min((exit_price - s.fixed_cost_gbp) / (1 + s.strong_threshold), exit_price - s.fixed_cost_gbp - s.min_strong_profit_gbp)
+    return target if 0 < target < r["price_gbp"] else None
+
+
 def _num(n) -> str:
     return f"{n:,}".replace(",", ".")
 
@@ -111,7 +136,7 @@ def _votes_section(repo: Repository, chat_id: str | None = None, owner: bool = T
         return _Section("oy bekleyen", head + ["Hepsini oyladın, teşekkürler."]), []
     head.append(VOTE_ASK_OWNER if owner else VOTE_ASK_SUBSCRIBER)
     shown = todo[:VOTE_SHOW]
-    items = [f"{i}) {'🟢' if r['tier'] == Tier.STRONG.value else '🟠'} {_car(r)} · {_price(r)} · {_day(r['sent_at'])}"
+    items = [f"{i}) {'🟢' if r['tier'] == Tier.STRONG.value else '🟠'} {_car(r)}{_km(r)} · {_price(r)}{_median(r)} · {_day(r['sent_at'])}"
              + ("" if r["is_active"] else " · artık yayında değil") + (f"\n{r['url']}" if r.get("url") else "")
              for i, r in enumerate(shown, 1)]
     tail = [f"… ve {len(todo) - len(shown)} eski bildirim daha (kendi mesajlarındaki düğmelerle oylanır)."] if len(todo) > len(shown) else []
@@ -196,6 +221,8 @@ def _near_section(repo: Repository, s: Settings) -> _Section:
         gaps = [_reason(g) for g in (r["nedenler"] or [])[:2]]
         why = ("ama " + ", ".join(gaps) if gaps else f"(eşik %{thr:.0f})" if r["profit_pct"] < thr
                else f"ama kâr tutarı {_gbp(s.min_strong_profit_gbp)} altında")
+        target = _target_price(r, s)
+        why += f" · {_gbp(target)} olursa %{thr:.0f} kâr" if target else ""
         items.append(f"• {_car(r, 32)} · {_price(r)} · ~%{r['profit_pct']:.0f} kâr {why}" + (f" · {r['url']}" if r.get("url") else ""))
     head = [f"👀 YAKIN KAÇANLAR (yalnız bilgi: bu hafta gelen, {MIN_COMPARABLES_TO_SEND}+ emsalli ama 🟢 olmayan)"]
     return _Section("yakın kaçan", head, items)

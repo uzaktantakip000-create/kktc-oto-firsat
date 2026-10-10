@@ -144,6 +144,24 @@ def test_report_lines_show_the_listing_own_price_when_it_is_not_sterling():
     assert "2013 Honda Fit · £5.400 · ~%30 kâr" in text  # sterlin ilanda tek rakam
 
 
+def test_vote_lines_show_km_and_market_middle_so_voters_can_judge():
+    # 10.10.2026: abone yalnız yıl/marka/fiyat görüp 10 satıra toplu 👎 vermişti
+    rows = [vote_row(1) | {"km": 210_000, "median_gbp": 9800.0}, vote_row(2) | {"km": None, "median_gbp": None},
+            vote_row(3) | {"km": 214, "year": 2014}]
+    text, _ = build(FakeRepo(votes=rows))
+    assert "3) 🟢 2014 BMW 3 Serisi 320i · 214 km (şüpheli) · £7.300" in text
+    assert "1) 🟢 2011 BMW 3 Serisi 320i · 210.000 km · £7.300 (piyasa ortası £9.800) · 14.10" in text
+    assert "2) 🟢 2011 BMW 3 Serisi 320i · km yok · £7.300 · 14.10" in text
+
+
+def test_near_miss_only_short_on_profit_gets_a_target_price():
+    only_profit = near_row(1, pct=18.0) | {"price_gbp": 5500.0, "exit_price_gbp": 6800.0}
+    other_gate = near_row(2, pct=25.0, nedenler=["ucuz_ceyrek_degil"]) | {"exit_price_gbp": 9000.0}
+    text, _ = build(FakeRepo(near=[only_profit, other_gate]))
+    assert "£5.500 · ~%18 kâr (eşik %20) · £5.417 olursa %20 kâr" in text  # min((6800−300)/1,2 = 5.417, 6800−300−750 = 5.750)
+    assert "olursa" not in [l for l in text.splitlines() if "N2" in l or "116i-2" in l][0]
+
+
 def test_only_ten_unvoted_listed_and_the_rest_counted():
     text, kb = build(FakeRepo(votes=[vote_row(i) for i in range(1, 14)]))
     assert "10) 🟢" in text and "11) 🟢" not in text and "… ve 3 eski bildirim daha" in text
