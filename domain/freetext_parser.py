@@ -29,8 +29,21 @@ _PHONE = re.compile(r"(?<!\d)(?:\+?\s*9?0[\s.-]*)?\(?5\d{2}\)?[\s.-]?\d{3}[\s.-]
 # Ardından gelen para birimi yılı fiyat yapar ("2000 STG"); ama birimin arkasında sayı varsa birim o sayınındır ("2014 £6500")
 _YEAR = re.compile(r"(?<![\d.,£€$])(19[89]\d|20[0-3]\d)(?![\d.,]?\d)"
                    r"(?![ \t]*(?:£|₺|€|\$|tl\b|stg\b|gbp\b|sterlin\b|str\b)(?![ \t]*\d))", re.I)
-_KM = re.compile(r"(?<![\d.,])(\d{1,3}(?:[.,]\d{3})+|\d{4,6})\s*(km|mil\w*)\b", re.I)
-_KM_LABEL = re.compile(r"\bkm\s*[:\-]?\s*(\d{1,3}(?:[.,]\d{3})+|\d{4,6})\b", re.I)
+# Sayı ile birim/etiket arası satır sonunu GEÇMEZ ([^\S\n]: satır sonu dışındaki boşluk): "2012\nkm ..." yıl, "km\n4.900 stg" fiyat olurdu.
+_KM_NUM = r"\d{1,3}(?:[.,]\d{3})+|\d{4,6}|\d{1,3}[^\S\n]*(?:bin|k)(?![a-zçğıöşü])"  # "145 bin km", "145k km"
+_KM = re.compile(rf"(?<![\d.,])({_KM_NUM})[^\S\n]*(km|mil\w*)\b", re.I)
+# Etiket ("km: 120.000"): değer yalnız ":"/"-" varsa alt satıra geçebilir ("KM:\n120.000"); arkasından para birimi gelen sayı km değildir.
+_KM_LABEL = re.compile(rf"\bkm(?:[^\S\n]*[:\-]\s*|[^\S\n]*)({_KM_NUM})(?![\d.,]?\d)"
+                       r"(?![^\S\n]*(?:£|₺|€|\$|(?:tl|try|stg|gbp|sterlin|sterling|str|eur|euro|usd|dolar)(?![a-z])))", re.I)
+# Bakım/parça cümlesindeki km aracın km'si değil: "bakımları 2 bin km önce", "her 5 bin km'de bir", "40 bin km'de araçtan sökülüp takıldı".
+# Sitelerin km alanıyla karşılaştırma (10.10.2026, 5.749 ilan): bu cümleler km'yi 2.000–10.000 okutuyordu (değer kaçırılırsa km bilinmiyor
+# kalır, veri kapısı en fazla 🟡 yapar; düşük km ise aracı değerli gösterir). Bakım sözcüğü yalnız küçük sayıda engeller: "213.000 km olup
+# bakımları eksiksiz" aracın km'sidir. "bakımlı" (aracın niteliği) bakım sayılmaz.
+_KM_CLAUSE_END = re.compile(r"[.!?;,(\n|]")
+_KM_SERVICE = re.compile(r"bak[ıi]m(?!l[ıi])|servis|ya[gğ][ıi]?(?![a-zçğıöşü])|ya[gğ]lar|de[gğ]i[sş]|pompa|lastik", re.I)
+_KM_PART = re.compile(r"tak[ıi]l|s[öo]k[üu]l|getir|al[ıi]nm[ıi][sş]", re.I)  # parça/motor takıldı, araç ... km'de alınmış
+_KM_SERVICE_AFTER = re.compile(r"(?:['’][a-zçğıöşü]+)?[^\S\n]*(?:[dt][ae][^\S\n]+bir\b|bir\b|[öo]nce\b|sonra\b|kala\b|kadar\b)", re.I)
+_KM_SERVICE_MAX = 20_000
 _CC = re.compile(r"\b(\d{3,4})\s*cc\b", re.I)
 _MODEL_STOP = {"il", "ilk", "ilan", "sahibinden", "galeriden", "yeni", "temiz", "hasarsiz", "hatasiz", "boyasiz", "tek",
                "motor", "arac", "otomobil", "arabasi", "araba", "marka", "model", "aracimiz", "gunluk", "satilik", "benz"}
@@ -84,18 +97,36 @@ def _price(lines: list[str]) -> tuple[float, str, str] | None:
     return None
 
 
+def _km_value(token: str) -> int | None:
+    m = re.fullmatch(r"(\d{1,3})[^\S\n]*(?:bin|k)", token, re.I)
+    digits = int(m.group(1)) * 1000 if m else int(re.sub(r"[.,]", "", token))
+    return digits if 1000 <= digits <= 600_000 else None
+
+
+def _service_km(text: str, start: int, end: int, value: int) -> bool:
+    """start..end (sayı + birim) aracın km'si değil de bir bakım/parça cümlesindeki km mi?"""
+    before = text[max(0, start - 40):start]
+    before = before[max((m.end() for m in _KM_CLAUSE_END.finditer(before)), default=0):]
+    after = text[end:end + 40]
+    stop = _KM_CLAUSE_END.search(after)
+    after = after[:stop.start()] if stop else after
+    if re.search(r"\bher[^\S\n]+$", before, re.I) or _KM_SERVICE_AFTER.match(text, end) or _KM_PART.search(before + " " + after):
+        return True
+    return value < _KM_SERVICE_MAX and bool(_KM_SERVICE.search(before + " " + after))
+
+
 def _km(text: str) -> int | None:
-    m = _KM.search(text)
-    if m:
+    for m in _KM.finditer(text):
+        if re.fullmatch(r"19[89]\d|20[0-3]\d", m.group(1)) and re.match(r"km[^\S\n]*[:\-]?[^\S\n]*\d", text[m.start(2):], re.I):
+            continue  # "2014 km 85.000", "2012 km: ...": sayı model yılı, km etiketi arkasında
+        value = _km_value(m.group(1))
+        if value is not None and _service_km(text, m.start(), m.end(), value):
+            continue
         if m.group(2).lower().startswith("mil"):
             return None  # mil = mil (İngiliz yolcu araçları): km'ye çevirmek yerine bilinmiyor say, veri kapısı en fazla 🟡 yapar
-        digits = int(re.sub(r"[.,]", "", m.group(1)))
-        return digits if 1000 <= digits <= 600_000 else None
+        return value
     m = _KM_LABEL.search(text)
-    if m:
-        digits = int(re.sub(r"[.,]", "", m.group(1)))
-        return digits if 1000 <= digits <= 600_000 else None
-    return None
+    return _km_value(m.group(1)) if m else None
 
 
 def parse_freetext(text: str, default_steering: str | None = None, max_year: int | None = None,

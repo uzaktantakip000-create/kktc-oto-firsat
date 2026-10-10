@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from domain.freetext_parser import diagnose, parse_freetext
 
 POSTS = {p["id"]: p["text"] for p in json.loads((Path(__file__).parent / "fixtures/facebook_group_posts.json").read_text())}
@@ -113,3 +115,36 @@ def test_brand_and_model_names_match_site_keys():
 def test_slash_thousands_in_post():
     p = parse_freetext("Mercedes Benz C180 model 2013\n180/000 km\n12/800 £")
     assert (p.model, p.km, p.price_amount) == ("C180", 180000, 12800)
+
+
+@pytest.mark.parametrize("text,km", [
+    ("Honda Civic 2012\n145 bin km\n4.900 stg", 145000),  # km etiketi alt satırdaki fiyatı alıyordu (4900)
+    ("Honda Civic 2012 145bin km 4900 stg", 145000),
+    ("Honda Civic 2012\n145k km\n4.900 stg", 145000),
+    ("Honda Civic 2012\n145 BİN KM\n4.900 stg", 145000),
+    ("Honda Civic 2012\nkm 145 bin\n4.900 stg", 145000),  # yıl + alt satırdaki "km" (2012 km) okunuyordu
+    ("Honda Civic 2012\nKM:\n120.000\n4.900 stg", 120000),  # ":" varsa değer alt satırda olabilir
+    ("Toyota Vitz 2014 km 85.000, 5.500 stg", 85000),  # "2014 km" yıl
+    ("Honda Civic 2012\nkm\n4.900 stg", None),
+    ("Honda Civic 2012\nkm'si düşük\n4.900 stg", None),
+    ("Mazda 3 2012 km: 4.900 stg", None),  # para birimli sayı km değil
+    ("Toyota Vitz 2014 145km 5.500 stg", None),
+    ("Toyota Vitz 2014 96000km 5.500 stg", 96000),
+])
+def test_km_does_not_cross_lines_and_reads_bin(text, km):
+    p = parse_freetext(text)
+    assert p.km == km and p.year in (2012, 2014) and p.price_amount in (4900, 5500)
+
+
+@pytest.mark.parametrize("text,km", [
+    ("Mazda CX-5 2022\nTüm bakımları 2 bin km önce yapıldı\n18.500 stg", None),  # bakım: km 2.000 değil
+    ("Toyota Corolla 2015\nbakımları her 5 bin km de bir yapıldı\n6.500 stg", None),
+    ("Toyota Corolla 2015\nLASTİKLER 5.000 KM ÖNCE DEĞİŞTİRİLDİ\n6.500 stg", None),
+    ("Mazda Demio 2007\nMotoru 40 bin km de araçtan sökülüp takıldı\n3.000 stg", None),  # parça km'si
+    ("Honda Fit 2013\n140 bin km, bakımları her 5.000 km'de bir yapıldı\n5.500 stg", 140000),
+    ("Toyota Vitz 2014\nson servis 5000 km önce, 96.000 km'de\n5.500 stg", 96000),
+    ("Nissan March 2012\nAraç 213.000 km olup bakımları eksiksiz\n3.500 stg", 213000),  # büyük sayı: aracın km'si
+    ("Suzuki Swift 2014 Araç temiz bakımlı bir araç 95 bin km'de 4.500 stg", 95000),  # "bakımlı" bakım değil
+])
+def test_service_interval_km_is_not_the_car_km(text, km):
+    assert parse_freetext(text).km == km
