@@ -254,6 +254,23 @@ class Repository:
             args,
         ).fetchall()
 
+    def shadow_summary(self, platform: str = "facebook", hours: int = 24) -> dict | None:
+        """Gölge (yalnız ölçülen) kaynakların son `hours` saati: gelen ilan, son değerlendirmesi 🟢/🟡 olan (bildirim açık olsaydı) ve
+        gölge olmayan bir ilanın kopyası olan (aynı araç sitede/başka kaynakta da var; kopya değerlendirilmez). Gölge kaynak yoksa None."""
+        row = self.conn.execute(
+            """WITH g AS (SELECT id FROM sources WHERE platform = %s AND alert_level = 'golge' AND status IN ('aktif', 'deneme')),
+                    n AS (SELECT id, duplicate_of FROM listings WHERE source_id IN (SELECT id FROM g)
+                            AND first_seen_at > NOW() - make_interval(hours => %s))
+               SELECT (SELECT count(*) FROM g) AS sources, count(n.id) AS new,
+                      count(*) FILTER (WHERE ev.tier = 'guclu') AS strong, count(*) FILTER (WHERE ev.tier = 'pazarlik') AS maybe,
+                      count(*) FILTER (WHERE n.duplicate_of IS NOT NULL AND c.source_id NOT IN (SELECT id FROM g)) AS elsewhere
+               FROM n
+               LEFT JOIN LATERAL (SELECT tier FROM evaluations e WHERE e.listing_id = n.id ORDER BY evaluated_at DESC LIMIT 1) ev ON TRUE
+               LEFT JOIN listings c ON c.id = n.duplicate_of""",
+            (platform, hours),
+        ).fetchone()
+        return dict(row) if row and row["sources"] else None
+
     def count_stale_rules(self, rules_version: str) -> int:
         """Bilgi amaçlı: son değerlendirmesi başka kural sürümüyle yapılmış aktif ilan sayısı (silme/yazma YOK)."""
         return self.conn.execute(

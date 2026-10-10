@@ -142,6 +142,43 @@ def late_sources(repo: Repository, now: datetime | None = None) -> list[dict]:
     return [r for r in rows if r["status"] in ("aktif", "deneme") and r["platform"] not in paused and _is_late(r, quiet)]
 
 
+READER_DAILY_MAX_AGE_H = 3  # okuyucunun günlük sayısı (~20 dk'da bir yazılır) bundan eskiyse gösterilmez
+
+
+def reader_daily(now: datetime) -> str | None:
+    """Sosyal okuyucunun kendi deneme kaydından saydığı son 24 saat (durum dosyası: platformlar.facebook.gunluk; yalnız VPS'te). DB sayısıyla
+    yan yana durur: aktarıcı sorununu gösterir. Alan eksik/bozuk/eski ise None."""
+    if not selfwatch.on_vps():
+        return None
+    data = selfwatch.read_social()
+    fb = (data or {}).get("platformlar", {}).get("facebook")
+    daily = fb.get("gunluk") if isinstance(fb, dict) else None
+    if not isinstance(daily, dict):
+        return None
+    age = selfwatch._age(daily.get("pencere_bitis_utc"), now)
+    if age is None or age.total_seconds() > READER_DAILY_MAX_AGE_H * 3600:
+        return None
+    posts, ads = selfwatch._count(daily.get("gonderi")), selfwatch._count(daily.get("ilan"))
+    same, other = selfwatch._count(daily.get("tekrar_ayni_grup")), selfwatch._count(daily.get("tekrar_baska_grup"))
+    flags = daily.get("supheli")
+    flagged = [selfwatch._count(v) for v in flags.values()] if isinstance(flags, dict) else [None]
+    if None in (posts, ads, same, other) or None in flagged:
+        return None
+    return f"okuyucu sayımı: {posts} gönderi, {ads} ilan, {same + other} tekrar, {sum(flagged)} şüpheli okuma"
+
+
+def shadow_line(repo: Repository, now: datetime | None = None) -> str | None:
+    """Facebook gölge haftası (10.10.2026'dan; sahibe söz: 7 gün her gün kısa rapor): gelen ilan, bildirim açık olsaydı 🟢/🟡, sitede de olan;
+    VPS'te ikinci satır okuyucunun kendi sayımı. Gölge Facebook kaynağı yoksa (yeşile geçince ya da kapatılınca) satır yok."""
+    s = repo.shadow_summary("facebook", 24)
+    if s is None:
+        return None
+    line = (f"🧪 Facebook deneme ({s['sources']} grup, bildirim kapalı): son 24 saatte {s['new']} ilan geldi · "
+            f"bildirim açık olsaydı {s['strong']} 🟢, {s['maybe']} 🟡 · {s['elsewhere']} tanesi sitelerde de var.")
+    reader = reader_daily(now or datetime.now(timezone.utc))
+    return line + (f"\n   ({reader})" if reader else "")
+
+
 def build_heartbeat(repo: Repository, now: datetime | None = None) -> str:
     """Günlük "sistem çalışıyor" nabzı (sahibin kararı 03.10.2026: sabah durumu kalktı; ayrıntı /durum'da). Arıza varsa ayrıca haber gider
     (check_sources, kaynak alarmı); burada yalnız gecikme sayısı + son 24 saat sayıları + öz-izleme satırları (application/selfwatch)."""
@@ -155,6 +192,13 @@ def build_heartbeat(repo: Repository, now: datetime | None = None) -> str:
     if late:
         text += f"\n⚠️ {len(late)} yerde gecikme var (ayrıntı: /durum)."
     for line in selfwatch.morning_lines(repo, now):  # en çok 3 satır: taramalar nerede + yedek sağlığı, son yedek, sosyal okuyucu (kayıt/dosya yoksa satır yok; hata sabah mesajını bozmaz)
+        text += "\n" + line
+    try:
+        line = shadow_line(repo, now)
+    except Exception as e:  # ölçüm satırı sabah mesajını bozmasın
+        print("sabah satırı (Facebook deneme) yazılamadı:", type(e).__name__)
+        line = None
+    if line:
         text += "\n" + line
     return text
 

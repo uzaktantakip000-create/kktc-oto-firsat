@@ -43,6 +43,9 @@ class FakeRepo:
     def mark_alerted(self, key):
         self.marked.append(key)
 
+    def shadow_summary(self, platform="facebook", hours=24):
+        return getattr(self, "shadow", None)  # gölge kaynak yok: satır yok
+
 
 def src(name, platform="web", url="https://kktcar.com/x", status_="aktif", level="yesil", hours=0.1):
     return dict(name=name, platform=platform, url=url, status=status_, alert_level=level,
@@ -103,3 +106,45 @@ def test_status_uses_book_coverage_when_available(monkeypatch):
 def test_status_falls_back_without_book():
     text = status.build_status(FakeRepo([src("KKTCar")]), NOW)  # sahte repoda tablo yok: eski hesap
     assert "Fiyatını karşılaştırabildiğim araç: 40 / 100 (%40)" in text and "📘" not in text
+
+
+def test_heartbeat_shows_the_facebook_shadow_week_line_only_while_there_are_shadow_groups():
+    repo = FakeRepo([src("KKTCar")])
+    assert "Facebook deneme" not in status.build_heartbeat(repo, NOW)
+    repo.shadow = {"sources": 15, "new": 12, "strong": 1, "maybe": 2, "elsewhere": 3}
+    assert status.build_heartbeat(repo, NOW).splitlines()[-1] == (
+        "🧪 Facebook deneme (15 grup, bildirim kapalı): son 24 saatte 12 ilan geldi · bildirim açık olsaydı 1 🟢, 2 🟡 · "
+        "3 tanesi sitelerde de var.")
+
+
+def test_a_failing_shadow_count_never_breaks_the_heartbeat(capsys):
+    class Broken(FakeRepo):
+        def shadow_summary(self, platform="facebook", hours=24):
+            raise RuntimeError("bağlantı koptu")
+
+    text = status.build_heartbeat(Broken([src("KKTCar")]), NOW)
+    assert text.startswith("✅ Sistem çalışıyor") and "Facebook deneme" not in text
+    assert "Facebook deneme) yazılamadı: RuntimeError" in capsys.readouterr().out
+
+
+def _daily(**over):
+    d = {"pencere_bitis_utc": "2026-10-02T08:45:00+00:00", "gonderi": 56, "ilan": 4, "tekrar_ayni_grup": 1, "tekrar_baska_grup": 0,
+         "supheli": {"fiyat_yil": 0, "fiyat_aralik_disi": 1, "km_dusuk": 0}}
+    return d | over
+
+
+def test_on_the_vps_the_shadow_line_carries_the_readers_own_count(monkeypatch):
+    from application import selfwatch
+    from tests.test_runner_gate import where
+    where(monkeypatch, "vps")
+    status_file = {"surum": 1, "platformlar": {"facebook": {"sonuc": "tamam", "gunluk": _daily()}}}
+    monkeypatch.setattr(selfwatch, "read_social", lambda *a: status_file)
+    repo = FakeRepo([src("KKTCar")])
+    repo.shadow = {"sources": 4, "new": 4, "strong": 0, "maybe": 1, "elsewhere": 1}
+    assert status.shadow_line(repo, NOW).splitlines()[1] == "   (okuyucu sayımı: 56 gönderi, 4 ilan, 1 tekrar, 1 şüpheli okuma)"
+    for bad in (_daily(pencere_bitis_utc="2026-10-02T05:00:00+00:00"), _daily(gonderi="56"), _daily(supheli=None), "x"):
+        status_file["platformlar"]["facebook"]["gunluk"] = bad  # eski (4 saat) / bozuk: yalnız DB satırı kalır
+        assert len(status.shadow_line(repo, NOW).splitlines()) == 1, bad
+    where(monkeypatch, "yerel")
+    status_file["platformlar"]["facebook"]["gunluk"] = _daily()
+    assert len(status.shadow_line(repo, NOW).splitlines()) == 1  # durum dosyası yalnız VPS'te

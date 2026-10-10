@@ -1164,3 +1164,21 @@ def test_social_handoff_import_writes_real_listing_rows(db, tmp_path):
     assert src["last_checked_at"] is not None and src["listings_7d"] == 2
     again = social_import.import_facebook(db, tmp_path)  # imleç ilerledi: aynı satırlar yeniden okunmaz
     assert again.lines == 0 and c.execute("SELECT count(*) AS n FROM listings").fetchone()["n"] == 2
+
+
+def test_shadow_summary_counts_new_shadow_listings_their_last_tier_and_copies_of_live_listings(db):
+    c = db.conn
+    assert db.shadow_summary("facebook", 24) is None  # gölge kaynak yok: satır yok
+    site = add_source(c, "Site")
+    fb = c.execute("INSERT INTO sources (platform, name, url, status, alert_level) VALUES ('facebook','Grup','https://www.facebook.com/groups/1/',"
+                   "'aktif','golge') RETURNING id").fetchone()["id"]
+    live = add_listing(c, site, "site", first_seen_at=ago(hours=30))
+    strong = add_listing(c, fb, "g1", first_seen_at=ago(hours=2))
+    add_eval(c, strong, ago(hours=3), tier="yok")
+    add_eval(c, strong, ago(hours=1), tier="guclu")  # son değerlendirme sayılır
+    maybe = add_listing(c, fb, "g2", first_seen_at=ago(hours=5))
+    add_eval(c, maybe, ago(hours=4), tier="pazarlik")
+    add_listing(c, fb, "g3", first_seen_at=ago(hours=6), duplicate_of=live)  # sitede de var
+    add_listing(c, fb, "g4", first_seen_at=ago(hours=7), duplicate_of=strong)  # gölge ilanın kopyası: "sitede de var" değil
+    add_listing(c, fb, "old", first_seen_at=ago(hours=30))  # 24 saatten eski
+    assert db.shadow_summary("facebook", 24) == {"sources": 1, "new": 4, "strong": 1, "maybe": 1, "elsewhere": 1}
