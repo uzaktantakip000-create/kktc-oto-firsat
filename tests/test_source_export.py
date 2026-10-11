@@ -25,6 +25,22 @@ def test_export_build_keeps_closed_rows_and_skips_bad_ones():
     assert items[1]["kullanici"] == "kibris.car" and items[1]["oncelik"] == 11
 
 
+def test_facebook_candidates_are_written_for_the_reader_to_join_but_never_closed_or_excluded_ones():
+    """11.10.2026: okuyucu "aday" Facebook gruplarına kendisi katılır (application/fb_join). Aynı grubun kapalı satırı adayı ezer;
+    dışarıda tutulan/erişilemeyen grup hiç yazılmaz; Instagram adayı ve Marketplace yazılmaz."""
+    rows = [src("f1", "facebook", "Aday", "https://www.facebook.com/groups/111/", status="aday", priority=1),
+            src("f2", "facebook", "Kapalı", "https://www.facebook.com/groups/222/", status="aday", priority=1),
+            src("f3", "facebook", "Kapalı", "https://www.facebook.com/groups/222/", status="pasif", priority=5),
+            src("f4", "facebook", "Dışarı", "https://www.facebook.com/groups/333/", status="disari", priority=1),
+            src("f5", "facebook", "Dışarı", "https://www.facebook.com/groups/333/", status="aday", priority=2),
+            src("f6", "facebook", "Açık", "https://www.facebook.com/groups/444/", status="aday", priority=3),
+            src("f7", "facebook", "Açık", "https://www.facebook.com/groups/444/", status="aktif", priority=4),
+            src("f8", "facebook", "Market", "https://www.facebook.com/marketplace/1/cars/", status="aday", priority=2),
+            src("f9", "facebook", "Reddeden", "https://www.facebook.com/groups/555/", status="erisim_reddediyor"),
+            src("i1", "instagram", "aday.hesap", "https://www.instagram.com/aday.hesap/", status="aday")]
+    assert [(i["anahtar"], i["durum"]) for i in source_export.build(rows)] == [("fb:111", "aday"), ("fb:444", "aktif"), ("fb:222", "pasif")]
+
+
 class ExportRepo:
     def __init__(self, rows):
         self.rows, self.conn = rows, self
