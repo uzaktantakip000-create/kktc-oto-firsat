@@ -182,3 +182,31 @@ def discover(repo, data: dict | None, now: datetime, log=print) -> tuple[int, in
         notify_owner(repo, f"fb_kesif_{now:%Y%m%d%H%M}", "🔎 Okuyucu Facebook'ta yeni araç grupları buldu.\n" + "\n".join(parts)
                      + "\nHepsi gölgede (bildirim yok, piyasa verisi + 📞 fiyat sor). İstemediğini /kaynaklar'dan kapatabilirsin.", repeat_hours=1)
     return len(done_open) + len(done_wait), len(done_open)
+
+
+def needs_membership(data: dict | None) -> list[str]:
+    """Saf: okuyucunun üye olmadan okuyamadığı gruplar (platformlar.facebook.kaynaklar[anahtar].uyelik_gerekli is True; sosyal oturum 98e5f3d).
+    Katılım listesinde son durumu "uye" olan grup çıkarılır: katıldıktan sonraki ilk okumaya dek alan eski kalabilir."""
+    fb = ((data or {}).get("platformlar") or {}).get(PLATFORM) if isinstance(data, dict) else None
+    rows = fb.get("kaynaklar") if isinstance(fb, dict) else None
+    joined = {k for k, state in entries(data) if state == "uye"}
+    return sorted(k for k, v in (rows if isinstance(rows, dict) else {}).items()
+                  if isinstance(k, str) and _KEY.fullmatch(k) and isinstance(v, dict) and v.get("uyelik_gerekli") is True and k not in joined)
+
+
+def membership(repo, data: dict | None, log=print) -> int:
+    """Açık sanılıp (keşif) üye olmadan okunamayan grup katılma sırasına döner ('aktif' → 'aday'; öncelik aynı). Okuyucu katılınca
+    check() yeniden açar ve sahibe "📥 katıldı" yazar. Yalnız açık kayıt çevrilir; sahibin kapattığına dokunulmaz. Çevrilen sayısı."""
+    keys = needs_membership(data)
+    if not keys:
+        return 0
+    groups = _by_key(repo.sources(PLATFORM, ALL_STATUSES))
+    n = 0
+    for key in keys:
+        for r in groups.get(key, []):
+            if r["status"] in sources_cmd.OPEN:
+                sources_cmd._set_status(repo, str(r["id"]), "aday")
+                n += 1
+    if n:
+        log(f"facebook: {n} grup üyelik istiyor, katılma sırasına alındı")
+    return n

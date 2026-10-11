@@ -351,6 +351,7 @@ def join_check(repo, now: datetime, path: str | None = None) -> None:
     from application import fb_join  # tembel: kaynak yönetiminin bağımlılıkları yalnız VPS turunda yüklenir
     data = read_social(path)
     fb_join.check(repo, data, now)
+    fb_join.membership(repo, data)  # açık sanılıp üye olmadan okunamayan grup katılma sırasına
     fb_join.discover(repo, data, now)  # okuyucunun bulduğu yeni gruplar (platformlar.facebook.kesif)
 
 

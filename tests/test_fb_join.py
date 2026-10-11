@@ -174,3 +174,14 @@ def test_discovery_daily_caps_and_full_limit(sent, inserted, monkeypatch):
 
 def test_no_discovery_field_does_nothing(sent, inserted):
     assert fb_join.discover(Repo([]), status(("fb:111", "uye")), NOW) == (0, 0) and inserted == [] and sent == []
+
+
+def test_a_public_group_that_needs_membership_goes_back_in_line(sent):
+    repo = Repo([src(1, "111", "aktif"), src(2, "222", "aktif"), src(3, "333", "pasif"), src(4, "444", "aktif")])
+    data = {"surum": 1, "platformlar": {"facebook": {
+        "kaynaklar": {"fb:111": {"uyelik_gerekli": True, "hata": "fb-1: üyelik gerekli"}, "fb:222": {"uyelik_gerekli": False},
+                      "fb:333": {"uyelik_gerekli": True}, "fb:444": {"uyelik_gerekli": True}, "fb:yok": {"uyelik_gerekli": True}},
+        "katilim": [{"anahtar": "fb:444", "durum": "uye", "zaman_utc": NOW.isoformat()}]}}}  # 444 az önce katıldı: alan eski
+    assert fb_join.needs_membership(data) == ["fb:111", "fb:333", "fb:yok"]
+    assert fb_join.membership(repo, data, log=lambda _: None) == 1 and repo.set == [("1", "aday")]  # kapalı (333) ve bilinmeyen atlanır
+    assert fb_join.membership(repo, {"platformlar": {"facebook": {"kaynaklar": "x"}}}) == 0
