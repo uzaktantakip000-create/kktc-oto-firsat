@@ -7,8 +7,9 @@ değerlendirilen ilanlara bakar ve şu ilanı sahibe hemen yazar:
 - taze: ilk görülmesi ya da fiyat değişikliği en çok FRESH_HOURS önce,
 - fiyatlı ve fiyatı piyasa ortasının en az %(1-MAX_RATIO) altında, en az MIN_COMPARABLES emsalle (piyasa decide() ile aynı: find_market).
 🟢 olan ilan zaten 🟢 olarak gider (mesajında "ilanda 'acil' yazıyor" vardır); burada tekrar yazılmaz. Mesaj %20 kâr için en çok ödenecek
-tutarı da söyler: acil satıcıyla pazarlığın hedefi. Yalnız sahip (v1), günde en çok MAX_PER_DAY, ilan başına bir kez (önce "işlendi" yazılır).
-Otomatik mesaj/teklif yok."""
+tutarı da söyler: acil satıcıyla pazarlığın hedefi. Günde en çok MAX_PER_DAY, ilan başına bir kez (önce "işlendi" yazılır). Otomatik mesaj/teklif yok.
+Kime: her zaman sahibe. Sahip 11.10 (ilk ⚡ sonrası): "mantıklıysa herkese gönder" → gereken pazarlık fiyatın en çok SHARE_MAX_CUT'ı ise (ya da
+fiyat sınırın zaten altındaysa) mesaj öbür onaylı abonelere de gider (`share`); daha çok pazarlık isteyen yalnız sahibe."""
 import json
 from datetime import datetime, timezone
 
@@ -26,6 +27,7 @@ STEP = 50
 SENT_KEY = "acil:islenen"  # bot_state: gönderilen ilan kimlikleri (JSON liste, son KEEP)
 DAY_KEY = "acil:gun:{}"
 KEEP = 500
+SHARE_MAX_CUT = 0.10  # %20 kâr sınırına inmek için gereken pazarlık fiyatın en çok bu kadarıysa herkese (ilk ⚡: Fiesta, %4)
 QUOTE = {"acil": "acil / ihtiyaçtan", "mezun/ayrılıyor": "ayrılıyor / mezun", "nakit/borç": "nakit ihtiyacı / borç"}
 
 
@@ -59,6 +61,17 @@ def candidates(evaluated: list, s: Settings, now: datetime) -> list:
     return sorted(out, key=lambda ev: float(ev.listing["price_gbp"]) / ev.market.median_gbp)
 
 
+def ceiling(ev, s: Settings) -> float:
+    """%20 kâr (ve asgari 🟢 kâr tutarı) için en çok alış, STEP'e yuvarlanmış (mesajdaki rakam)."""
+    return buy_ceiling(ev.market.median_gbp * s.quick_sale_factor, s) // STEP * STEP
+
+
+def worth_sharing(ev, s: Settings) -> bool:
+    """Herkese gider mi: sınıra inmek için gereken pazarlık fiyatın en çok SHARE_MAX_CUT'ı (fiyat zaten altındaysa da evet)."""
+    price = float(ev.listing["price_gbp"])
+    return price - ceiling(ev, s) <= price * SHARE_MAX_CUT
+
+
 def message(ev, s: Settings, now: datetime) -> str:
     l, m = ev.listing, ev.market
     price = float(l["price_gbp"])
@@ -68,12 +81,12 @@ def message(ev, s: Settings, now: datetime) -> str:
     if l.get("currency") and l["currency"] != "GBP" and l.get("price_amount"):
         bits[-1] += f" (ilanda {l['price_amount']:,.0f} {l['currency']})".replace(",", ".")
     where = " · ".join(x for x in (l.get("source_name"), l.get("location")) if x)
-    ceiling = buy_ceiling(m.median_gbp * s.quick_sale_factor, s) // STEP * STEP
+    top = ceiling(ev, s)
     why = ", ".join(QUOTE[u] for u in ev.urgency if u in QUOTE)
     lines = [f"⚡ ACİL SATICI · piyasanın %{below} altında", " · ".join(bits) + (f" · {where}" if where else ""),
              f"🗣 İlanda satıcının acelesi yazıyor: {why}",
-             f"📊 Piyasa ortası {_gbp(m.median_gbp)} ({m.n} emsal) · %20 kâr için en çok {_gbp(ceiling)}"
-             + (f" → pazarlıkla {_gbp(price - ceiling)} inmesi gerekir" if ceiling < price else " → fiyat zaten altında")]
+             f"📊 Piyasa ortası {_gbp(m.median_gbp)} ({m.n} emsal) · %20 kâr için en çok {_gbp(top)}"
+             + (f" → pazarlıkla {_gbp(price - top)} inmesi gerekir" if top < price else " → fiyat zaten altında")]
     seen = l.get("first_seen_at")
     if seen:
         mins = max(0, int((now - seen).total_seconds() // 60))
@@ -85,8 +98,9 @@ def message(ev, s: Settings, now: datetime) -> str:
     return "\n".join(lines)
 
 
-def run(repo, evaluated: list, send, s: Settings, now: datetime | None = None) -> int:
-    """Turun değerlendirmesinden sonra: acil satıcı ilanlarını sahibe yollar; gönderilen sayısı. send(text): sahibe Telegram mesajı."""
+def run(repo, evaluated: list, send, s: Settings, now: datetime | None = None, share=None) -> int:
+    """Turun değerlendirmesinden sonra: acil satıcı ilanlarını sahibe yollar; gönderilen sayısı. send(text): sahibe Telegram mesajı.
+    share(text): sahip dışındaki onaylı abonelere (yalnız worth_sharing olanlar; verilmezse kimseye)."""
     now = now or datetime.now(timezone.utc)
     picked = candidates(evaluated, s, now)
     if not picked:
@@ -107,5 +121,8 @@ def run(repo, evaluated: list, send, s: Settings, now: datetime | None = None) -
     repo.set_state(SENT_KEY, json.dumps((done + [str(ev.listing["id"]) for ev in picked])[-KEEP:]))  # önce yaz: en çok bir kez
     repo.set_state(day, str(used + len(picked)))
     for ev in picked:
-        send(message(ev, s, now))
+        text = message(ev, s, now)
+        send(text)
+        if share is not None and worth_sharing(ev, s):
+            share(text)
     return len(picked)

@@ -36,7 +36,7 @@ WARNING = {
 # "⚡ ACİL SATICI" bildirimini (application/urgent) tetikler. "pazarlık" aciliyet değildir, yalnız gösterilir.
 URGENCY = {
     "acil": r"\bacil\b|\bacele\b|ihtiya[çc]tan|\burgent\b|must sell|quick sale|need(s)? gone|срочно",
-    "mezun/ayrılıyor": r"mezun|adadan ayr[ıi]l|ayr[ıi]l[ıi]yorum|gidiyorum|kesin d[öo]n[üu][şs]|d[öo]n[üu][şs] nedeniyle|d[öo]n[üu]yorum|yurt ?d[ıi][şs][ıi]na|ta[şs][ıi]n[ıi]yorum|"
+    "mezun/ayrılıyor": r"mezun|adadan ayr[ıi]l|ayr[ıi]l[ıi]yorum|gidiyorum|kesin d[öo]n[üu][şs]|d[öo]n[üu][şs] (?:nedeniyle|sebebiyle|dolay[ıi]s[ıi]yla)|t[üu]rkiye.{0,3} d[öo]n[üu][şs]|d[öo]n[üu]yorum|yurt ?d[ıi][şs][ıi]na|ta[şs][ıi]n[ıi]yorum|"
                        r"tayin|terhis|leaving|relocat|moving (back|abroad|to)|graduat|уезжаю",
     "nakit/borç": r"nakit ihtiya|bor[çc]tan|borcum|zarar[ıi]na|kelepir",
     "pazarlık": r"pazarl[ıi]k (pay[ıi] )?(var|mevcut)|pazarl[ıi]k yap[ıi]l[ıi]r",

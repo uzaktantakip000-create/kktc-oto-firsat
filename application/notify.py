@@ -362,6 +362,23 @@ def _record_alert(repo: Repository, listing_id, chat_id: str, tier: str, msg_id,
         pass
 
 
+def send_to_subscribers(repo: Repository, token: str, text: str, skip_chat: str | None = None, now: datetime | None = None) -> int:
+    """Düz metni onaylı abonelere yollar (sahip `skip_chat` hariç: ona ayrıca gitti); ⚡ ACİL SATICI paylaşımı (application/urgent). Gece
+    (QUIET_HOURS_KKTC) sessiz. Bir abonenin hatası öbürlerini durdurmaz; botu engelleyen (403) abone durdurulur (send_alerts gibi). Dönen: ulaşan."""
+    n = 0
+    for sub in repo.approved_subscribers():
+        if skip_chat is not None and str(sub["chat_id"]) == str(skip_chat):
+            continue
+        try:
+            api(token, "sendMessage", chat_id=sub["chat_id"], text=text, disable_web_page_preview=True, **quiet_extra(now))
+            n += 1
+        except TelegramError as e:
+            if e.status == 403:
+                repo.conn.execute("UPDATE subscribers SET status='durduruldu' WHERE chat_id=%s", (sub["chat_id"],))
+            print(f"mesaj gönderilemedi ({mask_chat(sub['chat_id'])}): {e.status} {e.description}")
+    return n
+
+
 def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes: dict | None = None,
                 max_per_run: int = 10, tier: Tier = Tier.STRONG,
                 s: Settings | None = None, now: datetime | None = None) -> int:

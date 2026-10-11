@@ -83,6 +83,46 @@ def test_tl_priced_listing_shows_the_original_price():
 @pytest.mark.parametrize("text,signals", [("İhtiyaçtan Acil, Masrafsız, Servis Bakımlı", ["acil"]), ("borçsuz temiz araç", []),
                                           ("Türkiye'ye dönüş nedeniyle satılık", ["mezun/ayrılıyor"]),
                                           ("borçtan dolayı zararına", ["nakit/borç"]), ("servis bakımlı", []),
-                                          ("katalitik dönüştürücü yeni", []), ("kesin dönüş, acil", ["acil", "mezun/ayrılıyor"])])
+                                          ("katalitik dönüştürücü yeni", []), ("kesin dönüş, acil", ["acil", "mezun/ayrılıyor"]),
+                                          ("Türkiye’ye dönüş sebebiyle acil satılıktır!", ["acil", "mezun/ayrılıyor"]),  # ilk ⚡ (Fiesta)
+                                          ("tayin dolayısıyla", ["mezun/ayrılıyor"]), ("dönüş sebebiyle", ["mezun/ayrılıyor"])])
 def test_urgency_reader(text, signals):
     assert urgency_signals(text) == signals
+
+
+def test_close_deals_go_to_everyone_far_ones_only_to_the_owner():
+    """Sahip 11.10 (ilk ⚡ sonrası): "mantıklıysa herkese gönder". %20 sınırına inmek için gereken pazarlık fiyatın en çok %10'u ise öbür
+    abonelere de gider. Varsayılan piyasa: orta £9.000 → sınır £6.850."""
+    repo, owner, others = Repo(), [], []
+    evs = [ev("yakin", price=7000), ev("uzak", price=8000)]  # £150 (%2) ve £1.150 (%14) pazarlık
+    assert urgent.run(repo, evs, owner.append, Settings(), NOW, share=others.append) == 2
+    assert len(owner) == 2 and others == [owner[0]] and "pazarlıkla £150 inmesi gerekir" in others[0]
+    assert urgent.worth_sharing(ev(price=7600), Settings()) and not urgent.worth_sharing(ev(price=7700), Settings())  # £750 = %9,9; £850 = %11
+    fiesta = ev(price=2922.2, median=4058.49, n=16)  # ilk ⚡ (11.10 19:50): £122 pazarlık = %4
+    assert urgent.worth_sharing(fiesta, Settings()) and urgent.ceiling(fiesta, Settings()) == 2800
+    assert urgent.run(Repo(), [ev("a", price=7000)], owner.append, Settings(), NOW) == 1  # share verilmezse yalnız sahip
+
+
+def test_shared_text_reaches_every_approved_subscriber_but_the_owner(monkeypatch):
+    from application import notify
+
+    calls = []
+
+    class SubRepo:
+        conn = None
+
+        def approved_subscribers(self):
+            return [{"chat_id": "1"}, {"chat_id": "2"}, {"chat_id": "3"}]
+
+    def api(token, method, **kw):
+        calls.append((kw["chat_id"], kw.get("disable_notification")))
+        if kw["chat_id"] == "3":
+            raise notify.TelegramError("sendMessage", 400, "bad")
+
+    monkeypatch.setattr(notify, "api", api)
+    day = NOW.replace(hour=9)  # KKTC 12:00
+    assert notify.send_to_subscribers(SubRepo(), "t", "⚡", skip_chat="1", now=day) == 1  # 3'ün hatası öbürünü durdurmaz
+    assert calls == [("2", None), ("3", None)]
+    calls.clear()
+    notify.send_to_subscribers(SubRepo(), "t", "⚡", skip_chat=1, now=NOW.replace(hour=22))  # KKTC 01:00: sessiz
+    assert calls == [("2", True), ("3", True)]
