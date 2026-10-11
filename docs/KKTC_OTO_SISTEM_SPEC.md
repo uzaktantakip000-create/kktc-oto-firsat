@@ -848,3 +848,12 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
   - Ava "bireysel" süzgeci: sitelerde satıcı türü çoğunlukla bilinmiyor.
 - **Güven önce (11.10 sabah):** gürültü kapısı + temkinli km (sahip onayı "Evet, açalım") canlıya (f8c48b7, 8514f22; RULES_VERSION 2026-10-11). 🟢 19 → 9; abone 👎'lerinin hiçbiri 🟢 kalmadı. Ayrıntı: DEGER_MOTORU §9.
 - **Kapalı döngü önerisi** (sosyal oturumla ortak, sahibe sunuldu, cevap bekleniyor): 📞 arama kartı ("önce hâlâ satılık mı?", KKTC'ye özgü sabit sorular, açılış/tavan) + 🔁 görüşme sonucu düğmeleri (feedback tablosu; migration yok) → izleme → sabah planı/haftalık huni (mevcut mesajlara bölüm) → stok/satış. Otomatik mesaj/teklif/alım yok.
+- **Facebook grubuna kendiliğinden katılım (11.10 akşam):**
+  - Sahip (sosyal oturumda): "Gruba katılma tamamen stratejik ve senin kararınla olsun ve direk katılabilir, ben mevcutları bottan takip ederim, oraya bildirim atsın". Marketplace: "gerek yok". Ana oturumda: "Ortağınla iletişim kur ve ne gerekiyorsa yapın".
+  - Okuyucu (sosyal oturum) kaynak listesindeki "aday" gruplara katılır: 13.10 15:24 UTC'den (yavaş başlangıç sonu) önce değil, en çok 48 saatte bir grup. Soru/kural onayı isteyen grupta cevap uydurmaz. Uyarı gelirse katılımı durdurur.
+  - Bot tarafı:
+    - Kaynak listesi dosyasına FB "aday" satırları (ayrı commit; okuyucunun ayrıştırıcısından sonra yayınlanır). Aynı grupta açık > kapalı > aday. Dışarıda tutulan ya da erişilemeyen grup ve Marketplace yazılmaz.
+    - Durum dosyasındaki `platformlar.facebook.katilim` okunur (95d46e8, application/fb_join).
+  - "uye" olunca: yalnız 'aday' kayıt 'aktif' olur, gölgede kalır; sahibe bir kez 📥 yazılır. Sahibin kapattığı grup ASLA açılmaz. 8 açık FB sınırı ve 24 saatte 2 açılış rayı geçerli.
+  - "bekliyor", "sorulu", "kapali" ve "reddedildi" için sahibe birer kez yazılır; "hata" ve bilinmeyen kod için yazılmaz.
+- **Acele eden satıcı radarı (ortağın fikri) — ölçüldü, şimdilik yok:** aktif site ilanlarında gerçek yeniden ilan (aynı telefon + araç, eski ilan pasif) yalnız 1. Aynı araç sosyalde 9, başka sitede 3; 10 günde 9 fiyat düşüşü. KKTCar ve KKTCarabam'da telefon yok; KAA yeni ve kapalı. ~25.10'da yeniden ölçülecek; veri yokken sahibe sunulmaz.
