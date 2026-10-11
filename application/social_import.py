@@ -45,7 +45,8 @@ _CDN = re.compile(r"^https://scontent[^/\s]*\.fbcdn\.net/\S+$", re.I)
 class ImportReport:
     lines: int = 0  # okunan tam satır
     posts: int = 0  # geçerli gönderi (ayrıştırmaya giden)
-    new_listings: int = 0  # yeni yazılan ilan
+    new_listings: int = 0  # yeni yazılan ilan (fiyatsızlar dahil)
+    priceless: int = 0  # bunlardan fiyatı yazmayan araç gönderisi (fiyatsız ilan, "📞 FİYAT SOR")
     not_listing: dict[str, int] = field(default_factory=dict)  # ilan sayılmayan gönderilerin nedeni (diagnose)
     skipped: dict[str, int] = field(default_factory=dict)  # bozuk_satir / surum / platform / alan / bilinmeyen_anahtar / kaynak_kapali
     sources: int = 0  # satırı olan kaynak
@@ -55,6 +56,7 @@ class ImportReport:
         if not self.lines:
             return ["sosyal devir: yeni satır yok"]
         out = [f"sosyal devir: {self.lines} satır, {self.posts} gönderi, {self.sources} kaynak, {self.new_listings} yeni ilan"
+               + (f" ({self.priceless} fiyatsız)" if self.priceless else "")
                + (" (kalan var, sonraki turda)" if self.pending else "")]
         if self.not_listing:
             out.append("  ilan değil: " + ", ".join(f"{k}={v}" for k, v in sorted(self.not_listing.items())))
@@ -175,9 +177,10 @@ def import_facebook(repo, devir_dir: Path | str, *, limit: int = MAX_LINES, log:
         row = sources[key]
         source = SocialSource(platform=PLATFORM, key=key[3:], url=row["url"], alias=key, source_id=row["id"],
                               default_steering=group_default_steering(row))
-        st = ingest_facebook(posts, source, repo, reader=None)
+        st = ingest_facebook(posts, source, repo, reader=None, priceless=True)
         rep.posts += st.fetched
         rep.new_listings += st.new
+        rep.priceless += st.priceless
         for why, n in st.reasons.items():
             _count(rep.not_listing, why, n)
         latest = max((p.posted_at for p in posts if p.posted_at), default=None)

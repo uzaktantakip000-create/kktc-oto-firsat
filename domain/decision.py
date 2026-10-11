@@ -17,7 +17,7 @@ from domain.comparables import Market, effective_km, find_market, km_adjusted_pr
 from domain.data_gate import KM_UNKNOWN_WARNING, below_cheap_quartile, data_gaps, km_unknown
 from domain.model_ambiguity import model_ambiguous
 from domain.price_book import STATUS_SUSPECT, Estimate, PriceBook, estimate_from_book
-from domain.profit import Confidence, ProfitResult, Tier, evaluate_profit
+from domain.profit import Confidence, ProfitResult, Tier, buy_ceiling, evaluate_profit
 from domain.red_flags import blocking_flags, plate_flags, warning_flags
 from domain.settings import Settings
 
@@ -199,3 +199,28 @@ def decide(listing: dict, pool: list[dict], s: Settings, book: PriceBook | None 
     if book is None:
         return a
     return _estimated_assessment(listing, market, a, price, text, blocking, warnings, s, book, now) or a
+
+
+@dataclass(frozen=True)
+class AskValue:
+    """Fiyatı bilinmeyen ilanın değeri (📞 FİYAT SOR): piyasa ortası, emsal sayısı ve %20 kâr için en çok alış (yuvarlanmış)."""
+    median_gbp: float
+    comparables_n: int
+    max_buy_gbp: float
+
+
+def ask_value(listing: dict, pool: list[dict], s: Settings, now: datetime | None = None, step: int = 50) -> AskValue | None:
+    """Fiyatı yazmayan ilan için "en çok ne ödenir" (11.10.2026; application/ask_price). decide() ile aynı emsal kuralı (find_market) ve
+    aynı gönderim tabanı (🟢'nin emsal sayısı, send_allowed); kâr hesabı evaluate_profit'in tersi (buy_ceiling, çıkış = medyan ×
+    quick_sale_factor). Tuzak metni (blocking_flags: hasarlı, motor arızalı…) ya da plaka uyarısı (plate_flags: plakasız/ithal araç; emsal
+    fiyatı plakalı araçtır, 🟢'de de aynı uyarı 🟢'yi düşürür) varsa, emsal yetmezse ya da sonuç ≤ 0 ise None. Karar değil, ipucudur:
+    🟢/🟡 üretmez."""
+    now = now or datetime.now(timezone.utc)
+    text = (listing.get("raw_text") or "") + " " + (listing.get("model") or "")
+    if blocking_flags(text) or plate_flags(text):
+        return None
+    market = find_market(listing, pool, s, now)
+    if market is None or not send_allowed(Tier.STRONG, "A", market.n):
+        return None
+    offer = buy_ceiling(market.median_gbp * s.quick_sale_factor, s) // step * step
+    return AskValue(market.median_gbp, market.n, offer) if offer > 0 else None

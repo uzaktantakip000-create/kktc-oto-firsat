@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from application.collect_facebook import (LLM_BUDGET_S, LLM_RETRY, MAX_KM_READS, MAX_PHOTO_READS, listing_data,
+from application.collect_facebook import (LLM_BUDGET_S, LLM_RETRY, MAX_KM_READS, MAX_PHOTO_READS, listing_data, priceless_data,
                                           llm_listing_data, photo_listing_data)
 from application.collect_instagram import listing_data as instagram_listing_data
 from application.llm_reader import LlmReader, listing_fields
@@ -31,6 +31,7 @@ class IngestStats:
     photo_read: int = 0  # fiyat yazıda yok: ilk fotoğraftan okundu
     photo_candidates: int = 0  # fiyat yazıda yok ama fotoğraf var (okuyucu bağlıysa fotoğraftan okunabilir)
     sold: int = 0  # "SATILDI" paylaşımı (Instagram)
+    priceless: int = 0  # fiyatı yazmayan araç gönderisi fiyatsız ilan olarak yazıldı ("📞 FİYAT SOR"; yalnız priceless=True çağrıda)
     reasons: dict[str, int] = field(default_factory=dict)  # ilan sayılmayan gönderilerin nedeni + fotoğraf okuma sayaçları
 
 
@@ -93,10 +94,12 @@ def _save(sink: ListingSink, source: SocialSource, post: SocialPost, data: dict 
 
 
 def ingest_facebook(posts: Iterable[SocialPost], source: SocialSource, sink: ListingSink, *, reader: LlmReader | None = None,
-                    fetch_image=None, budget: ReadBudget | None = None) -> IngestStats:
+                    fetch_image=None, budget: ReadBudget | None = None, priceless: bool = False) -> IngestStats:
     """collect_facebook_groups döngüsünün aynısı (km tamamlama, yapay zekâ yeniden deneme, fotoğraftan fiyat; tavanlar ve süre bütçesi).
     reader=None (deneme kipi): yalnız kural okur. fetch_image: okuyucunun kendi bağlantısıyla görsel indirme (yoksa fotoğraf okunmaz).
-    Aynı gönderiye ikinci kez para harcanmasın diye bilinen gönderiler (sink.known_item_ids) yapay zekâya gitmez."""
+    Aynı gönderiye ikinci kez para harcanmasın diye bilinen gönderiler (sink.known_item_ids) yapay zekâya gitmez.
+    priceless=True (devir aktarıcısı): fiyatı hiçbir yoldan okunamayan araç gönderisi (marka + yıl var) fiyatsız ilan olarak yazılır
+    (collect_facebook.priceless_data) ve `priceless` sayacına girer (neden sayacında "fiyat_yok" olarak görünmez)."""
     st, budget = IngestStats(), budget or ReadBudget()
     hint = steering_hint(source)
     known = sink.known_item_ids(sink_source_id(source)) if reader else set()
@@ -136,6 +139,11 @@ def ingest_facebook(posts: Iterable[SocialPost], source: SocialSource, sink: Lis
                         _count(st.reasons, "foto_fiyat" if data else "foto_okunamadi")
                 elif data is None and why == "fiyat_yok":
                     _count(st.reasons, "foto_url_yok")  # okuyucu görsel adresi vermedi (şablon kontrolü için sayaç)
+                if data is None and priceless and why == "fiyat_yok":
+                    data = priceless_data(raw, hint)
+                    if data is not None:
+                        st.priceless += 1
+                        why = None
                 if data is not None:
                     why = None
                 else:

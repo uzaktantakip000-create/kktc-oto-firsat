@@ -54,6 +54,21 @@ def listing_data(post: RawGroupPost, source: dict) -> dict | None:
     }
 
 
+def priceless_data(post: RawGroupPost, source: dict) -> dict | None:
+    """Fiyatı yazmayan araç gönderisi (marka + yıl okunur, fiyat yok): fiyatsız ilan satırı (11.10.2026, "📞 FİYAT SOR"). Fiyat alanları boş,
+    `urgency_signals` = ["fiyatsiz"]: değerlendirmeye ve emsal havuzuna girmez (ikisi de fiyat ister); yalnız application/ask_price okur."""
+    p = parse_freetext(post.text, default_steering=group_default_steering(source), allow_no_price=True)
+    if p is None or p.price_amount is not None:
+        return None
+    return {
+        "url": post.url, "posted_at": post.posted_at, "raw_text": post.text, "photo_urls": [],
+        "brand": p.brand, "model": p.model, "year": p.year, "km": p.km, "fuel": p.fuel,
+        "transmission": p.transmission, "steering": p.steering, "location": p.location,
+        "price_raw": None, "price_amount": None, "currency": None, "currency_guess": False, "price_gbp": None,
+        "seller_phone": p.phone, "negotiable": p.negotiable, "extraction_by": "parser_serbest", "urgency_signals": ["fiyatsiz"],
+    }
+
+
 LLM_RETRY = ("yil_yok", "fiyat_yok")  # marka var ama kural yıl/fiyatı okuyamadı; başka nedenler (marka yok, araç değil) LLM'e gitmez
 
 

@@ -133,9 +133,12 @@ def _km(text: str) -> int | None:
 
 
 def parse_freetext(text: str, default_steering: str | None = None, max_year: int | None = None,
-                   known_price: tuple[float, str] | None = None, today: date | None = None) -> ParsedCaption | None:
+                   known_price: tuple[float, str] | None = None, today: date | None = None,
+                   allow_no_price: bool = False) -> ParsedCaption | None:
     """known_price=(tutar, para_birimi): sitenin yapılandırılmış alanından gelen kesin fiyat (metinde aranmaz).
-    Model yılı tavanı: max_year verilmişse o, yoksa bu yıl + 1 (today verilmezse UTC bugünü)."""
+    Model yılı tavanı: max_year verilmişse o, yoksa bu yıl + 1 (today verilmezse UTC bugünü).
+    allow_no_price: fiyat okunamasa da marka + yıl varsa sonuç döner (fiyat alanları boş; Facebook "📞 FİYAT SOR" kartı, 11.10.2026).
+    Fiyatı olan metinde sonuç aynıdır."""
     if not text or _not_a_sale_ad(text):
         return None
     if max_year is None:
@@ -153,9 +156,9 @@ def parse_freetext(text: str, default_steering: str | None = None, max_year: int
         price_line = f"{amount:g} {currency}"
     else:
         price = _price(_clean_lines(no_phone))
-        if price is None:
+        if price is None and not allow_no_price:
             return None
-        amount, currency, price_line = price
+        amount, currency, price_line = price or (None, None, None)
     if not known_price and amount in years and any(y != amount for y in years):
         years = [y for y in years if y != amount]  # "Fiyat 2000 STG, 2008 model": 2000 fiyattır, yıl değil
 
@@ -209,7 +212,7 @@ def parse_freetext(text: str, default_steering: str | None = None, max_year: int
         out.steering = default_steering
     out.location = next((c.title() for c in _CITIES if c in low), None)
     out.phone = phones[0] if phones else None
-    out.price_raw = price_line[:80]
+    out.price_raw = price_line[:80] if price_line else None
     out.price_amount, out.currency, out.currency_guess = amount, currency, False
     out.negotiable = bool(re.search(r"pazarl[ıi]k", low))
     out.swap = True if re.search(r"takas\s+(olur|var|yap[ıi]l[ıi]r|kabul)|takasa\s+uygun", low) else None

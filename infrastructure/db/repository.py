@@ -258,11 +258,12 @@ class Repository:
 
     def shadow_summary(self, platform: str = "facebook", hours: int = 24) -> dict | None:
         """Gölge (yalnız ölçülen) kaynakların son `hours` saati: gelen ilan, son değerlendirmesi 🟢/🟡 olan (bildirim açık olsaydı) ve
-        gölge olmayan bir ilanın kopyası olan (aynı araç sitede/başka kaynakta da var; kopya değerlendirilmez). Gölge kaynak yoksa None."""
+        gölge olmayan bir ilanın kopyası olan (aynı araç sitede/başka kaynakta da var; kopya değerlendirilmez). Gölge kaynak yoksa None.
+        Fiyatsız ilan ("📞 FİYAT SOR" kaydı, 11.10.2026) sayılmaz: gölge ölçümü eskisiyle aynı kalır."""
         row = self.conn.execute(
             """WITH g AS (SELECT id FROM sources WHERE platform = %s AND alert_level = 'golge' AND status IN ('aktif', 'deneme')),
                     n AS (SELECT id, duplicate_of FROM listings WHERE source_id IN (SELECT id FROM g)
-                            AND first_seen_at > NOW() - make_interval(hours => %s))
+                            AND first_seen_at > NOW() - make_interval(hours => %s) AND price_gbp IS NOT NULL)
                SELECT (SELECT count(*) FROM g) AS sources, count(n.id) AS new,
                       count(*) FILTER (WHERE ev.tier = 'guclu') AS strong, count(*) FILTER (WHERE ev.tier = 'pazarlik') AS maybe,
                       count(*) FILTER (WHERE n.duplicate_of IS NOT NULL AND c.source_id NOT IN (SELECT id FROM g)) AS elsewhere
@@ -272,6 +273,16 @@ class Repository:
             (platform, hours),
         ).fetchone()
         return dict(row) if row and row["sources"] else None
+
+    def priceless_recent(self, hours: int, platform: str = "facebook") -> list[dict]:
+        """"📞 FİYAT SOR" adayları (application/ask_price): son `hours` saatte ilk kez görülen, aktif, kopya olmayan, marka + yılı okunmuş
+        FİYATSIZ sosyal ilanlar (devir aktarıcısının fiyatsız kaydı), ilk görülme sırasıyla."""
+        return self.conn.execute(
+            """SELECT l.*, s.name AS source_name, s.platform FROM listings l JOIN sources s ON s.id = l.source_id
+               WHERE s.platform = %s AND l.price_gbp IS NULL AND 'fiyatsiz' = ANY(l.urgency_signals) AND l.is_active
+                 AND l.duplicate_of IS NULL AND l.brand_norm IS NOT NULL AND l.year IS NOT NULL
+                 AND l.first_seen_at > NOW() - make_interval(hours => %s)
+               ORDER BY l.first_seen_at""", (platform, hours)).fetchall()
 
     def count_stale_rules(self, rules_version: str) -> int:
         """Bilgi amaçlı: son değerlendirmesi başka kural sürümüyle yapılmış aktif ilan sayısı (silme/yazma YOK)."""

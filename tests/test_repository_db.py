@@ -1329,3 +1329,20 @@ def test_search_active_window_for_hunts(db):
     rows = db.search_active("Toyota", "vitz", None, None, None, None, None, None, 10, seen_after=ago(minutes=30), seen_until=ago(minutes=4))
     assert items(rows) == {"new"}
     assert items(db.search_active("Toyota", "vitz", None, None, None, None, None, None, 10)) == {"old", "new", "later"}
+
+
+def test_priceless_recent_returns_only_new_priceless_social_rows_and_shadow_count_ignores_them(db):
+    """📞 FİYAT SOR (11.10.2026): fiyatsız Facebook kaydı yalnız aday sorgusuna girer; gölge ölçümü (shadow_summary) onu saymaz."""
+    c = db.conn
+    fb = c.execute("INSERT INTO sources (platform, name, url, status, alert_level) VALUES ('facebook','Grup','https://www.facebook.com/groups/1/',"
+                   "'aktif','golge') RETURNING id").fetchone()["id"]
+    web = add_source(c, "Site")
+    none = dict(price_gbp=None, price_amount=None, currency=None, urgency_signals=["fiyatsiz"])
+    add_listing(c, fb, "yeni", **none, first_seen_at=ago(minutes=30))
+    add_listing(c, fb, "eski", **none, first_seen_at=ago(hours=5))
+    add_listing(c, fb, "yilsiz", **none, year=None, first_seen_at=ago(minutes=30))
+    add_listing(c, fb, "pasif", **none, is_active=False, first_seen_at=ago(minutes=30))
+    add_listing(c, fb, "fiyatli", first_seen_at=ago(minutes=30))
+    add_listing(c, web, "site", **none, first_seen_at=ago(minutes=30))
+    assert items(db.priceless_recent(3)) == {"yeni"}
+    assert db.shadow_summary("facebook", 24)["new"] == 1  # yalnız fiyatlı gölge ilan
