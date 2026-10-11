@@ -42,8 +42,9 @@ class Settings(BaseModel):
     strong_max_z: float = -2.0
     # km'si bilinmeyen/şüpheli, en az 5 yaşındaki ilanda 🟢 ancak km "emsal km medyanı + 45.000" varsayılınca da 🟢 kalıyorsa (yoksa en fazla 🟡,
     # `km_temkinli`). Ölçüm: km'si bilinen 4.408 ilanın km'si gizlenince çıkan 31 🟢'nin 14'ü sahteydi; bu kuralla 2'ye iner (doğru 🟢 17 → 12).
-    # KAPALI: sahibin 04.10 kararını ("km eksik tek başına engel değil"; altın dosyada g19/g21 'yesil') daraltır: açılması sahip onayına bağlı.
-    unknown_km_check: bool = False
+    # AÇIK: sahip onayı 11.10.2026 (04.10 kararını, "km eksik tek başına engel değil", 5+ yaşındaki araçta daraltır). O günkü anlık görüntüde
+    # 🟢 14 → 9; bir abonenin "yanlış" işaretlediği 10 ilanın hiçbiri 🟢 kalmadı (ikisi km'siz KKTCarabam ilanıydı). 5 yaşından küçükte kural yok.
+    unknown_km_check: bool = True
     unknown_km_extra: int = 45_000
     unknown_km_min_age: int = 5
     # --- kullanıcı kararları (Telegram komutlarıyla değişir, application/settings_store.py) ---

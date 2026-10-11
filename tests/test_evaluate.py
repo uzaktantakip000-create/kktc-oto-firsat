@@ -119,11 +119,14 @@ def test_zero_or_suspicious_km_counts_as_unknown_and_warns():
 
 
 def test_unknown_km_uses_the_same_20_percent_rule():
-    """Sahip kararı (04.10.2026): km bilinmiyorsa kâr şartı DEĞİŞMEZ (%20); yalnız mesajda uyarı olur."""
-    repo = FakeRepo([car("t", 6500, km=None)], POOL)  # kâr ~%22
+    """Sahip kararı (04.10.2026): km bilinmiyorsa kâr şartı DEĞİŞMEZ (%20); yalnız mesajda uyarı olur. 11.10.2026'dan beri 5+ yaşındaki
+    km'siz ilanda ayrıca temkinli km kuralı var (test_quality_rules): burada 5 yaşından küçük araç."""
+    young = NOW.year - 2
+    pool = [dict(r, year=young) for r in POOL]
+    repo = FakeRepo([car("t", 6500, km=None, year=young)], pool)  # kâr ~%22
     (ev,) = evaluate_new(repo)
     assert ev.profit.tier is Tier.STRONG and KM_UNKNOWN_WARNING in ev.warnings and "km_yok" not in repo.saved[0][1]["red_flags"]
-    (ev,) = evaluate_new(FakeRepo([car("t", 7500, km=None)], POOL))  # kâr ~%8: yine 🟢 değil
+    (ev,) = evaluate_new(FakeRepo([car("t", 7500, km=None, year=young)], pool))  # kâr ~%8: yine 🟢 değil
     assert ev.profit.tier is not Tier.STRONG
 
 

@@ -40,6 +40,9 @@ FORBIDDEN_KEYS = {"seller_phone", "phone", "telefon", "url", "raw_text", "seller
 # (Bugün hepsi "olması gereken 🟠 KONTROL ET, sistem bildirim yok": 🟠 yeni tasarımla (İş 6) gelecek.)
 KNOWN_MISMATCHES = {
     ("g03", "kontrol"), ("g07", "kontrol"), ("g25", "kontrol"), ("g32", "kontrol"),
+    # Sahip kararı 11.10.2026 (temkinli km açıldı): g17/g19/g21 04.10'dan beri sahip kararıyla 'yesil'di; artık okuyucuların etiketi 'kontrol'.
+    # Sistem bunları 🟡 yapar (🟢 değil; /bul ve ilan dosyasında görünür) ama 🟡 için tek tek mesaj yok: öbür 'kontrol' vakalarıyla aynı açık.
+    ("g17", "kontrol"), ("g19", "kontrol"), ("g21", "kontrol"),
 }
 
 
@@ -145,7 +148,9 @@ def test_owner_overrides_are_documented_and_limited():
     assert {c["id"] for c in over} == {"g17", "g18", "g19", "g21", "g48"}
     for c in over:
         o = c["owner_override"]
-        assert o["label"] in LABELS and o["date"] == "2026-10-04" and len(o["why"]) >= 30
+        assert o["label"] in LABELS and o["date"] in ("2026-10-04", "2026-10-11") and len(o["why"]) >= 30
+        if o["date"] == "2026-10-11":  # temkinli km kararı (km'siz 5+ yaş): önceki 04.10 kararı kayıtta kalır
+            assert o["label"] == "kontrol" and o["previous"]["date"] == "2026-10-04" and c["id"] in ("g17", "g19", "g21")
         assert c["expected"] == "kontrol" and c["second_opinion"]["label"] == "kontrol"  # okuyucu kaydı değişmedi
 
 

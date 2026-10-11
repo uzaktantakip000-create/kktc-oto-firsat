@@ -106,21 +106,23 @@ def test_discount_inside_the_normal_price_spread_is_not_green():
     assert tight.profit.tier is Tier.STRONG
 
 
-def test_unknown_km_listing_is_not_judged_by_the_spread_unless_the_owner_turns_it_on():
+def test_unknown_km_listing_is_judged_by_the_spread_only_with_the_cautious_km_rule():
+    """Sahip kararı 11.10.2026: temkinli km kuralı AÇIK (varsayılan). Kapatılırsa 04.10 kararı (km eksik tek başına engel değil) geri gelir."""
     from domain.decision import decide
     from domain.settings import Settings
     l = car("t", 6500, km=None)
-    assert decide(l, WIDE, Settings(), now=NOW).profit.tier is Tier.STRONG  # sahibin 04.10 kararı: km eksik tek başına engel değil
-    assert decide(l, WIDE, Settings(unknown_km_check=True), now=NOW).profit.tier is Tier.NEGOTIABLE
+    assert Settings().unknown_km_check is True
+    assert decide(l, WIDE, Settings(unknown_km_check=False), now=NOW).profit.tier is Tier.STRONG
+    assert decide(l, WIDE, Settings(), now=NOW).profit.tier is Tier.NEGOTIABLE
 
 
-def test_conservative_km_assumption_caps_unknown_km_old_cars_when_turned_on():
+def test_conservative_km_assumption_caps_unknown_km_old_cars():
     from domain.decision import decide
     from domain.settings import Settings
     near = [car(f"n{i}", p, km=80_000 + i * 2_000) for i, p in enumerate([7400, 7600, 7800, 8000, 8000, 8200, 8400, 8600])]
     l = car("t", 5900, km=None, year=2015)  # km bilinse ve ortalama olsa %25 kâr; +45.000 km varsayılınca fiyatlar ~%5 düşer, kâr %20 altına iner
-    on = decide(l, near, Settings(unknown_km_check=True), now=NOW)
-    assert decide(l, near, Settings(), now=NOW).profit.tier is Tier.STRONG
+    on = decide(l, near, Settings(), now=NOW)  # 11.10.2026'dan beri varsayılan açık
+    assert decide(l, near, Settings(unknown_km_check=False), now=NOW).profit.tier is Tier.STRONG
     assert on.profit.tier is Tier.NEGOTIABLE and "km_temkinli" in on.gaps
     young = car("t", 5900, km=None, year=NOW.year - 2)
     young_pool = [dict(r, year=NOW.year - 2) for r in near]

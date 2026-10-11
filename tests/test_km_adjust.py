@@ -36,8 +36,8 @@ def test_strong_needs_eight_comparables_with_nearby_km():
 
 def test_unknown_km_listing_gets_no_adjustment_and_no_near_rule():
     pool = comps(7, 140_000, 3_000) + comps(3, 30_000, 5_000, prefix="f")
-    d = decide(car("t", 6000, km=None), pool, S, now=NOW)
-    assert d.market.near_n is None and d.profit.tier is Tier.STRONG  # km yok: engel değil, uyarıyla gider
+    d = decide(car("t", 6000, km=None), pool, S.model_copy(update={"unknown_km_check": False}), now=NOW)
+    assert d.market.near_n is None and d.profit.tier is Tier.STRONG  # km yok: engel değil, uyarıyla gider (temkinli km: test_quality_rules)
     raw = sorted(r["price_gbp"] for r in pool)
     assert d.market.median_gbp == (raw[4] + raw[5]) / 2  # fiyatlara dokunulmadı
 
