@@ -53,8 +53,15 @@ class Repo:
 
 
 def post(i, **kw):
-    return car(i, None, price_gbp=None, url=f"https://www.facebook.com/groups/1/posts/{i}/", seller_type=None, seller_phone=None,
-               posted_at=NOW - timedelta(minutes=30), first_seen_at=NOW - timedelta(minutes=10), raw_text=NO_PRICE, location=None) | kw
+    """Fiyatı fotoğraftan okunmuş FB ilanı (£5.000 < %20 sınırı £6.600). Fiyatsız ilan: post(i, price_gbp=None, urgency_signals=["fiyatsiz"])."""
+    return car(i, None, price_gbp=5000, urgency_signals=["foto_fiyat"], url=f"https://www.facebook.com/groups/1/posts/{i}/", seller_type=None,
+               seller_phone=None, posted_at=NOW - timedelta(minutes=30), first_seen_at=NOW - timedelta(minutes=10), raw_text=NO_PRICE,
+               location=None) | kw
+
+
+def test_priceless_posts_get_no_card_any_more():
+    """Sahip 11.10 ~18:50: "fiyatsız ilana şu an ihtiyaç yok, zaten arayıp soruyoruz; önemli olan fiyatı olanlar"."""
+    assert ask_price.pick([post("a", price_gbp=None, urgency_signals=["fiyatsiz"])], POOL, Settings(), NOW) == []
 
 
 def test_card_gives_the_market_middle_and_the_most_to_pay_for_twenty_percent():
@@ -89,7 +96,8 @@ def test_turn_sends_one_message_once_and_respects_the_daily_cap(monkeypatch):
     sent = []
     assert ask_price.run(repo, sent.append, Settings(), NOW) == 2
     (msg,) = sent
-    assert msg.startswith("📞 FİYAT SOR · Facebook'ta fiyatı yazıda olmayan 2 yeni ilan") and "km yazmıyor · sahibinden" in msg
+    assert msg.startswith("🖼 FOTOĞRAFTA FİYAT · Facebook'ta fiyatı yalnız fotoğrafta yazan 2 ilan %20 kâr sınırının altında") \
+        and "km yazmıyor · sahibinden" in msg and "🖼 fotoğrafta £5.000 yazıyor" in msg
     assert repo.keys == [("Toyota", "vitz")] and "eski" not in msg
     assert ask_price.run(repo, sent.append, Settings(), NOW) == 0 and len(sent) == 1  # ikinci turda aynı ilan yok
     monkeypatch.setattr(ask_price, "MAX_PER_DAY", 3)
@@ -162,21 +170,13 @@ def test_read_photo_accepts_only_its_own_small_local_copy(tmp_path):
         assert si.read_photo(tmp_path, url) is None, url
 
 
-@pytest.mark.parametrize("photo,shown", [(5000, "%20 sınırının altında ✅"), (7500, None), (3000, "")])
-def test_photo_price_is_compared_with_the_limit(photo, shown):
-    offer = buy_ceiling(8700 * 0.95, Settings()) // 50 * 50  # 6.600
-    picked = ask_price.pick([post("a", price_gbp=photo, urgency_signals=["foto_fiyat"])], POOL, Settings(), NOW)
-    if shown is None:  # sınırın %10'undan fazla üstünde: kart yok
-        assert offer * 1.1 < 7500 and picked == []
-        return
-    ((l, med, n, off),) = picked
-    text = ask_price.card(l, med, n, off)
-    if shown:
-        assert f"🖼 fotoğrafta £5.000 yazıyor (yapay zekâ okudu, teyit et) → {shown}" in text
-    else:  # piyasanın yarısından ucuz: yanlış okuma, fiyatsız kart
-        assert "🖼" not in text
+@pytest.mark.parametrize("photo,card", [(5000, True), (6600, True), (6700, False), (3000, False)])
+def test_photo_price_must_be_under_the_limit_and_plausible(photo, card):
+    """£6.600 = %20 sınırı. Üstü fırsat değil; piyasa ortasının yarısından ucuzu (£4.350) yanlış okuma sayılır: fiyatsız gibi, kart yok."""
+    picked = ask_price.pick([post("a", price_gbp=photo)], POOL, Settings(), NOW)
+    assert bool(picked) is card
+    if card:
+        ((l, med, n, off),) = picked
+        money = f"£{photo:,.0f}".replace(",", ".")
+        assert f"🖼 fotoğrafta {money} yazıyor (yapay zekâ okudu, teyit et) → %20 sınırının altında ✅" in ask_price.card(l, med, n, off)
 
-
-def test_photo_price_a_little_above_the_limit_says_how_much():
-    ((l, med, n, off),) = ask_price.pick([post("a", price_gbp=7000, urgency_signals=["foto_fiyat"])], POOL, Settings(), NOW)
-    assert "🖼 fotoğrafta £7.000 yazıyor (yapay zekâ okudu, teyit et) → sınırın £400 üstünde (pazarlıkla iner)" in ask_price.card(l, med, n, off)

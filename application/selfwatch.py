@@ -350,9 +350,12 @@ def join_check(repo, now: datetime, path: str | None = None) -> None:
     yoksa/alan yoksa hiçbir şey."""
     from application import fb_join  # tembel: kaynak yönetiminin bağımlılıkları yalnız VPS turunda yüklenir
     data = read_social(path)
+    if data is None:  # okuyucu yok (GitHub/yerel) ya da dosya bozuk: hiçbir şey yapılmaz (gölge süresi de beklemede kalır)
+        return
     fb_join.check(repo, data, now)
     fb_join.membership(repo, data)  # açık sanılıp üye olmadan okunamayan grup katılma sırasına
     fb_join.discover(repo, data, now)  # okuyucunun bulduğu yeni gruplar (platformlar.facebook.kesif)
+    fb_join.promote(repo, now)  # gölge süresi dolan gruplar yeşile (sahip 11.10.2026)
 
 
 def after_tick(repo, beat_written: bool, now: datetime | None = None) -> None:

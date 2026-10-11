@@ -2,7 +2,8 @@
 bottan takip ederim, oraya bildirim atsın"). Okuyucu, kaynak listesindeki (application/source_export) "aday" Facebook gruplarına kendisi katılır
 ve sonucu durum dosyasına yazar: platformlar.facebook.katilim = [{"anahtar": "fb:<grup>", "durum": "uye|bekliyor|sorulu|kapali|reddedildi|hata",
 "zaman_utc": ISO}]. Bu modül her VPS turunda (gece de) o listeyi okur:
-- "uye": grubun kaydı yalnız 'aday' ise 'aktif' yapılır (uyarı seviyesi değişmez: gölgede okunur), sahibe bir kez haber verilir. Sahibin
+- "uye": grubun kaydı yalnız 'aday' ise 'aktif' yapılır (uyarı seviyesi değişmez: sahibin eklediği yeşil, öbürleri gölgede başlar ve
+  SHADOW_DAYS sonra kendiliğinden yeşil olur: promote()), sahibe bir kez haber verilir. Sahibin
   kapattığı (pasif) ya da dışarıda tuttuğu grup dosya ne derse desin AÇILMAZ. Açılış /kaynaklar'ın korumalarına uyar: açık Facebook kaynağı
   sınırı (sources_cmd.MAX_OPEN) doluysa grup aday kalır, sahibe bir kez söylenir; 24 saatlik açılış rayı doluysa açılış sonraki tura kalır.
 - "bekliyor" / "sorulu" / "kapali" / "reddedildi": sahibe bir kez haber (sorulu/kapali: okuyucu cevap uydurmaz; sahip isterse kendisi katılır;
@@ -12,7 +13,7 @@ Her (grup, durum) için en çok bir mesaj (notify_owner anahtarı). Dosyada alan
 Ayrıca (discover): okuyucunun FB grup aramasıyla bulduğu gruplar kaynaklara eklenir (aşağıda, "Grup keşfi")."""
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from application import sources_cmd
 from application.health import notify_owner
@@ -25,7 +26,7 @@ STATES = ("uye", "bekliyor", "sorulu", "kapali", "reddedildi", "hata")  # okuyuc
 _KEY = re.compile(r"^fb:[a-z0-9._-]{1,64}$")
 NEVER = ("pasif", "disari", "erisim_reddediyor")  # sahibin kapattığı/istemediği grup: katılım ne derse desin açılmaz
 TEXTS = {
-    "uye": "📥 Okuyucu yeni bir Facebook grubuna katıldı: {name}. Gölgede okunuyor (bildirim yok, yalnız piyasa verisi); /kaynaklar'dan kapatabilirsin.",
+    "uye": "📥 Okuyucu yeni bir Facebook grubuna katıldı: {name}. {level} /kaynaklar'dan kapatabilirsin.",
     "sinir": ("📥 Okuyucu \"{name}\" Facebook grubuna katıldı ama açık Facebook kaynağı sınırı ({limit}) dolu: grup okunmuyor. "
               "/kaynaklar'dan birini kapatırsan bunu açabilirsin."),
     "bekliyor": "📨 Okuyucu \"{name}\" Facebook grubuna katılma isteği gönderdi; grup yöneticisinin onayı bekleniyor. Onaylanınca haber veririm.",
@@ -35,6 +36,46 @@ TEXTS = {
     "reddedildi": ("🚫 \"{name}\" Facebook grubuna katılma isteği kabul edilmedi (grup yöneticisi onaylamadı ya da istek düştü); okuyucu yeniden "
                    "istemez. İstersen kendin katılabilirsin: {url}"),
 }
+
+
+SHADOW_DAYS = 3  # sahip 11.10.2026: okuyucunun bulduğu/katıldığı grup ilk 3 gün gölgede (yalnız ölçülür), sonra fırsatları anında gelir
+SHADOW_KEY = "fb_golge_bas:{}"  # bot_state: grubun gölgede okunmaya başladığı an (ISO). Yalnız bu kaydı olan grup kendiliğinden yeşil olur
+FOREIGN_SHARE = 0.30  # gölgedeki ilanların bu kadarından fazlası euro fiyatlıysa grup Güney Kıbrıs olabilir: yeşile geçmez, sahibe sorulur
+SHADOW_TEXT = f"İlk {SHADOW_DAYS} gün gölgede okunur (bildirim yok, yalnız ölçülür), sonra fırsatları anında gelir."
+LIVE_TEXT = "Fırsatları artık anında gelecek."
+
+
+def start_shadow(repo, key: str, now: datetime) -> None:
+    repo.set_state(SHADOW_KEY.format(key), now.isoformat())
+
+
+def promote(repo, now: datetime, log=print) -> int:
+    """Gölge süresi dolan (SHADOW_KEY kaydı olan) aktif FB grubunu yeşile alır ve sahibe bir kez yazar. Sahibin elle gölgeye aldığı grup
+    (kaydı yok) değişmez. Euro fiyatlı ilan payı FOREIGN_SHARE'i aşarsa (Güney Kıbrıs olabilir) gölgede kalır, sahibe bir kez sorulur."""
+    n = 0
+    for key, rows in _by_key(repo.sources(PLATFORM, sources_cmd.OPEN)).items():
+        r = rows[0]
+        if r.get("alert_level") != "golge":
+            continue
+        try:
+            started = datetime.fromisoformat(repo.get_state(SHADOW_KEY.format(key)) or "")
+        except ValueError:
+            continue
+        if now - started < timedelta(days=SHADOW_DAYS):
+            continue
+        priced, euro = repo.currency_mix(r["id"], days=SHADOW_DAYS + 1)
+        if priced and euro / priced > FOREIGN_SHARE:
+            notify_owner(repo, f"fb_golge_euro_{key}", f"⚠️ \"{r['name']}\" Facebook grubundaki ilanların %{euro * 100 // priced} kadarı euro fiyatlı: "
+                         "Güney Kıbrıs grubu olabilir. Gölgede bıraktım (bildirim yok). İstersen /kaynak_seviye ile aç ya da /kaynaklar'dan kapat.",
+                         repeat_hours=ONCE_H)
+            continue
+        repo.set_alert_level(r["id"], "yesil")
+        n += 1
+        notify_owner(repo, f"fb_golge_bitti_{key}", f"✅ \"{r['name']}\" Facebook grubu {SHADOW_DAYS} gün gölgede sorunsuz okundu "
+                     f"({priced} fiyatlı ilan). Artık fırsatları anında gelecek.", repeat_hours=ONCE_H)
+    if n:
+        log(f"facebook: {n} grup gölgeden çıktı (yeşil)")
+    return n
 
 
 def entries(data: dict | None) -> list[tuple[str, str]]:
@@ -89,8 +130,11 @@ def check(repo, data: dict | None, now: datetime, log=print) -> int:
         sources_cmd._set_status(repo, str(row["id"]), "aktif")
         sources_cmd._note_open(repo, PLATFORM, now)
         opened += 1
-        log("facebook katılım: 1 grup okumaya açıldı (gölge)")
-        notify_owner(repo, f"fb_katilim_{key}_uye", TEXTS["uye"].format(name=name), repeat_hours=ONCE_H)
+        shadow = row.get("alert_level") == "golge"
+        if shadow:
+            start_shadow(repo, key, now)
+        log("facebook katılım: 1 grup okumaya açıldı" + (" (gölge)" if shadow else ""))
+        notify_owner(repo, f"fb_katilim_{key}_uye", TEXTS["uye"].format(name=name, level=SHADOW_TEXT if shadow else LIVE_TEXT), repeat_hours=ONCE_H)
     return opened
 
 
@@ -168,6 +212,7 @@ def discover(repo, data: dict | None, now: datetime, log=print) -> tuple[int, in
         added += 1
         if public:
             opened, open_n = opened + 1, open_n + 1
+            start_shadow(repo, d["anahtar"], now)
             done_open.append(name)
         else:
             done_wait.append(name)
@@ -180,7 +225,7 @@ def discover(repo, data: dict | None, now: datetime, log=print) -> tuple[int, in
         if done_wait:
             parts.append(f"{len(done_wait)} kapalı grup katılma sırasına girdi: " + ", ".join(done_wait[:5]))
         notify_owner(repo, f"fb_kesif_{now:%Y%m%d%H%M}", "🔎 Okuyucu Facebook'ta yeni araç grupları buldu.\n" + "\n".join(parts)
-                     + "\nHepsi gölgede (bildirim yok, piyasa verisi + 📞 fiyat sor). İstemediğini /kaynaklar'dan kapatabilirsin.", repeat_hours=1)
+                     + f"\n{SHADOW_TEXT} İstemediğini /kaynaklar'dan kapatabilirsin.", repeat_hours=1)
     return len(done_open) + len(done_wait), len(done_open)
 
 

@@ -1,4 +1,7 @@
-"""📞 FİYAT SOR (11.10.2026; sahip: "fırsat arabaları Facebook'tan bulunuyor… çok fazla grubu tarayan bir sistem"; sosyal oturumla ortak plan).
+"""🖼 Fotoğraftaki fiyat kartı (eski adı 📞 FİYAT SOR; 11.10.2026).
+SAHİP KARARI (11.10 ~18:50 UTC, ilk iki karttan sonra): fiyatsız ilan kartı İSTENMEDİ ("zaten arayıp soruyoruz; önemli olan bütün piyasayı
+tarayıp fiyatı olanları bulup iletmek"). Bu yüzden kart YALNIZ fiyatı fotoğrafta yazan ve o fiyat %20 sınırının altında kalan ilana gider.
+Fiyatsız kayıtlar tutulmaya devam eder (kesik metin açılınca/fotoğraf okununca fiyat kazanabilir), kart almaz. Aşağısı ilk tasarımdır:
 KKTC Facebook gruplarındaki araç gönderilerinin çoğu fiyat yazmaz ("irtibat", "fiyat özelden"): 10.10–11.10 ölçümünde 524 gönderinin 210'u
 marka + yıl yazıp fiyat yazmıyordu (okunabilen ilanın ~7 katı). Alım-satımcı bunları arayıp fiyat sorar; erken arayan kazanır.
 Bu adım her VPS turunun sonunda, devir aktarıcısının yazdığı FİYATSIZ Facebook ilanlarına (collect_facebook.priceless_data) bakar ve sahibe
@@ -27,7 +30,7 @@ SENT_KEY = "fiyatsor:islenen"  # bot_state: işlenen ilan kimlikleri (JSON liste
 PRINTS_KEY = "fiyatsor:izler"  # bot_state: kart giden aracın izi (aynı aracın yeniden paylaşımı ikinci kart almasın; JSON liste, son KEEP)
 DAY_KEY = "fiyatsor:gun:{}"  # bot_state: o KKTC gününde gönderilen kart sayısı
 KEEP = 600
-PHOTO_SLACK = 1.10  # fotoğraftaki fiyat %20 sınırının en çok %10 üstündeyse kart (pazarlıkla sınıra iner); daha pahalısı fırsat değil
+PHOTO_SLACK = 1.0  # fotoğraftaki fiyat %20 sınırını aşarsa kart yok (sahip: yalnız fırsat; ilk tasarımda %10 pay vardı)
 # galeri/ticari gönderi işaretleri (satıcı radarı bilinmediğinde metinden): kart bireysel satıcıyı hedefler. "plakasız" = yeni ithal araç
 # (çoğu galeri; emsaller plakalı araç fiyatıdır)
 _DEALER = re.compile(r"\b(?:motors?|auto|oto\s*galeri|galeri(?:miz)?|car\s+dealership|showroom|taksit|kredi(?:li)?|senet(?:le)?|"
@@ -93,8 +96,8 @@ def pick(rows: list[dict], pool: list[dict], s: Settings, now: datetime, seen: s
         photo = l.get("price_gbp") if "foto_fiyat" in (l.get("urgency_signals") or []) else None
         if photo is not None and photo < v.median_gbp * s.absurd_price_ratio:
             photo = None  # piyasanın yarısından ucuz: büyük olasılıkla yanlış okuma ("5" ya da taksit tutarı); fiyatsız kart
-        if photo is not None and photo > v.max_buy_gbp * PHOTO_SLACK:
-            continue  # fotoğraftaki fiyat sınırın çok üstünde: fırsat değil
+        if photo is None or photo > v.max_buy_gbp * PHOTO_SLACK:
+            continue  # fiyatsız (sahip istemedi) ya da fotoğraftaki fiyat sınırın üstünde: fırsat değil
         l = {**l, "_foto": photo}
         seen.add(fingerprint(l))
         out.append((l, v.median_gbp, v.comparables_n, v.max_buy_gbp))
@@ -124,8 +127,8 @@ def run(repo, send, s: Settings, now: datetime | None = None) -> int:
     repo.set_state(PRINTS_KEY, json.dumps((prints + [fingerprint(l) for l, *_ in chosen])[-KEEP:]))
     for i in range(0, len(chosen), PER_MESSAGE):
         part = chosen[i:i + PER_MESSAGE]
-        head = ("📞 FİYAT SOR · Facebook'ta fiyatı yazıda olmayan " + ("yeni ilan" if len(part) == 1 else f"{len(part)} yeni ilan")
-                + "\nSatıcı aşağıdaki rakamın altını söylerse %20 kâr kalır (🟢 değil: fiyat ve araç görülmedi).")
+        head = ("🖼 FOTOĞRAFTA FİYAT · Facebook'ta fiyatı yalnız fotoğrafta yazan " + ("ilan" if len(part) == 1 else f"{len(part)} ilan")
+                + " %20 kâr sınırının altında\nFiyatı yapay zekâ okudu: aramadan önce ilandaki fotoğrafla teyit et (🟢 değil).")
         body = [card(l, med, n, offer) for l, med, n, offer in part]
         tail = "km yazmıyorsa rakam yaşına göre ortalama km'li araç içindir."
         send("\n\n".join([head, *body, tail]))

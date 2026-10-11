@@ -985,6 +985,13 @@ class Repository:
         return {r["h"] for r in self.conn.execute(
             "SELECT lower(split_part(rtrim(url,'/'), '/', -1)) AS h FROM sources WHERE platform='instagram'").fetchall()}
 
+    def currency_mix(self, source_id, days: int) -> tuple[int, int]:
+        """Kaynağın son `days` gününde ilk kez görülen fiyatlı ilanları: (toplam, euro fiyatlı). FB grubunun Güney Kıbrıs olup olmadığına bakılır."""
+        row = self.conn.execute(
+            """SELECT count(*) AS n, count(*) FILTER (WHERE currency = 'EUR') AS eur FROM listings
+               WHERE source_id = %s AND price_gbp IS NOT NULL AND first_seen_at > NOW() - make_interval(days => %s)""", (source_id, days)).fetchone()
+        return row["n"], row["eur"]
+
     def set_alert_level(self, source_id, level: str) -> None:
         self.conn.execute("UPDATE sources SET alert_level=%s WHERE id=%s", (level, source_id))
 

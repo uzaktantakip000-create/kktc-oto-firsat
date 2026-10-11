@@ -50,8 +50,9 @@ def _set_status(repo, source_id: str, status: str) -> None:
 
 
 def _insert(repo, link: SourceLink, status: str) -> None:
-    """Facebook grubu katılma adayı olarak girer: öncelik 1 (okuyucu önce buna katılır), gölge (öbür FB grupları gibi; FB bildirim kapısı
-    hepsini birlikte açar). Öbürleri sona eklenir, yeşil."""
+    """Facebook grubu katılma adayı olarak girer: öncelik 1 (okuyucu önce buna katılır). Uyarı seviyesi yeşil: sahip 11.10.2026'da FB
+    fırsatlarını açtı ("senin eklediğin gruplar tam yetki"); okuyucunun kendi bulduğu gruplar ise 3 gün gölgede başlar (application/fb_join).
+    Öbür platformlar sona eklenir, yeşil."""
     name = link.handle if link.platform != "facebook" else f"Facebook grubu {link.handle}"
     kind = {"instagram": "ilan_sayfasi", "facebook": "grup", "web": "ilan_sitesi"}[link.platform]
     fb = link.platform == "facebook"
@@ -59,7 +60,7 @@ def _insert(repo, link: SourceLink, status: str) -> None:
         """INSERT INTO sources (platform, name, url, kind, region, status, priority, discovered_by, alert_level)
            VALUES (%s, %s, %s, %s, 'KKTC', %s, COALESCE(%s, (SELECT COALESCE(MAX(priority), 0) + 1 FROM sources WHERE platform = %s)), 'sahip', %s)
            ON CONFLICT (url) DO UPDATE SET status = EXCLUDED.status, priority = COALESCE(%s, sources.priority)""",  # adres kayıtlıysa o satır açılır
-        (link.platform, name, link.url, kind, status, FB_OWNER_PRIORITY if fb else None, link.platform, "golge" if fb else "yesil",
+        (link.platform, name, link.url, kind, status, FB_OWNER_PRIORITY if fb else None, link.platform, "yesil",
          FB_OWNER_PRIORITY if fb else None))
 
 
