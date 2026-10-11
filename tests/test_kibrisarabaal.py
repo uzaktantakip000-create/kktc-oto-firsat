@@ -64,3 +64,12 @@ def test_baslik_yili_ile_alan_yili_celisirse_eski_yil_alinir():
     # Sayfada "Yıl: 2022" (plakasız aracın kayıt yılı) ama başlık "2013 Model Otomatik Nissan Juke"
     d = parse_detail((Path(__file__).parent / "fixtures/kibrisarabaal_detail_juke_year.html").read_text())
     assert d["year"] == 2013 and d["brand"] == "Nissan"
+
+
+def test_location_is_only_the_part_after_the_long_dash():
+    """Şehir yazmayan ilanda marka/modeldeki kısa tire şehir sanılmaz ("Mercedes - Benz SLK 200" → şehir "Benz SLK" değil)."""
+    desc = "2015 Mazda Demio – Güzelyurt. KKTC"
+    for text, want in [("2019 Mercedes - Benz SLK 200. KKTC", None), ("2020 Toyota C-HR Hybrid. KKTC", None), ("2021 Volkswagen T-Roc. KKTC", None),
+                       ("2018 Mercedes - Benz C 200 – Girne. KKTC", "Girne"), ("2020 Toyota C-HR Hybrid – Lefkoşa. KKTC", "Lefkoşa")]:
+        assert desc in HTML
+        assert parse_detail(HTML.replace(desc, text))["location"] == want, text

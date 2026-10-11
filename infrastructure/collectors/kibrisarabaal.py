@@ -105,7 +105,9 @@ def parse_detail(html: str) -> dict | None:
                 break
             out.append(l)
         desc = "\n".join(out)
-    loc = re.search(r"[–-]\s*([^.–-]+?)\.\s*KKTC", node.get("description") or "")
+    # Açıklama: "<yıl> <marka> <model>[ – <şehir>]. KKTC satılık…": şehir ayracı boşluklu UZUN tire. Kısa tire marka/model adındadır
+    # ("Mercedes - Benz SLK 200", "C-HR", "T-Roc"): şehir yazmayan ilanda onu ayraç saymak şehre "Benz SLK"/"Roc" yazıyordu (10.10 bulgusu)
+    loc = re.search(r"\s–\s*([^.–]+?)\.\s*KKTC", node.get("description") or "")
     phone = re.search(r'https://wa\.me/(\d{10,15})', html)  # satıcı düğmesi (sayfa başlığındaki tel: site telefonudur)
     status = f.get("Araç Durumu:", "")
     posted = _date(f.get("İlan Tarihi:", ""))
