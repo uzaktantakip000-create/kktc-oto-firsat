@@ -57,6 +57,7 @@ def store(monkeypatch):
         repo.rows.append(src(f"n{len(repo.rows)}", link.platform, name, link.url, status=status, priority=99))
 
     monkeypatch.setattr(sources_cmd, "_insert", insert)
+    monkeypatch.setattr(sources_cmd, "_set_candidate", lambda repo, sid: repo.by(sid).update(status="aday", priority=1))
     return st
 
 
@@ -127,7 +128,12 @@ def test_social_list_hides_old_candidates_and_non_groups(store):
     data = [b["text"] for row in markup["inline_keyboard"] for b in row]
     assert "⏸ Kapat · @kibris.car" in data and "▶️ Aç · @eski.hesap" in data
     text, _ = sources_cmd.category(store, "facebook")
-    assert "KKTC ARABA PAZARI" in text and "Marketplace" not in text and "uzak ekrandan" in text
+    assert "KKTC ARABA PAZARI" in text and "Marketplace" not in text and "kendisi katılır" in text and "Katılma sırasında" not in text
+    store.rows += [src("f7", "facebook", "Aday B", "https://www.facebook.com/groups/700/", status="aday", priority=3),
+                   src("f8", "facebook", "Aday A", "https://www.facebook.com/groups/800/", status="aday", priority=1),
+                   src("f9", "facebook", "Pazar yeri", "https://www.facebook.com/marketplace/1/cars/", status="aday", priority=1)]
+    text, _ = sources_cmd.category(store, "facebook")
+    assert "⏳ Katılma sırasında 2 grup (okuyucu günde en çok 1 gruba katılır): Aday A, Aday B" in text  # Marketplace grup değil
 
 
 def test_social_list_shows_per_source_numbers_from_the_reader_file(store, tmp_path, monkeypatch):
@@ -219,11 +225,15 @@ def test_closed_source_link_offers_reopen(store):
     assert "kapalı. Açayım mı?" in text and markup["inline_keyboard"][0][0]["callback_data"] == "src:on:i2"
 
 
-def test_facebook_group_proposal_warns_about_membership(store):
+def test_facebook_group_from_the_owner_becomes_a_join_candidate_first_in_line(store):
+    """11.10.2026: okuyucu gruplara kendisi katılır (application/fb_join); sahibin eklediği grup açılmaz, katılma adayı olur (öncelik 1)."""
     text, markup = sources_cmd.propose_link(store, "https://www.facebook.com/groups/1515097918635949/")
-    assert "uzak ekrandan katıldıktan sonra" in text and markup["inline_keyboard"][0][0]["callback_data"] == "src:add:fb:1515097918635949"
-    assert "eklendi" in sources_cmd.add(store, "fb:1515097918635949")
-    assert any(r["name"] == "Facebook grubu 1515097918635949" and r["status"] == "aktif" for r in store.rows)
+    assert "kendisi katılır" in text and markup["inline_keyboard"][0][0]["callback_data"] == "src:add:fb:1515097918635949"
+    assert "katılma listesinin başına eklendi" in sources_cmd.add(store, "fb:1515097918635949")
+    assert any(r["name"] == "Facebook grubu 1515097918635949" and r["status"] == "aday" for r in store.rows)
+    assert "src:opened:facebook" not in store.state  # açılış değil: 24 saatlik ray katılımda sayılır
+    store.rows.append(src("f9", "facebook", "Eski aday", "https://www.facebook.com/groups/777/", status="aday", priority=3))
+    assert "katılma listesinin başına" in sources_cmd.add(store, "fb:777") and store.by("f9")["priority"] == 1
 
 
 def test_site_links(store):
@@ -255,10 +265,12 @@ def test_add_rejects_tampered_keys(store):
 
 def test_proposal_respects_the_daily_limit(store):
     now = datetime.now(timezone.utc).isoformat()
-    store.state["src:opened:facebook"] = json.dumps([now, now])
-    text, markup = sources_cmd.propose_link(store, "https://www.facebook.com/groups/999/")
+    store.state["src:opened:instagram"] = json.dumps([now, now])
+    text, markup = sources_cmd.propose_link(store, "https://www.instagram.com/yeni.hesap/")
     assert "24 saatte en çok 2" in text and markup is None
-    assert "24 saatte en çok 2" in sources_cmd.add(store, "fb:999")
+    assert "24 saatte en çok 2" in sources_cmd.add(store, "ig:yeni.hesap")
+    store.state["src:opened:facebook"] = json.dumps([now, now])  # FB grubu açılmaz, aday olur: ray eklemeyi durdurmaz
+    assert "katılma listesinin başına eklendi" in sources_cmd.add(store, "fb:999")
 
 
 # ---- bot: link ve düğmeler ----

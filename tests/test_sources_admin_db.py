@@ -47,3 +47,16 @@ def test_list_toggle_add_and_export_against_the_real_schema(db, tmp_path):
     doc = json.loads(path.read_text())
     assert [(i["anahtar"], i["durum"]) for i in doc["kaynaklar"]] == [
         ("fb:469402498541872", "aktif"), ("ig:kibris.car", "aktif"), ("ig:yeni.galeri", "aktif")]
+
+
+def test_owner_facebook_group_goes_in_as_a_join_candidate_against_the_real_schema(db):
+    """11.10.2026: sahibin eklediği FB grubu 'aday' + öncelik 1 + gölge girer; var olan aday kaydı öne alınır (çift satır yok)."""
+    c = db.conn
+    old = add(c, "facebook", "Eski", "https://www.facebook.com/groups/777/", status="aday", priority=3)
+    assert "katılma listesinin başına eklendi" in sources_cmd.add(db, "fb:555")
+    row = c.execute("SELECT status, priority, alert_level, discovered_by FROM sources WHERE url='https://www.facebook.com/groups/555/'").fetchone()
+    assert row == {"status": "aday", "priority": 1, "alert_level": "golge", "discovered_by": "sahip"}
+    assert "katılma listesinin başına eklendi" in sources_cmd.add(db, "fb:777")
+    assert c.execute("SELECT status, priority, count(*) OVER () AS n FROM sources WHERE url LIKE '%%/groups/777/'").fetchone() == \
+        {"status": "aday", "priority": 1, "n": 1}
+    assert c.execute("SELECT id::text AS id FROM sources WHERE url LIKE '%%/groups/777/'").fetchone()["id"] == old

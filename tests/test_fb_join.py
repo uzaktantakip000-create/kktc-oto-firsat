@@ -71,7 +71,7 @@ def test_full_limit_keeps_the_group_candidate_and_says_so_once(sent):
     repo = Repo([src(7, "111", "aday")], open_count=sources_cmd.MAX_OPEN["facebook"])
     for _ in range(2):
         assert fb_join.check(repo, status(("fb:111", "uye")), NOW) == 0
-    assert repo.set == [] and [k for k, _ in sent] == ["fb_katilim_fb:111_sinir"] and "sınırı (8) dolu" in sent[0][1]
+    assert repo.set == [] and [k for k, _ in sent] == ["fb_katilim_fb:111_sinir"] and f"sınırı ({sources_cmd.MAX_OPEN['facebook']}) dolu" in sent[0][1]
 
 
 def test_daily_open_rail_delays_the_opening_to_a_later_turn(sent):

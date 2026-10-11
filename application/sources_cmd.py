@@ -14,7 +14,10 @@ from application.source_readers import domain_matches, reader_for_host
 from domain.source_links import SourceLink, key_of_url, parse_source_link
 
 PLATFORM_TITLE = {"web": "🌐 Siteler", "instagram": "📸 Instagram", "facebook": "👥 Facebook"}
-MAX_OPEN = {"instagram": 15, "facebook": 8}  # açık sosyal kaynak üst sınırı: fazlası okuyucu hesabının frenlenme riskini artırır
+MAX_OPEN = {"instagram": 15, "facebook": 50}  # açık sosyal kaynak üst sınırı: fazlası okuyucu hesabının frenlenme riskini artırır
+# Facebook 8 → 50 (11.10.2026, sahip: "çok fazla grubu, gerekirse hepsini tara"): okuyucu turda en çok 8 grubu okur, fazlası sırayla döner;
+# katılımı okuyucu kendisi yapar (24 saatte 1), sınırı JOIN_MAX_ACTIVE=50 ile aynı.
+FB_OWNER_PRIORITY = 1  # sahibin bottan eklediği grup: okuyucunun katılma sırasında en önde (sosyal oturum: yalnız öncelik ≤2'ye katılır)
 MAX_NEW_PER_DAY = 2  # platform başına 24 saatte en çok bu kadar sosyal kaynak açılır (ekleme ya da geri açma): ani artış hesabı şüpheli gösterir
 OPENED_KEY = "src:opened:{}"  # bot_state: platformda son açılışların zamanları (JSON liste, UTC ISO)
 OPEN = ("aktif", "deneme")  # 'deneme' eski Instagram deneme durumu: açık sayılır
@@ -47,13 +50,22 @@ def _set_status(repo, source_id: str, status: str) -> None:
 
 
 def _insert(repo, link: SourceLink, status: str) -> None:
+    """Facebook grubu katılma adayı olarak girer: öncelik 1 (okuyucu önce buna katılır), gölge (öbür FB grupları gibi; FB bildirim kapısı
+    hepsini birlikte açar). Öbürleri sona eklenir, yeşil."""
     name = link.handle if link.platform != "facebook" else f"Facebook grubu {link.handle}"
     kind = {"instagram": "ilan_sayfasi", "facebook": "grup", "web": "ilan_sitesi"}[link.platform]
+    fb = link.platform == "facebook"
     repo.conn.execute(
         """INSERT INTO sources (platform, name, url, kind, region, status, priority, discovered_by, alert_level)
-           VALUES (%s, %s, %s, %s, 'KKTC', %s, (SELECT COALESCE(MAX(priority), 0) + 1 FROM sources WHERE platform = %s), 'sahip', 'yesil')
-           ON CONFLICT (url) DO UPDATE SET status = EXCLUDED.status""",  # adres zaten kayıtlıysa (benzersiz) o satır açılır: çift satır olmaz
-        (link.platform, name, link.url, kind, status, link.platform))
+           VALUES (%s, %s, %s, %s, 'KKTC', %s, COALESCE(%s, (SELECT COALESCE(MAX(priority), 0) + 1 FROM sources WHERE platform = %s)), 'sahip', %s)
+           ON CONFLICT (url) DO UPDATE SET status = EXCLUDED.status, priority = COALESCE(%s, sources.priority)""",  # adres kayıtlıysa o satır açılır
+        (link.platform, name, link.url, kind, status, FB_OWNER_PRIORITY if fb else None, link.platform, "golge" if fb else "yesil",
+         FB_OWNER_PRIORITY if fb else None))
+
+
+def _set_candidate(repo, source_id: str) -> None:
+    """Var olan Facebook kaydını (aday/dışarı/eski) sahibin isteğiyle katılma listesinin başına alır."""
+    repo.conn.execute("UPDATE sources SET status=%s, priority=%s WHERE id::text = %s", (REQUEST, FB_OWNER_PRIORITY, source_id))
 
 
 # ---- yardımcılar ----
@@ -238,7 +250,11 @@ def category(repo, platform: str, now: datetime | None = None) -> tuple[str, dic
         if blocked:
             lines += ["", "⛔ Erişim vermeyen siteler: " + ", ".join(blocked)]
     if platform == "facebook":
-        lines += ["", "ℹ️ Okuyucu hesabı bir grubu ancak sen ona uzak ekrandan katıldıktan sonra okuyabilir."]
+        queue = sorted((r for r in all_rows if r["status"] == REQUEST and has_reader(r)), key=lambda r: (r["priority"] is None, r["priority"] or 0))
+        if queue:
+            lines += ["", f"⏳ Katılma sırasında {len(queue)} grup (okuyucu günde en çok 1 gruba katılır): "
+                      + ", ".join(r["name"] for r in queue[:8]) + (" …" if len(queue) > 8 else "")]
+        lines += ["", "ℹ️ Yeni grup eklemek için grubun linkini bana gönder; okuyucu hesabı gruba kendisi katılır."]
     keyboard.append([_btn("⬅️ Geri", "src:menu:")])
     return "\n".join(lines)[:3900], {"inline_keyboard": keyboard}
 
@@ -281,6 +297,10 @@ def _when(platform: str) -> str:
     return "Bir sonraki turda taranır (siteler 15–30 dk)." if platform == "web" else "Sosyal okuyucu en geç birkaç saat içinde okumaya başlar."
 
 
+FB_JOIN_TEXT = ("Okuyucu hesabı gruba kendisi katılır (günde en çok 1 grup; senin eklediklerin önce). Katılınca ya da katılamazsa "
+                "(onay bekliyor, soru soruyor) bot sana yazar; sonra grup okunmaya başlar.")
+
+
 def _limit_text(platform: str, limit: int) -> str:
     return (f"{PLATFORM_TITLE[platform]}: en çok {limit} açık kaynak olabilir. Fazlası okuyucu hesabının durdurulma riskini artırır; "
             "önce birini kapat.")
@@ -313,7 +333,7 @@ def propose_link(repo, raw: str) -> tuple[str, dict | None] | None:
     if not _callback_fits(data):
         return "Bu adres çok uzun; sitenin ana adresini (ör. https://site.com) gönder.", None
     no = _btn("❌ Vazgeç", "src:no:")
-    if link.platform in MAX_OPEN and not _daily_room(repo, link.platform, datetime.now(timezone.utc)):
+    if link.platform == "instagram" and not _daily_room(repo, link.platform, datetime.now(timezone.utc)):
         return _daily_text(link.platform), None
     if link.platform == "instagram":
         limit = MAX_OPEN["instagram"]
@@ -322,11 +342,7 @@ def propose_link(repo, raw: str) -> tuple[str, dict | None] | None:
         return (f"📸 instagram.com/{link.handle} hesabını kaynaklara ekleyeyim mi? Sosyal okuyucu en geç birkaç saat içinde okumaya başlar.",
                 {"inline_keyboard": [[_btn("✅ Ekle", data), no]]})
     if link.platform == "facebook":
-        limit = MAX_OPEN["facebook"]
-        if _open_count(repo, "facebook") >= limit:
-            return _limit_text("facebook", limit), None
-        return (f"👥 Bu Facebook grubunu ({link.handle}) kaynaklara ekleyeyim mi?\nÖnemli: okuyucu hesabı bu grubu ancak sen ona uzak "
-                "ekrandan katıldıktan sonra okur.", {"inline_keyboard": [[_btn("✅ Ekle", data), no]]})
+        return (f"👥 Bu Facebook grubunu ({link.handle}) ekleyeyim mi?\n{FB_JOIN_TEXT}", {"inline_keyboard": [[_btn("✅ Ekle", data), no]]})
     if reader_for_host(link.handle):  # okuyucusu var ama kaydı yok (silinmiş satır): açık olarak eklenir
         return (f"🌐 {link.handle} için okuyucu hazır. Taramaya ekleyeyim mi?", {"inline_keyboard": [[_btn("✅ Ekle", data), no]]})
     return (f"🌐 {link.handle} şu an taranmıyor. İstek olarak kaydedeyim mi?\nHer sitenin okuyucusu ayrıca yazılır; Claude'a söyleyince "
@@ -356,6 +372,12 @@ def add(repo, key: str) -> str:
         return _existing_answer(existing)[0]
     if existing is not None and existing["status"] == BLOCKED:
         return f"⛔ {existing['name']} sitesi erişimimizi reddediyor; taranamıyor."
+    if link.platform == "facebook":  # açılmaz, katılma adayı olur: okuyucu katılınca bot açar (application/fb_join)
+        if existing is not None:
+            _set_candidate(repo, existing["id"])
+        else:
+            _insert(repo, link, REQUEST)
+        return f"✅ {existing['name'] if existing else link.handle} katılma listesinin başına eklendi.\n{FB_JOIN_TEXT}"
     is_request = link.platform == "web" and not reader_for_host(link.handle)
     limit = MAX_OPEN.get(link.platform)
     if limit is not None and _open_count(repo, link.platform) >= limit:
