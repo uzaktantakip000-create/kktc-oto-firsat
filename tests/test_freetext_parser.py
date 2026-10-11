@@ -160,3 +160,16 @@ def test_service_interval_km_is_not_the_car_km(text, km):
 ])
 def test_kilometre_and_mileage_labels(text, km):
     assert parse_freetext(text).km == km
+
+
+@pytest.mark.parametrize("text,why", [
+    ("NİSSAN NOTE 2019 MODEL 52.000 KM TEK ŞAHIS EVRAKLAR TAM SERVİS YAPILMIŞTIR 2023 YILI TRAFİĞE ÇIKIŞLI JANTLAR", "fiyat_yok"),  # tek satır FB
+    ("2014 Honda Fit takas alınır fiyat 5000 stg", "ok"),  # takas alınır: satış ilanı
+    ("Satılık 17 jant BMW 2015 uyumlu 300 STG", "arac_degil"),  # ürün sözcüğü markadan önce
+    ("BMW jant takımı 4 adet", "arac_degil"),  # marka var, yıl yok
+    ("Araba alınır nakit ödeme", "arac_degil"),
+    ("Kiralık 2015 Toyota Vitz", "arac_degil"),
+])
+def test_one_line_facebook_posts_and_trade_in_are_not_mistaken_for_non_car_ads(text, why):
+    """11.10.2026: FB gönderisi çoğu zaman tek satır; sondaki 'jantlar' ya da 'takas alınır' ilanı 'araç değil' yapmamalı."""
+    assert diagnose(text) == why

@@ -56,11 +56,21 @@ _CITIES = ["girne", "lefkoşa", "lefkosa", "gazimağusa", "gazimagusa", "mağusa
            "iskele", "lefke", "alsancak", "lapta", "karpaz", "dikmen", "yeni boğaziçi", "boğaz", "bogaz", "ercan"]
 
 
+_TRADE_IN = re.compile(r"takas[a-zçğıöşü]*\s+al[ıi]n[ıi]r", re.I)  # "takas alınır" satış ilanında geçer, alım ilanı değildir
+
+
 def _not_a_sale_ad(text: str) -> bool:
     """Kiralık/aranıyor gönderisi ya da araç olmayan ürün. Sözcükler yalnızca başta aranır: satış ilanının içinde
-    'lastikler yeni', 'takas alınır' gibi ifadeler geçebilir."""
+    'lastikler yeni', 'takas alınır' gibi ifadeler geçebilir. Ürün sözcüğü (jant, lastik…) ilk satırda marka VE model yılından SONRA
+    geliyorsa araç ilanıdır: Facebook gönderisi çoğu zaman tek satırdır ("NİSSAN NOTE 2019 … ÇIKIŞLI JANTLAR", 11.10.2026 bulgusu)."""
+    if _SKIP.search(_TRADE_IN.sub(" ", text[:_SKIP_HEAD])):
+        return True
     first_line = text.strip().split("\n", 1)[0]
-    return bool(_SKIP.search(text[:_SKIP_HEAD]) or _SKIP_TITLE.search(first_line))
+    item = _SKIP_TITLE.search(first_line)
+    if item is None:
+        return False
+    before = first_line[:item.start()]
+    return not (_BRAND_RE.search(before) and _YEAR.search(before))
 
 
 def _clean_lines(text: str) -> list[str]:
