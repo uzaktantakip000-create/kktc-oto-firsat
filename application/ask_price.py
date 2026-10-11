@@ -104,11 +104,12 @@ def pick(rows: list[dict], pool: list[dict], s: Settings, now: datetime, seen: s
     return out
 
 
-def run(repo, send, s: Settings, now: datetime | None = None) -> int:
-    """Turun sonunda: yeni fiyatsız Facebook ilanları → sahibe kart. Gönderilen kart (ilan) sayısı. send(text): sahibe Telegram mesajı."""
+def run(repo, send, s: Settings, now: datetime | None = None, since: datetime | None = None) -> int:
+    """Turun sonunda: yeni fiyatsız Facebook ilanları → sahibe kart. Gönderilen kart (ilan) sayısı. send(text): sahibe Telegram mesajı.
+    `since` (Facebook hızlı şeridi): yalnız bu andan sonra ilk kez görülen ilanlar okunur (veritabanı çıkışı)."""
     now = now or datetime.now(timezone.utc)
     done = _load_ids(repo)
-    rows = [r for r in repo.priceless_recent(WINDOW_H) if str(r["id"]) not in done]
+    rows = [r for r in (repo.priceless_recent(WINDOW_H, since=since) if since else repo.priceless_recent(WINDOW_H)) if str(r["id"]) not in done]
     if not rows:
         return 0
     repo.set_state(SENT_KEY, json.dumps((done + [str(r["id"]) for r in rows])[-KEEP:]))  # önce yaz: en çok bir kez

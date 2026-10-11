@@ -27,7 +27,7 @@ wait_scans_idle() {
   local i unit state busy
   for i in $(seq 1 300); do
     busy=0
-    for unit in kktc-tick.service kktc-browser.service; do
+    for unit in kktc-tick.service kktc-browser.service kktc-fb-fast.service; do
       state=$(systemctl show -p ActiveState --value "$unit" 2>/dev/null || true)
       case "$state" in
         active|activating|reloading|deactivating) busy=1 ;;
@@ -157,11 +157,11 @@ if ! grep -Eq "^KKTC_RUNNER=vps[[:space:]]*$" "$ENV_FILE"; then
 fi
 
 say "systemd birimleri (etkinleştirilir, BAŞLATILMAZ)"
-for unit in kktc-bot.service kktc-bot-update.service kktc-bot-update.timer kktc-tick.service kktc-tick.timer kktc-browser.service kktc-browser.timer kktc-backup.service kktc-backup.timer; do
+for unit in kktc-bot.service kktc-bot-update.service kktc-bot-update.timer kktc-tick.service kktc-tick.timer kktc-browser.service kktc-browser.timer kktc-backup.service kktc-backup.timer kktc-fb-fast.service kktc-fb-fast.path; do
   install -m 644 -o root -g root "$APP_DIR/deploy/bot/$unit" "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
-systemctl enable kktc-bot.service kktc-bot-update.timer kktc-tick.timer kktc-browser.timer kktc-backup.timer
+systemctl enable kktc-bot.service kktc-bot-update.timer kktc-tick.timer kktc-browser.timer kktc-backup.timer kktc-fb-fast.path
 
 missing=""
 for name in $REQUIRED; do
@@ -194,6 +194,8 @@ echo "       systemctl start kktc-tick.timer kktc-browser.timer"
 echo "     Haftalık veritabanı yedeği (Pazar 01:43 UTC; son 4 yedek $BACKUP_DIR altında kalır):"
 echo "       systemctl start kktc-backup.timer"
 echo "       systemctl start kktc-backup.service     (isteğe bağlı: hemen bir yedek al; birkaç saniye sürer, bitince sonucu yazar)"
+echo "     Facebook hızlı şeridi (sosyal okuyucu kuruluysa: yeni gönderi 15 dakikalık turu beklemez):"
+echo "       systemctl start kktc-fb-fast.path"
 echo "  4) Çalıştığını görün:"
 echo "       systemctl status kktc-bot"
 echo "       systemctl list-timers 'kktc-*'"

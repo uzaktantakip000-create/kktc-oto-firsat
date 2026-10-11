@@ -163,6 +163,21 @@ def test_quick_round_asks_only_for_groups_with_new_listings_and_marks_the_same()
     assert repo.new_hours == [3, ("ikiz", 3), None, ("ikiz", None)]  # tam taramada daraltma yok
 
 
+def test_fast_lane_dedupe_reads_groups_new_since_its_import_and_skips_site_twins():
+    """Facebook hızlı şeridi (entrypoints/fb_fast): aynı aracın başka gruptaki paylaşımı hemen kopya olur; KKTCarabam ↔ KibrisArabaAl ikiz
+    geçişi turda kalır."""
+    since = datetime(2026, 10, 14, 9, 0, tzinfo=timezone.utc)
+
+    class SinceRepo(FakeRepo):
+        def dedupe_candidates(self, days=120, new_hours=None, new_since=None):
+            self.asked = (new_hours, new_since)
+            return self.rows
+
+    repo = SinceRepo([car("grup1", 5, shadow=False), car("grup2", 1, price_gbp=5900.0)])
+    assert mark_duplicates(repo, since=since) == 1 and repo.dups == {"grup2": "grup1"}
+    assert repo.asked == (None, since) and repo.twin_calls == []
+
+
 # --- kaynaklar arası ikiz: KKTCarabam (km/telefon yok) ↔ KibrisArabaAl ---
 def ad(i, site, minutes_ago=0, **kw):
     """twin_candidates satırı. Varsayılan: canlıdaki BMW vakası (KKTCarabam BMW 3 2007 £5.400 Girne ↔ KAA 3 Serisi 320i, konum boş, 16 dk önce)."""

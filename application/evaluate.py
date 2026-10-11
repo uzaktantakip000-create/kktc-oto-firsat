@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from application.decision_record import decision_record
 from domain.comparables import Market
@@ -135,7 +136,8 @@ def pool_keys(listings: list[dict]) -> list[tuple[str, str | None]]:
 
 
 def evaluate_new(repo: Repository, settings: Settings | None = None, book=_LOAD,
-                 failures: list[tuple[str, str]] | None = None, quick: bool = False, backlog: bool = True) -> list[Evaluated]:
+                 failures: list[tuple[str, str]] | None = None, quick: bool = False, backlog: bool = True,
+                 since: datetime | None = None, platform: str | None = None) -> list[Evaluated]:
     """Henüz değerlendirilmemiş aktif ilanları değerlendirir. Emsali olmayanlar bir sonraki turda tekrar denenir.
     Değer tablosu (book) bir kez yüklenir; verilmezse kendisi yükler, yüklenemezse eski davranış (🟠 yok).
     Her ilan kendi hata sınırındadır: bir ilanın patlaması diğerlerini durdurmaz. Patlayanlar `failures`'a (kısa kimlik, hata türü)
@@ -143,9 +145,12 @@ def evaluate_new(repo: Repository, settings: Settings | None = None, book=_LOAD,
     quick=True: yalnız yeni/fiyatı değişen ilanlar (3 günlük yeniden bakış ve kural sürümü dalı saatlik tam turda).
     backlog=False (tam turda): hiç değerlendirilmemiş ilanlardan yalnız ilk görülmesi/fiyat değişikliği ≤BACKLOG_AFTER_HOURS olanlar; eski
     "emsal yok" birikimi yalnız backlog=True turunda (cron: günde bir). Bildirim üretebilecek her ilan iki türde de alınır.
-    Emsal havuzu yalnız değerlendirilecek ilanların (marka, model) çiftleri için okunur (find_market zaten marka+model eşitliği ister)."""
+    Emsal havuzu yalnız değerlendirilecek ilanların (marka, model) çiftleri için okunur (find_market zaten marka+model eşitliği ister).
+    since/platform (Facebook hızlı şeridi, entrypoints/fb_fast): yalnız `since`ten sonra ilk kez görülüp hiç değerlendirilmemiş ilanlar."""
     s = settings or Settings()
-    if quick:
+    if since is not None:  # Facebook hızlı şeridi: yalnız az önce aktarılan, hiç değerlendirilmemiş ilanlar
+        listings = repo.unevaluated_active(seen_since=since, platform=platform)
+    elif quick:
         listings = repo.unevaluated_active(recent_hours=QUICK_NEW_HOURS)
     elif backlog:
         listings = repo.unevaluated_active(rules_version=RULES_VERSION)
@@ -177,12 +182,14 @@ def evaluate_new(repo: Repository, settings: Settings | None = None, book=_LOAD,
     return results
 
 
-def pending_alerts(repo: Repository, hours: int = 36, tier: Tier = Tier.STRONG, book=None) -> list[Evaluated]:
+def pending_alerts(repo: Repository, hours: int = 36, tier: Tier = Tier.STRONG, book=None, platform: str | None = None) -> list[Evaluated]:
     """Gönderilmesi gereken fırsatlar (varsayılan 🟢; tier=Tier.ESTIMATED ile 🟠): yeni değerlendirilenler + daha önce
     gönderilemeyenler (hata, hız sınırı, yeni abone). `book` (PriceBook ya da LazyBook) verilirse mesaja "📘 Değer tablosu" satırı için satır
-    eklenir; LazyBook yalnız bekleyen fırsat varsa okunur."""
+    eklenir; LazyBook yalnız bekleyen fırsat varsa okunur. `platform` verilirse (hızlı şerit) yalnız o platformun ilanları; ötekiler turda gider."""
     out = []
     rows = repo.pending_strong(hours, tier.value, rules_version=RULES_VERSION)
+    if platform is not None:
+        rows = [r for r in rows if r.get("platform") == platform]
     book = _resolve(book) if rows else None
     for r in rows:
         text = (r["raw_text"] or "") + " " + (r["model"] or "")

@@ -42,6 +42,10 @@ _CDN = re.compile(r"^https://scontent[^/\s]*\.fbcdn\.net/\S+$", re.I)
 # Fotoğraf devri (sosyal oturum 43bba41; sahip onayı 11.10.2026 "fotoğraftan fiyat okuma: evet"): okuyucu fiyatı yazmayan araç gönderisinin
 # sayfada zaten yüklenmiş ilk görselini <devir>/foto/<gonderi>.jpg olarak kaydeder (ek istek yok), satıra "foto_dosya" yazar. Bot o dosyayı
 # yerelden okur ve görüntü okuyucuya verir; ağdan görsel ÇEKİLMEZ (CDN adresi asla indirilmez).
+# 15 dakikalık tur (entrypoints/tick) ile Facebook hızlı şeridi (entrypoints/fb_fast, 11.10.2026) aynı satırları aynı anda aktarmasın (çift
+# fotoğraf okuması, geri giden imleç): bot_state kilidi. Takılan (çöken) bir aktarımın kilidi IMPORT_LOCK_MIN dakika sonra devralınır.
+IMPORT_LOCK = "sosyal_devir"
+IMPORT_LOCK_MIN = 10
 FILE_PREFIX = "file:"
 PHOTO_READS = 20  # tur başına en çok fotoğraf okuması (okuyucunun tur tavanıyla aynı)
 PHOTO_MAX_BYTES = 400_000
@@ -224,3 +228,20 @@ def import_facebook(repo, devir_dir: Path | str, *, limit: int = MAX_LINES, log:
     for line in rep.summary():
         log(line)
     return rep
+
+
+def import_facebook_locked(repo, devir_dir: Path | str, **kw) -> ImportReport | None:
+    """import_facebook, aktarım kilidiyle. Kilit öbür yoldaysa (tur ya da hızlı şerit şu an aktarıyor) None: satırlar orada işlenir."""
+    token = repo.acquire_lock(IMPORT_LOCK, minutes=IMPORT_LOCK_MIN)
+    if not token:
+        return None
+    try:
+        return import_facebook(repo, devir_dir, **kw)
+    finally:
+        repo.release_lock(IMPORT_LOCK, token)
+
+
+def has_new_lines(repo, devir_dir: Path | str) -> bool:
+    """İmleçten sonra en az bir TAM satır var mı (yalnız dosya okunur; hızlı şeridin "çalışırken yeni satır geldi mi" sorusu)."""
+    lines, _, _ = read_new_lines(devir_dir, _cursor(repo.get_state(STATE_KEY)), 1)
+    return bool(lines)

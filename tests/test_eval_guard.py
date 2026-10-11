@@ -42,7 +42,7 @@ def wire(monkeypatch, evaluate_new):
     monkeypatch.setattr(cron_evaluate, "load_settings", lambda repo: cron_evaluate.Settings())
     monkeypatch.setattr(cron_evaluate, "load_book", lambda repo: object())
     monkeypatch.setattr(cron_evaluate, "evaluate_new", evaluate_new)
-    monkeypatch.setattr(cron_evaluate, "pending_alerts", lambda repo, tier=Tier.STRONG, book=None: [])
+    monkeypatch.setattr(cron_evaluate, "pending_alerts", lambda repo, tier=Tier.STRONG, book=None, platform=None: [])
     monkeypatch.setattr(send_gate, "recheck_before_send", lambda repo, evs: evs)
     monkeypatch.setattr(send_gate.llm_reader, "from_env", lambda repo: None)
     monkeypatch.setattr(send_gate.llm_reader, "verify_candidates", lambda repo, reader, evs: evs)

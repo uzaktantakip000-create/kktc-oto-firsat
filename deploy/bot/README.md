@@ -3,7 +3,7 @@
 ## Bu ne?
 VPS'e kurulan küçük programlar şunları yapar:
 1. **Bot anında cevap:** Telegram'da bota yazdığınız komutlara (`/durum`, `/fiyat corolla 2014`, bir ilan göndermek...) birkaç saniyede cevap verir (eskiden 15-18 dakika sürüyordu).
-2. **Taramalar:** İlan sitelerini tarama, değerlendirme ve fırsat bildirimleri artık VPS'ten çalışır (`kktc-tick`: 15 dakikada bir, `kktc-browser`: 2 saatte bir, KKTCarabam için).
+2. **Taramalar:** İlan sitelerini tarama, değerlendirme ve fırsat bildirimleri artık VPS'ten çalışır (`kktc-tick`: 15 dakikada bir, `kktc-browser`: 2 saatte bir, KKTCarabam için). Facebook hızlı şeridi (`kktc-fb-fast.path` → `kktc-fb-fast.service`): sosyal okuyucu yeni gönderi yazınca o gönderiler hemen değerlendirilir, 15 dakikalık turu beklemez (`journalctl -u kktc-fb-fast -n 50`: `hızlı şerit: yeni=…` satırları).
 3. **Haftalık yedek:** veritabanındaki tüm tablolar her Pazar gecesi CSV olarak sunucuya kaydedilir, son 4 yedek saklanır (`kktc-backup`; ayrıntı aşağıda "Haftalık yedek").
 
 ## GitHub yedek olarak çalışmaya devam eder

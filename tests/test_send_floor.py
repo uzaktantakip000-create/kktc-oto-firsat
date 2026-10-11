@@ -81,7 +81,7 @@ def test_cron_evaluate_sends_only_what_passes_the_floor(monkeypatch):
     monkeypatch.setattr(cron_evaluate, "load_settings", lambda repo: cron_evaluate.Settings())
     monkeypatch.setattr(cron_evaluate, "load_book", lambda repo: object())
     monkeypatch.setattr(cron_evaluate, "evaluate_new", lambda *a, **k: [])
-    monkeypatch.setattr(cron_evaluate, "pending_alerts", lambda repo, tier=Tier.STRONG, book=None: [orange] if tier is Tier.ESTIMATED else [low, ok])
+    monkeypatch.setattr(cron_evaluate, "pending_alerts", lambda repo, tier=Tier.STRONG, book=None, platform=None: [orange] if tier is Tier.ESTIMATED else [low, ok])
     monkeypatch.setattr(send_gate, "is_fresh", lambda *a, **k: True)
     monkeypatch.setattr(send_gate, "recheck_before_send", lambda repo, evs: evs)
     monkeypatch.setattr(send_gate.llm_reader, "from_env", lambda repo: None)

@@ -110,10 +110,11 @@ def run_batch(batch: list[str], repo, now: datetime, started: float, errors: lis
 def import_social(repo, errors: list[tuple[str, str]], devir_dir: str = SOCIAL_HANDOFF_DIR) -> None:
     """Sosyal okuyucunun devir klasöründeki yeni Facebook gönderilerini ilan olarak yazar (application/social_import). Gölge/yeşil ayrımı
     sources.alert_level'da; feed:facebook anahtarı eski Apify işini durdurur, bunu değil. Çökerse tur sürer (imleç ilerlemez, satırlar
-    bir sonraki turda yeniden gelir)."""
+    bir sonraki turda yeniden gelir). Facebook hızlı şeridi (entrypoints/fb_fast) o an aktarıyorsa bu turda atlanır: satırları o işler."""
     t0 = time.monotonic()
     try:
-        social_import.import_facebook(repo, devir_dir, log=print)
+        if social_import.import_facebook_locked(repo, devir_dir, log=print) is None:
+            print("sosyal_devir: hızlı şerit şu an aktarıyor, bu turda atlandı", flush=True)
     except Exception as e:
         msg = f"{type(e).__name__}: {redact(str(e))[:150]}"
         print(f"sosyal_devir: HATA {msg}", flush=True)

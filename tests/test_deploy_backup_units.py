@@ -43,7 +43,7 @@ def test_service_writes_only_to_the_backup_folder_and_keeps_four():
 
 def test_setup_installs_enables_and_creates_the_backup_folder():
     setup = (BOT / "setup.sh").read_text(encoding="utf-8")
-    assert "kktc-backup.service kktc-backup.timer; do" in setup  # birimler kurulur
+    assert re.search(r"for unit in [^\n]*kktc-backup\.service kktc-backup\.timer[^\n]*; do", setup)  # birimler kurulur
     assert re.search(r"systemctl enable [^\n]*kktc-backup\.timer", setup)  # yalnız etkinleştirilir
     commands = "\n".join(line for line in setup.splitlines() if not line.strip().startswith(("echo", "#")))  # yalnız çalışan satırlar
     assert not re.search(r"systemctl (start|restart|enable --now)[^\n]*kktc-backup", commands)  # kendiliğinden başlatmaz

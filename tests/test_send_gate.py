@@ -154,7 +154,7 @@ def wire(monkeypatch, w, *, llm_configured=True, orange_floor_open=False):
     monkeypatch.setattr(cron_evaluate, "load_book", lambda repo: BOOK)
     monkeypatch.setattr(cron_evaluate, "evaluate_new", lambda *a, **k: [])
 
-    def pending(repo, tier=Tier.STRONG, book=None):
+    def pending(repo, tier=Tier.STRONG, book=None, platform=None):
         w.log("pending_alerts", tier.value, (book() if callable(book) else book) is BOOK)  # tur LazyBook verir (yalnız gerekince okunur)
         w.maybe_boom(("pending", tier))
         return list(w.cands[tier])

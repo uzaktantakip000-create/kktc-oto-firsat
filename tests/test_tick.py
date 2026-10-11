@@ -58,20 +58,45 @@ def test_timed_evaluate_survives_a_crash(monkeypatch, capsys):
     assert tick.timed_evaluate("değerlendirme") is True
 
 
+class LockRepo:
+    def __init__(self, held=()):
+        self.held, self.log = set(held), []
+
+    def acquire_lock(self, name, minutes=16):
+        if name in self.held:
+            return None
+        self.held.add(name)
+        self.log.append(("al", name, minutes))
+        return f"t-{name}"
+
+    def release_lock(self, name, token):
+        self.held.discard(name)
+        self.log.append(("bırak", name))
+
+
 def test_import_social_reads_the_handoff_dir_and_never_stops_the_tick(monkeypatch, capsys):
-    calls = []
+    calls, repo = [], LockRepo()
     monkeypatch.setattr(tick.social_import, "import_facebook", lambda repo, d, log: calls.append((repo, d)))
     errors = []
-    tick.import_social("repo", errors, devir_dir="/devir")
-    assert calls == [("repo", "/devir")] and errors == []
+    tick.import_social(repo, errors, devir_dir="/devir")
+    assert calls == [(repo, "/devir")] and errors == []
+    assert repo.log == [("al", "sosyal_devir", 10), ("bırak", "sosyal_devir")]  # hızlı şeritle aynı kilit, işten sonra bırakılır
 
     def boom(repo, d, log):
         raise PermissionError("izin yok: /devir")
 
     monkeypatch.setattr(tick.social_import, "import_facebook", boom)
-    tick.import_social("repo", errors, devir_dir="/devir")  # çökme turu durdurmaz; hata loga ve toplama hatalarına
-    assert errors == [("sosyal_devir", "PermissionError: izin yok: /devir")]
+    tick.import_social(repo, errors, devir_dir="/devir")  # çökme turu durdurmaz; hata loga ve toplama hatalarına; kilit yine bırakılır
+    assert errors == [("sosyal_devir", "PermissionError: izin yok: /devir")] and not repo.held
     assert "sosyal_devir: HATA" in capsys.readouterr().out
+
+
+def test_import_social_skips_while_the_fast_lane_imports(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(tick.social_import, "import_facebook", lambda repo, d, log: calls.append(d))
+    errors = []
+    tick.import_social(LockRepo(held={"sosyal_devir"}), errors, devir_dir="/devir")
+    assert calls == [] and errors == [] and "hızlı şerit şu an aktarıyor" in capsys.readouterr().out
 
 
 def test_social_import_runs_before_the_first_evaluation():

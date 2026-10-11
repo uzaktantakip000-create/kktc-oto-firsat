@@ -1348,3 +1348,28 @@ def test_priceless_recent_returns_only_new_priceless_social_rows_and_shadow_coun
     got = db.priceless_recent(3)
     assert items(got) == {"yeni", "foto"} and {r["source_item_id"]: r["price_gbp"] for r in got} == {"yeni": None, "foto": 5000.0}
     assert db.shadow_summary("facebook", 24)["new"] == 2  # fiyatlı gölge ilanlar (fotoğraftan okunan dahil); fiyatsız kayıt sayılmaz
+
+
+def test_fast_lane_reads_only_listings_first_seen_since_its_import(db):
+    """Facebook hızlı şeridi (entrypoints/fb_fast, 11.10.2026): değerlendirme, mükerrer ve fotoğraf kartı okumaları yalnız az önce aktarılan
+    ilanlarla daralır (veritabanı çıkışı); eski gruplar, değerlendirilmiş ilanlar ve başka platform gelmez."""
+    c = db.conn
+    fb = add_source(c, "Grup", platform="facebook")
+    web = add_source(c, "Site")
+    add_listing(c, fb, "yeni")  # Toyota vitz 2015, az önce aktarıldı
+    add_listing(c, fb, "eski", first_seen_at=ago(minutes=30))  # aynı grupta eski ilan
+    add_eval(c, add_listing(c, fb, "bakildi", brand_norm="Honda", model_norm="fit"), ago(minutes=1))  # değerlendirilmiş
+    add_listing(c, fb, "tek_eski", brand_norm="Mazda", model_norm="demio", first_seen_at=ago(hours=2))  # yeni ilan gelmeyen grup
+    add_listing(c, fb, "fiyatsiz", price_gbp=None, price_amount=None, currency=None, urgency_signals=["fiyatsiz"])
+    add_listing(c, fb, "foto", price_gbp=5000, urgency_signals=["foto_fiyat"])
+    add_listing(c, fb, "foto_eski", price_gbp=5000, urgency_signals=["foto_fiyat"], first_seen_at=ago(minutes=40))
+    add_listing(c, web, "site", brand_norm="BMW", model_norm="3")
+    since = ago(minutes=5)
+    assert items(db.unevaluated_active(seen_since=since, platform="facebook")) == {"yeni", "foto"}
+    assert items(db.unevaluated_active(seen_since=since)) == {"yeni", "foto", "site"}
+    names = {r["id"]: r["source_item_id"] for r in c.execute("SELECT id, source_item_id FROM listings").fetchall()}
+    got = {names[r["id"]] for r in db.dedupe_candidates(new_since=since)}
+    assert got == {"yeni", "eski", "fiyatsiz", "foto", "foto_eski", "bakildi", "site"}  # yeni ilanın değdiği gruplar TAM gelir
+    assert "tek_eski" not in got and got < {names[r["id"]] for r in db.dedupe_candidates()}
+    assert items(db.priceless_recent(3, since=since)) == {"fiyatsiz", "foto"}
+    assert items(db.priceless_recent(3)) == {"fiyatsiz", "foto", "foto_eski"}  # tur aynı

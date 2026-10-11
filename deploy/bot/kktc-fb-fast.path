@@ -1,0 +1,12 @@
+[Unit]
+Description=KKTC Oto Fırsat - sosyal okuyucu yeni gönderi yazınca Facebook hızlı şeridini başlat
+
+[Path]
+# Okuyucu (kktc-social) her satırı ayrı açıp yazar ve kapatır (O_APPEND, satır "\n" ile biter); klasör izlemesi içindeki dosyanın kapanışını
+# da görür. Bir grubun 10–30 satırı ~1 sn içinde gelir: satırlar servisin başındaki beklemede birleşir (entrypoints/fb_fast.SETTLE_S).
+# Servis çalışırken gelen tetikler onu yeniden başlatmaz; servis sonunda yeni satır varsa kendisi döner, kaçanı 15 dakikalık tur işler.
+PathChanged=/var/lib/kktc-social-devir
+Unit=kktc-fb-fast.service
+
+[Install]
+WantedBy=paths.target

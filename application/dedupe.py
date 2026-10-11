@@ -8,16 +8,21 @@ from infrastructure.db.repository import Repository
 QUICK_NEW_HOURS = 3  # hızlı tur: son 3 saatte yeni ilan gelen gruplara bakılır (tick 15 dk'da bir; kaçan olursa saatlik tam tur yakalar)
 
 
-def mark_duplicates(repo: Repository, quick: bool = False, now: datetime | None = None) -> int:
+def mark_duplicates(repo: Repository, quick: bool = False, now: datetime | None = None, since: datetime | None = None) -> int:
     """Aynı aracın sonradan görülen ilanlarına duplicate_of = ilk ilan yazar; ardından kaynaklar arası ikizleri işaretler
     (`mark_cross_source_twins`, aynı hızlı/tam tur daraltmasıyla). Dönen: yeni işaretlenen sayı.
     quick=True: yalnız yakın zamanda yeni ilan görülen (marka, model, yıl) grupları taranır (aynı sonuç, çok daha az okuma);
     quick=False: tüm adaylar (saatte bir). `now`: tur anı (şüpheli km kuralı bu güne göre; verilmezse bugün).
     Gölge kaynağın ilanı (`shadow`: yalnız ölçülür, bildirim ve emsal yok) grubun sonunda işlenir: önce görülmüş olsa bile gölge olmayan
     ilanın kanoniği olamaz, yalnız onun (ya da başka gölge ilanın) kopyası olabilir. Böylece gölge olmayan ilanların bağları gölge
-    ilanlar hiç yokmuş gibi aynıdır."""
+    ilanlar hiç yokmuş gibi aynıdır.
+    `since` (Facebook hızlı şeridi, entrypoints/fb_fast): yalnız bu andan sonra yeni ilan görülen gruplar; kaynaklar arası ikiz taraması
+    (yalnız KKTCarabam ↔ KibrisArabaAl) atlanır, 15 dakikalık turda yapılır. Aynı aracın başka gruptaki paylaşımı böylece hemen kopya olur."""
     today = now.date() if now else None
-    rows = repo.dedupe_candidates(new_hours=QUICK_NEW_HOURS) if quick else repo.dedupe_candidates()
+    if since is not None:
+        rows = repo.dedupe_candidates(new_since=since)
+    else:
+        rows = repo.dedupe_candidates(new_hours=QUICK_NEW_HOURS) if quick else repo.dedupe_candidates()
     rows.sort(key=lambda r: (r["brand_norm"], r["model_norm"] or "", r["year"], bool(r.get("shadow")), r["first_seen_at"], str(r["id"])))
     marked = 0
     for _, grp in groupby(rows, key=lambda r: (r["brand_norm"], r["model_norm"], r["year"])):
@@ -33,7 +38,7 @@ def mark_duplicates(repo: Repository, quick: bool = False, now: datetime | None 
                 marked += 1
             else:
                 canon.append(r)
-    return marked + mark_cross_source_twins(repo, quick=quick)
+    return marked + (0 if since is not None else mark_cross_source_twins(repo, quick=quick))
 
 
 def mark_cross_source_twins(repo: Repository, quick: bool = False) -> int:

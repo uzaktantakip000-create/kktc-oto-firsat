@@ -1,0 +1,39 @@
+[Unit]
+Description=KKTC Oto Fırsat - Facebook hızlı şerit (entrypoints.fb_fast: devir aktarımı + yeni Facebook ilanlarının değerlendirmesi + bildirim)
+After=network-online.target
+Wants=network-online.target
+# bot.env yoksa ya da boşsa hiç çalıştırma
+ConditionFileNotEmpty=/etc/kktc-bot/bot.env
+
+[Service]
+# kktc-fb-fast.path başlatır (okuyucu devir klasörüne yeni gönderi yazınca). Tur ile aynı veritabanı kilitleri: aktarım "sosyal_devir",
+# değerlendirme "evaluate" (çift bildirim olmaz). Bir çalışma ~20 sn bekleme + birkaç saniye iş; günde en çok 400 çalışma (fb_fast).
+Type=oneshot
+User=kktc-bot
+Group=kktc-bot
+WorkingDirectory=/opt/kktc-bot/app
+EnvironmentFile=/etc/kktc-bot/bot.env
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=UTC
+ExecStart=/opt/kktc-bot/venv/bin/python -m entrypoints.fb_fast
+# bekleme + değerlendirme kilidi için en çok 4 dk bekleme + 3 tur; bu süre yalnızca güvenlik ağı
+TimeoutStartSec=10min
+
+# Sertleştirme (kktc-tick.service ile aynı): süreç yalnızca dışarı bağlanır (veritabanı, Telegram, yapay zekâ); gelen bağlantı/port yok
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+UMask=0077
+# Ev klasörü (/var/lib/kktc-bot) tek yazılabilir yer: bir kütüphane ~/.cache'e yazmak isterse çökmesin
+ReadWritePaths=/var/lib/kktc-bot
+MemoryMax=1G

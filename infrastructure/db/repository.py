@@ -210,7 +210,7 @@ class Repository:
         ).fetchall()
 
     def unevaluated_active(self, recheck_days: int = 3, recent_hours: int | None = None, rules_version: str | None = None,
-                           unevaluated_hours: int | None = None) -> list[dict]:
+                           unevaluated_hours: int | None = None, seen_since: datetime | None = None, platform: str | None = None) -> list[dict]:
         """Değerlendirilecek aktif ilanlar: hiç değerlendirilmemiş, fiyatı değişmiş ya da değerlendirmesi 'recheck_days'
         günden eski (piyasa/emsal havuzu değişmiş olabilir). Mükerrer ilanlar atlanır.
         `recent_hours` verilirse HIZLI tur: yalnız son 'recent_hours' saatte görülüp hiç değerlendirilmemiş ya da fiyatı değişmiş
@@ -221,7 +221,18 @@ class Repository:
         `rules_version` verilirse (yalnız TAM tur): son değerlendirmesi BAŞKA kural sürümüyle yapılmış (NULL dahil: IS DISTINCT FROM) ve
         bildirime ADAY ilanlar da yeniden değerlendirilir: ilk görülmesi ≤48 saat, ≤48 saatte fiyatı değişmiş ya da son satırı 🟢/🟠 ≤36 saat.
         (Eski ilanın yeniden değerlendirmesi bildirim üretemez: tazelik kapısı; kalanı zaten 3 günlük yeniden bakışla yenilenir.)
-        Bildirimi olan ilan DA dahildir: kısmen gönderilmiş 🟢 yeni abone için kaybolmasın (tekrar gönderimi alerts engeller)."""
+        Bildirimi olan ilan DA dahildir: kısmen gönderilmiş 🟢 yeni abone için kaybolmasın (tekrar gönderimi alerts engeller).
+        `seen_since` (Facebook hızlı şeridi, entrypoints/fb_fast): yalnız bu andan sonra ilk kez görülüp hiç değerlendirilmemiş ilanlar (fiyat
+        değişikliği ve diğer dallar 15 dakikalık turda); `platform` verilirse yalnız o platformun kaynakları."""
+        if seen_since is not None:
+            return self.conn.execute(
+                """SELECT l.*, l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform, s.alert_level = 'golge' AS shadow
+                   FROM listings l JOIN sources s ON s.id=l.source_id
+                   WHERE l.is_active AND l.duplicate_of IS NULL AND l.price_gbp IS NOT NULL AND l.brand_norm IS NOT NULL
+                     AND l.karantina_nedeni IS NULL AND l.first_seen_at > %s AND (%s::text IS NULL OR s.platform = %s)
+                     AND NOT EXISTS (SELECT 1 FROM evaluations e WHERE e.listing_id = l.id)""",
+                (seen_since, platform, platform),
+            ).fetchall()
         stale_sql, args = "OR last_ev.at < NOW() - make_interval(days => %s)", [recheck_days]
         new_sql = "last_ev.at IS NULL"
         version_sql = ""
@@ -274,16 +285,17 @@ class Repository:
         ).fetchone()
         return dict(row) if row and row["sources"] else None
 
-    def priceless_recent(self, hours: int, platform: str = "facebook") -> list[dict]:
+    def priceless_recent(self, hours: int, platform: str = "facebook", since: datetime | None = None) -> list[dict]:
         """"📞 FİYAT SOR" adayları (application/ask_price): son `hours` saatte ilk kez görülen, aktif, kopya olmayan, marka + yılı okunmuş
-        FİYATSIZ sosyal ilanlar (devir aktarıcısının fiyatsız kaydı) ve fiyatı yalnız FOTOĞRAFTAN okunanlar ("foto_fiyat"), ilk görülme sırasıyla."""
+        FİYATSIZ sosyal ilanlar (devir aktarıcısının fiyatsız kaydı) ve fiyatı yalnız FOTOĞRAFTAN okunanlar ("foto_fiyat"), ilk görülme sırasıyla.
+        `since` (hızlı şerit): ayrıca yalnız bu andan sonra ilk kez görülenler."""
         return self.conn.execute(
             """SELECT l.*, l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform FROM listings l JOIN sources s ON s.id = l.source_id
                WHERE s.platform = %s AND l.is_active
                  AND ((l.price_gbp IS NULL AND 'fiyatsiz' = ANY(l.urgency_signals)) OR 'foto_fiyat' = ANY(l.urgency_signals))
                  AND l.duplicate_of IS NULL AND l.brand_norm IS NOT NULL AND l.year IS NOT NULL
-                 AND l.first_seen_at > NOW() - make_interval(hours => %s)
-               ORDER BY l.first_seen_at""", (platform, hours)).fetchall()
+                 AND l.first_seen_at > NOW() - make_interval(hours => %s) AND (%s::timestamptz IS NULL OR l.first_seen_at > %s)
+               ORDER BY l.first_seen_at""", (platform, hours, since, since)).fetchall()
 
     def count_stale_rules(self, rules_version: str) -> int:
         """Bilgi amaçlı: son değerlendirmesi başka kural sürümüyle yapılmış aktif ilan sayısı (silme/yazma YOK)."""
@@ -325,11 +337,17 @@ class Repository:
         ).rowcount
         return phones, handles, texts
 
-    def dedupe_candidates(self, days: int = 120, new_hours: int | None = None) -> list[dict]:
+    def dedupe_candidates(self, days: int = 120, new_hours: int | None = None, new_since: datetime | None = None) -> list[dict]:
         """Mükerrer taraması için ilanlar. `new_hours` verilirse yalnız son 'new_hours' saatte yeni ilan görülen (marka, model, yıl)
-        grupları gelir (gruplar tam gelir: eşleştirme sonucu tam taramayla aynıdır); eski gruplardaki değişimler saatlik tam turda yakalanır."""
+        grupları gelir (gruplar tam gelir: eşleştirme sonucu tam taramayla aynıdır); eski gruplardaki değişimler saatlik tam turda yakalanır.
+        `new_since` (Facebook hızlı şeridi): aynısı, yeni ilan bu andan sonra görülmüşse (az önce aktarılan gönderilerin grupları)."""
         extra, args = "", [days]
-        if new_hours is not None:
+        if new_since is not None:
+            extra = """ AND EXISTS (SELECT 1 FROM listings n WHERE n.first_seen_at > %s
+                                    AND n.brand_norm = listings.brand_norm AND n.model_norm IS NOT DISTINCT FROM listings.model_norm
+                                    AND n.year = listings.year)"""
+            args.append(new_since)
+        elif new_hours is not None:
             extra = """ AND EXISTS (SELECT 1 FROM listings n WHERE n.first_seen_at > NOW() - make_interval(hours => %s)
                                     AND n.brand_norm = listings.brand_norm AND n.model_norm IS NOT DISTINCT FROM listings.model_norm
                                     AND n.year = listings.year)"""

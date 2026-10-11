@@ -1,5 +1,6 @@
 """Değerlendir -> (LLM notu) -> bildir -> bot komutlarını işle."""
 import os
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
@@ -31,6 +32,8 @@ from infrastructure.fx import frankfurter
 from infrastructure.llm.openrouter import check_deal
 
 LOCK = "evaluate"
+# Facebook hızlı şeridi (entrypoints/fb_fast, 11.10.2026) aynı kilidi birkaç saniye tutar: tur değerlendirmesi bu yüzden atlanmasın, beklesin
+LOCK_WAIT_S = 90
 EVAL_LAST_KEY = "eval:last"  # son BAŞARILI değerlendirme zamanı: tick başında bayatlarsa sahibe haber (entrypoints/tick.py)
 FULL_PASS_MINUTES = 55  # tam değerlendirme/mükerrer taraması saatte bir; aradaki turlar yalnız yeni ilanlara bakar (veritabanı okuma hacmi)
 # Mükerrer taramasının TAM turu 4 saatte bir (11.10.2026, çıkış kotası: tam tur ~7.700 aday satırı okur, saatte bir ~0,8 GB/ay). Aradaki
@@ -49,7 +52,7 @@ def main(vps_gate: bool = False) -> None:
     if vps_gate and github_should_skip(repo, VPS_TICK_KEY, TICK_FRESH):
         print("VPS turları çalışıyor: GitHub değerlendirmesi atlandı (VPS durursa en geç 35 dk içinde GitHub devralır)")
         return
-    token = repo.acquire_lock(LOCK)
+    token = wait_lock(repo, LOCK, LOCK_WAIT_S)
     if not token:  # başka bir iş akışı şu an değerlendiriyor: çift bildirim olmasın
         print("başka bir değerlendirme çalışıyor, bu tur atlandı")
         return
@@ -58,6 +61,16 @@ def main(vps_gate: bool = False) -> None:
         run(repo)
     finally:
         repo.release_lock(LOCK, token)
+
+
+def wait_lock(repo, name: str, wait_s: float, poll_s: float = 5, sleep=time.sleep, clock=time.monotonic) -> str | None:
+    """Kilidi alır; başkasındaysa en çok `wait_s` saniye, `poll_s` aralıkla yeniden dener. Alamazsa None."""
+    end = clock() + wait_s
+    while True:
+        token = repo.acquire_lock(name)
+        if token or clock() >= end:
+            return token
+        sleep(poll_s)
 
 
 def apply_rules_version(repo: Repository) -> int:
@@ -186,34 +199,7 @@ def run(repo: Repository) -> None:
         print("değerlendirme turu başarısız:", type(e).__name__, redact(str(e))[:150])
     if failures:
         report_eval_failures(repo, failures)
-    # Yeni 🟢'ler + önceki turlarda gönderilemeyenler (hata, hız sınırı, sonradan onaylanan abone). Gönderim kontrolü (send_gate):
-    # tazelik → emsal ≥ 8 → sitede canlı mı → yapay zekâ okuması. 🟢 yolu try DIŞINDA (eskisi gibi): hata turu durdurur
-    strong, _ = gonderim_kontrol(repo, pending_alerts(repo, book=book), "🟢")
-
-    notes = {}
-    key, model = os.environ.get("OPENROUTER_API_KEY"), os.environ.get("OPENROUTER_MODEL")
-    if key and model:  # fırsat notu: okuyucuyla aynı günlük bütçe, (ilan, fiyat) başına tek soru (application/llm_reader.deal_notes)
-        try:
-            notes = deal_notes(repo, strong, key, model, call=check_deal)
-        except Exception as e:  # not alınamazsa bildirim notsuz gider: gönderim bu nota hiçbir durumda bağlı değil
-            print("LLM notu alınamadı:", type(e).__name__)
-    sent = send_alerts(repo, token, strong, notes)
-    est_sent = 0
-    if settings.estimated_alerts:  # 🟠 tahmini fırsat: ayrı gönderim (tablo yoksa hiç çıkmaz)
-        try:
-            # aynı gönderim kontrolü; 🟠 doğrudan emsal < 8 iken doğar: dürüst 🟠 KONTROL ET gelene kadar emsal kapısında kalır
-            waiting = pending_alerts(repo, tier=Tier.ESTIMATED, book=book)
-            if waiting and book() is not None:
-                est, _ = gonderim_kontrol(repo, waiting, "🟠")
-                est_sent = send_alerts(repo, token, est, tier=Tier.ESTIMATED, s=settings)
-        except Exception as e:  # 🟠 hatası özet/rapor gibi yan işleri engellemesin
-            print("tahmini fırsat gönderimi başarısız:", type(e).__name__, redact(str(e))[:150])
-    try:  # ⚡ ACİL SATICI (application/urgent): bu turda değerlendirilen ilanlardan acelesi olan bireysel satıcı, piyasanın %10+ altında; yalnız sahip
-        urgent_sent = urgent.run(repo, evaluated, lambda text: api(token, "sendMessage", chat_id=owner, text=text), settings)
-        if urgent_sent:
-            print(f"acil satıcı: {urgent_sent} mesaj")
-    except Exception as e:  # yan iş: 🟢 yolunu ve raporları bozmasın
-        print("acil satıcı bildirimi başarısız:", type(e).__name__, redact(str(e))[:150])
+    strong, sent, est_sent = deliver(repo, token, owner, settings, evaluated, book)
     for name, job in (("kaynak düşürme", lambda: demote_failing_sources(repo)),
                       ("tahmini öğrenme", lambda: guard_estimates(repo)),
                       ("özet", lambda: send_daily_digest(repo, token)),  # 🟡 özet kapalı (digest.ENABLED)
@@ -227,9 +213,43 @@ def run(repo: Repository) -> None:
             job()
         except Exception as e:  # yan işler ana bildirimi bozmasın
             print(f"{name} başarısız:", type(e).__name__, redact(str(e))[:150])
-    print(f"değerlendirilen={len(evaluated)} güçlü={len(strong)} bildirilen={sent} tahmini_bildirilen={est_sent}")
+    print(f"değerlendirilen={len(evaluated)} güçlü={strong} bildirilen={sent} tahmini_bildirilen={est_sent}")
     if eval_error is not None:
         raise eval_error  # iş akışı "başarılı" görünmesin; yan işler ve bildirimler yukarıda zaten çalıştı
+
+
+def deliver(repo: Repository, token: str, owner: str, settings: Settings, evaluated: list, book, platform: str | None = None) -> tuple[int, int, int]:
+    """Gönderim adımı (15 dakikalık tur ve Facebook hızlı şeridi ortak, entrypoints/fb_fast): yeni 🟢'ler + önceki turlarda gönderilemeyenler
+    (hata, hız sınırı, sonradan onaylanan abone), 🟠, ⚡ ACİL SATICI. Gönderim kontrolü (send_gate): tazelik → emsal ≥ 8 → sitede canlı mı →
+    yapay zekâ okuması. 🟢 yolu try DIŞINDA (eskisi gibi): hata turu durdurur. `platform` verilirse (hızlı şerit) bekleyen 🟢/🟠'lerden yalnız o
+    platformunkiler (sitelerin canlılık kontrolü turda kalır). Dönen: (gönderime hazır 🟢 sayısı, bildirilen, tahmini_bildirilen)."""
+    strong, _ = gonderim_kontrol(repo, pending_alerts(repo, book=book, platform=platform), "🟢")
+
+    notes = {}
+    key, model = os.environ.get("OPENROUTER_API_KEY"), os.environ.get("OPENROUTER_MODEL")
+    if key and model:  # fırsat notu: okuyucuyla aynı günlük bütçe, (ilan, fiyat) başına tek soru (application/llm_reader.deal_notes)
+        try:
+            notes = deal_notes(repo, strong, key, model, call=check_deal)
+        except Exception as e:  # not alınamazsa bildirim notsuz gider: gönderim bu nota hiçbir durumda bağlı değil
+            print("LLM notu alınamadı:", type(e).__name__)
+    sent = send_alerts(repo, token, strong, notes)
+    est_sent = 0
+    if settings.estimated_alerts:  # 🟠 tahmini fırsat: ayrı gönderim (tablo yoksa hiç çıkmaz)
+        try:
+            # aynı gönderim kontrolü; 🟠 doğrudan emsal < 8 iken doğar: dürüst 🟠 KONTROL ET gelene kadar emsal kapısında kalır
+            waiting = pending_alerts(repo, tier=Tier.ESTIMATED, book=book, platform=platform)
+            if waiting and book() is not None:
+                est, _ = gonderim_kontrol(repo, waiting, "🟠")
+                est_sent = send_alerts(repo, token, est, tier=Tier.ESTIMATED, s=settings)
+        except Exception as e:  # 🟠 hatası özet/rapor gibi yan işleri engellemesin
+            print("tahmini fırsat gönderimi başarısız:", type(e).__name__, redact(str(e))[:150])
+    try:  # ⚡ ACİL SATICI (application/urgent): bu turda değerlendirilen ilanlardan acelesi olan bireysel satıcı, piyasanın %10+ altında; yalnız sahip
+        urgent_sent = urgent.run(repo, evaluated, lambda text: api(token, "sendMessage", chat_id=owner, text=text), settings)
+        if urgent_sent:
+            print(f"acil satıcı: {urgent_sent} mesaj")
+    except Exception as e:  # yan iş: 🟢 yolunu ve raporları bozmasın
+        print("acil satıcı bildirimi başarısız:", type(e).__name__, redact(str(e))[:150])
+    return len(strong), sent, est_sent
 
 
 if __name__ == "__main__":
