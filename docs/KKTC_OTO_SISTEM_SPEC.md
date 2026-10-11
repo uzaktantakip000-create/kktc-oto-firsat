@@ -369,7 +369,7 @@ Kullanıcı isteği: Facebook'ta Kuzey Kıbrıs araç satış grupları (Marketp
 - **Facebook grupları (girişsiz sayfada "Herkese açık grup" yazısıyla doğrulandı):** KKTC ARABA PAZARI (469402498541872, 71,7 B üye), KKTC Araba Alım Satım (405189333280604, 45,2 B), Mercedes Alım Satım KKTC (682061759485628, 20,5 B), KKTC ARABA SATIŞ GRUBU (460146661032088, 15 B), Kktc Sol Direksiyon (1797997293768755, 4,9 B, yalnız LHD), Kibris.Arabam (3,2 B) — hepsi herkese açık ve aktif görünüyor. **Dışarıda:** north cyprus cars and bikes (üyelere özel → `disari`), 414145832006081 (girişe yönlendiriyor), Buysellcy ve Cyprus Cars swap (Güney). Arama motorları Facebook gruplarını dizinlemediği için yeni grup bulunamadı.
 - **Toplama durumu: ENGELLİ (kullanıcı kararı bekliyor).** Apify grup aktörü (`memo23/facebook-public-group-posts-scraper`) çağrısı iki kez Claude Code otomatik güvenlik denetimince reddedildi (kişisel veri; ikincisi reddedilen işlemin tekrarı). Aşılmadı. Açmak için kullanıcının izin kuralı vermesi gerekir. Açılırsa tasarım: gölge modda, girişsiz herkese açık gruplar, yazar adı/ID/profil bağlantısı/yorum/üye bilgisi SAKLANMAZ; yalnızca metin + tarih + gönderi bağlantısı + metindeki fiyat/telefon; telefon 90 gün sonra NULL. Tahmini maliyet ≈ $3–6/ay (5 grup, 4 saatte bir); ilk deneme çalıştırması hacmi ve ücretlendirme biçimini ölçmeli. Facebook sayfaları (Bilgin Auto, Auto123, Auto Line: galeri stoğu, fırsat az; ≈ $0,4–1,2/ay) aynı karara bağlı.
 - **Instagram:** `@arabalarkibris` (56 B takipçi) eklendi, **gölge modda** (`alert_level=golge`): ilk çalıştırmada 20 gönderinin 19'u kural parser'ıyla okundu (şablonlu, ilan no'lu). `@kibrisauto` yalnızca 2 gönderi ve okunamadı → `aday`. Yeni: sayfanın "SATILDI" paylaşımı (ör. "ARACILIĞIYLA SATILDI + İlan Numarası: 19469") aynı sayfadaki eski ilanı pasifleştirir (`sold_ilan_no`, `deactivate_by_ilan_no`) — Instagram'da satıldı tespiti için ilk adım (numara yazmayan "2 GÜNDE SATILDI" gönderileri eşleştirilemez). Marka yazım hataları (Mersedez/Mersedes/Mercedez/Merc) Mercedes-Benz'e bağlandı.
-- **Siteler:** uygun/koşullu bulunanlar düşük hacimli: biarabacik.com (robots yok, 749 ilan ama haftada 2–5 yeni; eklenmedi), kibrisotopazar.com (SPA/Supabase API; site sahibinden izin gerekir). Elenenler: gelgezgor (Cloudflare), arabam.com KKTC (1 ilan), cypilan, pazarkibris, ekosesin, kktcalimsatim, birarabakibris, otobulkktc, otokibris. Galeri siteleri (nicosiamotors, tigatrading vb.) perakende fiyat referansı; fırsat kaynağı değil.
+- **Siteler:** uygun/koşullu bulunanlar düşük hacimli: biarabacik.com (robots yok, 749 ilan ama haftada 2–5 yeni; eklenmedi; 11.10.2026 ölçümü: ayda ~5 yeni ilan, bkz. §24.25), kibrisotopazar.com (SPA/Supabase API; site sahibinden izin gerekir). Elenenler: gelgezgor (Cloudflare), arabam.com KKTC (1 ilan), cypilan, pazarkibris, ekosesin, kktcalimsatim, birarabakibris, otobulkktc, otokibris. Galeri siteleri (nicosiamotors, tigatrading vb.) perakende fiyat referansı; fırsat kaynağı değil.
 - **Kişisel veri notu (hukuki tavsiye değil):** KKTC 89/2007: telefon dahil kimliği belirlenebilir her bilgi kişisel veridir; meşru çıkar istisnası (m.6) var; veri dosyası kurmadan önce Kurul Başkanlığı'na bildirim (m.8) açık bir uyum maddesi — kullanıcı değerlendirmeli. Asgari veri + kısa saklama + LLM'e telefon göndermeme + itirazda silme makul bulundu. Silme/telefon saklama politikası (180 gün metin, 90 gün telefon) hâlâ uygulanmadı, kullanıcı onayı bekliyor.
 
 ## 18. Kullanıcı kararları (01.10.2026, akşam)
@@ -850,10 +850,30 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
 - **Kapalı döngü önerisi** (sosyal oturumla ortak, sahibe sunuldu, cevap bekleniyor): 📞 arama kartı ("önce hâlâ satılık mı?", KKTC'ye özgü sabit sorular, açılış/tavan) + 🔁 görüşme sonucu düğmeleri (feedback tablosu; migration yok) → izleme → sabah planı/haftalık huni (mevcut mesajlara bölüm) → stok/satış. Otomatik mesaj/teklif/alım yok.
 - **Facebook grubuna kendiliğinden katılım (11.10 akşam):**
   - Sahip (sosyal oturumda): "Gruba katılma tamamen stratejik ve senin kararınla olsun ve direk katılabilir, ben mevcutları bottan takip ederim, oraya bildirim atsın". Marketplace: "gerek yok". Ana oturumda: "Ortağınla iletişim kur ve ne gerekiyorsa yapın".
-  - Okuyucu (sosyal oturum) kaynak listesindeki "aday" gruplara katılır: 13.10 15:24 UTC'den (yavaş başlangıç sonu) önce değil, en çok 48 saatte bir grup. Soru/kural onayı isteyen grupta cevap uydurmaz. Uyarı gelirse katılımı durdurur.
+  - Okuyucu (sosyal oturum, 688abb0) kaynak listesindeki "aday" gruplara katılır:
+    - 13.10 15:24 UTC'den (yavaş başlangıç sonu) önce değil; katılım ve kesik gönderi açma ortam değişkeniyle açılır, açmadan önce ana oturuma haber verilir.
+    - En çok 48 saatte bir grup; yalnız öncelik ≤2 aday (bugün 4 grup); listede 8 açık FB kaynağı varsa katılım yok.
+    - Soru/kural onayı isteyen grupta cevap uydurmaz; bekleyen istek 12 saat sonra hâlâ "Katıl" görünüyorsa "reddedildi" yazar, yeniden istemez.
+    - Uyarı gelirse katılımı durdurur, okumayı sürdürür.
+  - Canlı doğrulama (17:05 UTC): kaynak listesi dosyasında FB 4 aktif + 6 aday, IG 11 aktif; okuyucunun kendi koduyla okunacak 4, atlanan 0.
   - Bot tarafı:
     - Kaynak listesi dosyasına FB "aday" satırları (ayrı commit; okuyucunun ayrıştırıcısından sonra yayınlanır). Aynı grupta açık > kapalı > aday. Dışarıda tutulan ya da erişilemeyen grup ve Marketplace yazılmaz.
     - Durum dosyasındaki `platformlar.facebook.katilim` okunur (95d46e8, application/fb_join).
   - "uye" olunca: yalnız 'aday' kayıt 'aktif' olur, gölgede kalır; sahibe bir kez 📥 yazılır. Sahibin kapattığı grup ASLA açılmaz. 8 açık FB sınırı ve 24 saatte 2 açılış rayı geçerli.
   - "bekliyor", "sorulu", "kapali" ve "reddedildi" için sahibe birer kez yazılır; "hata" ve bilinmeyen kod için yazılmaz.
 - **Acele eden satıcı radarı (ortağın fikri) — ölçüldü, şimdilik yok:** aktif site ilanlarında gerçek yeniden ilan (aynı telefon + araç, eski ilan pasif) yalnız 1. Aynı araç sosyalde 9, başka sitede 3; 10 günde 9 fiyat düşüşü. KKTCar ve KKTCarabam'da telefon yok; KAA yeni ve kapalı. ~25.10'da yeniden ölçülecek; veri yokken sahibe sunulmaz.
+- **Sahip kararları (11.10 ~17:10 UTC, ana oturumda doğrudan; sosyal oturumda "aranızda kararlaştırın" da dedi, doğrudan cevap önce gelir):**
+  - **KAA şehir düzeltmesi: "Evet, düzelt" → YAPILDI.**
+    - Şehir alanında 6 ilçe dışında değer olan 200 aktif KAA ilanının şehri NULL yapıldı (önceki 176 sayımı alt kümeydi).
+    - Önce (id, eski değer) yedeği alındı: ~/KKTC-yedek/kaa_sehir_oncesi_20261011.json, repo dışı. Son tam yedek 01:43 UTC.
+    - Tek UPDATE, autocommit. Yeni bağlantıdan doğrulandı: kalan yanlış 0.
+    - Saklanan metinden şehir kurtarılamadı (uzun tireli şehir 0); tahmin yazılmadı.
+  - **BiArabacik: "Evet, ekle" → ölçüldü, BEKLETİLİYOR.**
+    - robots.txt yok (404). Site haritası tek istekle okundu (17:1x UTC, tur arası).
+    - 1.233 yazı/ilan adresi var, çoğu 2025 tarihli; numaralı 767 adres kategori sayfası.
+    - Son ilanlar: Eylül 2026'da 4, Ağustos'ta 1, Temmuz'da ~5; yani ayda ~5, son 60 günde ~8. "Haftada 2–5" tahmini yanlıştı.
+    - 60 günden eski ilan emsal olarak alınmıyor (ortak toplayıcı). Bu yüzden okuyucu yazılmadı; sahibe rakamla söylendi, isterse yazılır.
+    - Yazılırsa şartlar: açık kimlik (KKTCOtoBot UA, tarayıcı taklidi yok), nazik hız, ilk 3 gün yalnız toplama.
+  - **Kapalı döngü: "Hayır, şimdi değil."**
+    - Yapılmıyor. Sosyal oturumun önerdiği sıra, sahip isterse plan olarak burada: (a) arama kartı + sonuç düğmeleri (ilk hafta yalnız sahip), (b) sabah özeti, (c) web ilan izleme, (d) stok/satış.
+  - **KKTC Fiyat Rehberi sayfası (sosyal oturum):** silinmiyor, güncellenmiyor (gizli sayfa; sahip isterse silinir).
