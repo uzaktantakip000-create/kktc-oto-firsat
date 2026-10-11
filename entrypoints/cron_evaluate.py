@@ -32,6 +32,10 @@ from infrastructure.llm.openrouter import check_deal
 LOCK = "evaluate"
 EVAL_LAST_KEY = "eval:last"  # son BAŞARILI değerlendirme zamanı: tick başında bayatlarsa sahibe haber (entrypoints/tick.py)
 FULL_PASS_MINUTES = 55  # tam değerlendirme/mükerrer taraması saatte bir; aradaki turlar yalnız yeni ilanlara bakar (veritabanı okuma hacmi)
+# Mükerrer taramasının TAM turu 4 saatte bir (11.10.2026, çıkış kotası: tam tur ~7.700 aday satırı okur, saatte bir ~0,8 GB/ay). Aradaki
+# turlar yalnız yeni ilanın değdiği (marka, model, yıl) gruplarına bakar: yeni ilanın kopyası yine aynı turda bulunur; tam tur yalnız eski
+# ilanlarda sonradan değişen bilgiyle (km/fiyat) oluşan eşleşmeleri yakalar. Kanoniği pasifleşen kopya her turda serbest kalır.
+DEDUPE_FULL_MINUTES = 4 * 60 - 5
 BACKLOG_PASS_MINUTES = 24 * 60 - 5  # hiç değerlendirilemeyen ESKİ ilan birikimi (bildirim üretemez) günde bir, bir tam turla birlikte
 EVAL_FULL_KEY, DEDUPE_FULL_KEY, EVAL_BACKLOG_KEY = "eval:full", "dedupe:full", "eval:backlog"
 
@@ -136,8 +140,8 @@ def run(repo: Repository) -> None:
         released = repo.release_orphan_duplicates()  # kanoniği pasifleşen aktif kopya ya da farklı modele bağlı yanlış kopya serbest kalır
         if released:
             print(f"mükerrer: {released} ilan serbest bırakıldı (kanoniği pasifleşmiş ya da farklı model)")
-        dedupe_full = full_pass_due(repo, DEDUPE_FULL_KEY, now)
-        mark_duplicates(repo, quick=not dedupe_full, now=now)  # saatte bir tam tarama, arada yalnız yeni ilanın değdiği gruplar
+        dedupe_full = full_pass_due(repo, DEDUPE_FULL_KEY, now, DEDUPE_FULL_MINUTES)
+        mark_duplicates(repo, quick=not dedupe_full, now=now)  # 4 saatte bir tam tarama, arada yalnız yeni ilanın değdiği gruplar
         if dedupe_full:
             mark_full(repo, DEDUPE_FULL_KEY, now)
     except Exception as e:  # mükerrer işaretleme hatası değerlendirmeyi engellemesin

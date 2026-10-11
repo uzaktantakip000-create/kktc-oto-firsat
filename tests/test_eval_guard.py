@@ -170,3 +170,19 @@ def test_old_unevaluated_backlog_is_read_once_a_day_with_a_full_round_and_a_fail
     assert calls[-1] == (False, True) and repo.state["eval:backlog"] != marked
     cron_evaluate.run(repo)
     assert calls[-1] == (True, False)
+
+
+def test_full_duplicate_scan_runs_every_four_hours_while_full_evaluation_stays_hourly(monkeypatch):
+    """Çıkış kotası (11.10.2026): mükerrer tam taraması 4 saatte bir; değerlendirme tam turu saatte bir kalır."""
+    seen, dedupe_seen = [], []
+    wire(monkeypatch, lambda repo, settings, book=None, failures=None, quick=False, backlog=True: seen.append(quick) or [])
+    monkeypatch.setattr(cron_evaluate, "mark_duplicates", lambda repo, quick=False, now=None: dedupe_seen.append(quick))
+    repo = Repo()
+    cron_evaluate.run(repo)
+    ago = lambda m: (datetime.now(timezone.utc) - timedelta(minutes=m)).isoformat()
+    repo.state["eval:full"], repo.state["dedupe:full"] = ago(70), ago(70)
+    cron_evaluate.run(repo)
+    assert seen == [False, False] and dedupe_seen == [False, True]  # 70 dk: değerlendirme tam, mükerrer hızlı
+    repo.state["dedupe:full"] = ago(4 * 60)
+    cron_evaluate.run(repo)
+    assert dedupe_seen[-1] is False  # 4 saat: tam tarama
