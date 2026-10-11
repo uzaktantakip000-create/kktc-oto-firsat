@@ -60,3 +60,17 @@ def test_owner_facebook_group_goes_in_as_a_join_candidate_against_the_real_schem
     assert c.execute("SELECT status, priority, count(*) OVER () AS n FROM sources WHERE url LIKE '%%/groups/777/'").fetchone() == \
         {"status": "aday", "priority": 1, "n": 1}
     assert c.execute("SELECT id::text AS id FROM sources WHERE url LIKE '%%/groups/777/'").fetchone()["id"] == old
+
+
+def test_discovered_group_insert_against_the_real_schema(db):
+    """Okuyucunun bulduğu grup: yeni adres eklenir (gölge, okuyucu_kesif); var olan adrese dokunulmaz."""
+    from application import fb_join
+    c = db.conn
+    add(c, "facebook", "Sahibin kapattığı", "https://www.facebook.com/groups/111/", status="pasif")
+    assert fb_join._insert_discovered(db, "fb:222", "KKTC Araba", "aktif", 2) is True
+    assert fb_join._insert_discovered(db, "fb:111", "Başka ad", "aktif", 2) is False
+    rows = {r["url"]: r for r in c.execute("SELECT url, name, status, priority, alert_level, discovered_by, kind FROM sources "
+                                          "WHERE platform='facebook'").fetchall()}
+    assert rows["https://www.facebook.com/groups/222/"] | {} == {"url": "https://www.facebook.com/groups/222/", "name": "KKTC Araba", "status": "aktif",
+                                                                "priority": 2, "alert_level": "golge", "discovered_by": "okuyucu_kesif", "kind": "grup"}
+    assert rows["https://www.facebook.com/groups/111/"]["status"] == "pasif" and rows["https://www.facebook.com/groups/111/"]["name"] == "Sahibin kapattığı"

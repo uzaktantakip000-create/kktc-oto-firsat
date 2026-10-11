@@ -346,9 +346,12 @@ def handoff_check(repo, now: datetime, path: str | None = None) -> None:
 
 
 def join_check(repo, now: datetime, path: str | None = None) -> None:
-    """Her VPS turunda (gece de): okuyucunun Facebook grubu katılım sonuçları (application/fb_join). Durum dosyası yoksa/alan yoksa hiçbir şey."""
+    """Her VPS turunda (gece de): okuyucunun Facebook grubu katılım sonuçları ve keşfettiği gruplar (application/fb_join). Durum dosyası
+    yoksa/alan yoksa hiçbir şey."""
     from application import fb_join  # tembel: kaynak yönetiminin bağımlılıkları yalnız VPS turunda yüklenir
-    fb_join.check(repo, read_social(path), now)
+    data = read_social(path)
+    fb_join.check(repo, data, now)
+    fb_join.discover(repo, data, now)  # okuyucunun bulduğu yeni gruplar (platformlar.facebook.kesif)
 
 
 def after_tick(repo, beat_written: bool, now: datetime | None = None) -> None:

@@ -118,3 +118,59 @@ def test_selfwatch_runs_the_join_check_on_the_server_only(monkeypatch, tmp_path)
     monkeypatch.setattr(fb_join, "check", lambda repo, data, now: seen.append(data))
     selfwatch.join_check(object(), NOW, str(path))
     assert seen[0]["platformlar"]["facebook"]["katilim"][0]["durum"] == "uye"
+
+
+# --- grup keşfi ---
+def kesif(*items):
+    return {"surum": 1, "platformlar": {"facebook": {"kesif": [dict(anahtar=k, ad=n, uye=u, gizlilik=g, gonderi_gun=p, zaman_utc=NOW.isoformat())
+                                                               for k, n, u, g, p in items]}}}
+
+
+@pytest.fixture
+def inserted(monkeypatch):
+    out = []
+
+    def insert(repo, key, name, status, priority):
+        if any(k == key for k, *_ in out):
+            return False
+        out.append((key, name, status, priority))
+        return True
+
+    monkeypatch.setattr(fb_join, "_insert_discovered", insert)
+    return out
+
+
+@pytest.mark.parametrize("members,posts,prio", [(15000, None, 2), (3000, 6, 2), (3000, 1, 3), (500, 8, 3), (500, 1, 4), (None, None, 4),
+                                                (True, "x", 4)])
+def test_discovery_priority_prefers_big_and_lively_groups(members, posts, prio):
+    assert fb_join.discovery_priority(members, posts) == prio
+
+
+def test_public_groups_are_read_without_joining_closed_ones_wait_in_line(sent, inserted):
+    repo = Repo([src(1, "111", "pasif"), src(2, "222", "disari")])
+    data = kesif(("fb:111", "Sahibin kapattığı", 9000, "acik", 9), ("fb:222", "Dışarıda", 9000, "acik", 9),
+                 ("fb:333", "KKTC Araba Pazarı", 20000, "acik", 30), ("fb:444", "Girne Oto", 800, "kapali", 2),
+                 ("fb:555", "Kıbrıs Araç\nAlım", 3000, "kapali", 7), ("fb:333", "kopya", 1, "acik", 1), ("fb:BÜYÜK", "bozuk", 1, "acik", 1))
+    assert fb_join.discover(repo, data, NOW, log=lambda _: None) == (3, 1)
+    assert inserted == [("fb:333", "KKTC Araba Pazarı", "aktif", 2), ("fb:555", "Kıbrıs Araç Alım", "aday", 2),
+                        ("fb:444", "Girne Oto", "aday", 4)]  # var olan 111/222'ye dokunulmaz
+    ((key, text),) = sent
+    assert "1 açık grup okunmaya başladı (katılmadan): KKTC Araba Pazarı" in text and "2 kapalı grup katılma sırasına girdi" in text
+
+
+def test_discovery_daily_caps_and_full_limit(sent, inserted, monkeypatch):
+    monkeypatch.setattr(fb_join, "DISCOVER_PER_DAY", 3)
+    monkeypatch.setattr(fb_join, "DISCOVER_OPEN_PER_DAY", 1)
+    repo = Repo([])
+    data = kesif(*[(f"fb:{i}00", f"G{i}", 20000 - i, "acik", 9) for i in range(1, 6)])
+    assert fb_join.discover(repo, data, NOW, log=lambda _: None) == (3, 1)
+    assert [s for _, _, s, _ in inserted] == ["aktif", "aday", "aday"]  # günde 1 açık; kalanlar sıraya
+    assert fb_join.discover(repo, data, NOW, log=lambda _: None) == (0, 0)  # günlük ekleme sınırı doldu
+    full = Repo([], open_count=sources_cmd.MAX_OPEN["facebook"])
+    inserted.clear()
+    assert fb_join.discover(full, kesif(("fb:900", "G9", 20000, "acik", 9)), NOW, log=lambda _: None) == (1, 0)
+    assert inserted[0][2] == "aday"  # 50 açık sınırı dolu: açık grup da sıraya
+
+
+def test_no_discovery_field_does_nothing(sent, inserted):
+    assert fb_join.discover(Repo([]), status(("fb:111", "uye")), NOW) == (0, 0) and inserted == [] and sent == []
