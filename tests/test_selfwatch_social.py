@@ -1,6 +1,7 @@
 """Öz-izleme: sosyal medya okuyucusunun (Instagram/Facebook; ayrı program) durum dosyası (application/selfwatch.py: read_social, judge_social, social_watch,
 sabah satırı "Sosyal: ..."). Dosya yalnız OKUNUR; gerçek dosya yok: geçici dosya. Saatler KKTC yerel saatiyle kurulur (domain/kktc_time: yaz UTC+3, kış UTC+2).
-Kurallar: dosya yok/bozuk/yanlış sürüm → satır da uyarı da yok; "susuyor" yalnız GÜNDÜZ (08–23) saatleriyle sayılır (gece boşluğu sayılmaz); uyarı yalnız gündüz."""
+Kurallar: dosya yok/bozuk/yanlış sürüm → satır da uyarı da yok; "susuyor" yalnız GÜNDÜZ (07–24; 11.10.2026'ya dek 08–23) saatleriyle sayılır (gece
+boşluğu sayılmaz); uyarı yalnız gündüz."""
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -68,7 +69,7 @@ def judged(data, now):
 def test_the_agreed_path_and_thresholds(monkeypatch):
     monkeypatch.undo()  # tests/conftest.py her testte yolu var olmayan bir yere çevirir; gerçek varsayılanı görmek için geri al
     assert selfwatch.SOCIAL_STATUS_PATH == "/var/lib/kktc-social-durum/durum.json" and selfwatch.SOCIAL_SCHEMA == 1
-    assert (selfwatch.SOCIAL_DAY[0].hour, selfwatch.SOCIAL_DAY[1].hour) == (8, 23)
+    assert selfwatch.SOCIAL_DAY == (7, 24)  # okuyucu 91a454f: gündüz 07–24 + gece tek okuma (gece beklenmez)
     assert selfwatch.SOCIAL_SILENT_AFTER == 5 * H and selfwatch.SOCIAL_FILE_STALE == H and selfwatch.SOCIAL_REPEAT_H == 24
 
 
@@ -102,19 +103,19 @@ def test_read_social_gives_none_for_a_missing_file_or_a_directory(tmp_path, caps
     assert capsys.readouterr().out == ""  # sosyal taraf kurulu olmayabilir: log da yok
 
 
-# --- gündüz süresi (08:00–23:00 KKTC yerel saati) -----------------------------------------------------------------------------
+# --- gündüz süresi (07:00–24:00 KKTC yerel saati) -----------------------------------------------------------------------------
 @pytest.mark.parametrize("start,end,expected", [
-    (kk(6, 22, 50), kk(7, 8, 30), 40 * M),  # gece boşluğu sayılmaz: 22:50-23:00 + 08:00-08:30
+    (kk(6, 22, 50), kk(7, 8, 30), 2 * H + 40 * M),  # gece boşluğu sayılmaz: 22:50-24:00 + 07:00-08:30
     (kk(7, 8, 10), kk(7, 15, 0), 6 * H + 50 * M),  # tamamı gündüz
-    (kk(6, 18, 0), kk(7, 8, 30), 5 * H + 30 * M),
+    (kk(6, 18, 0), kk(7, 8, 30), 7 * H + 30 * M),
     (kk(7, 8, 0), kk(7, 23, 0), 15 * H),
-    (kk(6, 23, 0), kk(7, 8, 0), timedelta(0)),  # yalnız gece
-    (kk(6, 23, 30), kk(7, 7, 30), timedelta(0)),
+    (kk(7, 0, 0), kk(7, 7, 0), timedelta(0)),  # yalnız gece (gece tek okuması da beklenmez)
+    (kk(6, 23, 30), kk(7, 7, 30), H),  # 23:30-24:00 + 07:00-07:30
     (kk(7, 12, 0), kk(7, 12, 0), timedelta(0)),
     (kk(7, 15, 0), kk(7, 8, 0), timedelta(0)),  # ters aralık
-    (kk(10, 22, 50, month=12), kk(11, 8, 30, month=12), 40 * M),  # kış (UTC+2): yerel saat aynı sonucu verir
-    (kk(24, 22, 50), kk(25, 8, 30), 40 * M),  # 25.10.2026 yaz saati bitişi gecesi: pencereler yerel saatle kaymaz
-    (kk(1, 12, 0), kk(7, 12, 0), 45 * H),  # aşırı eski kayıt: son 3 gün (45 saat gündüz) ile sınırlı
+    (kk(10, 22, 50, month=12), kk(11, 8, 30, month=12), 2 * H + 40 * M),  # kış (UTC+2): yerel saat aynı sonucu verir
+    (kk(24, 22, 50), kk(25, 8, 30), 2 * H + 40 * M),  # 25.10.2026 yaz saati bitişi gecesi: pencereler yerel saatle kaymaz
+    (kk(1, 12, 0), kk(7, 12, 0), 51 * H),  # aşırı eski kayıt: son 3 gün (12 + 17 + 17 + 5 = 51 saat gündüz) ile sınırlı
 ])
 def test_day_elapsed_counts_only_the_overlap_with_the_kktc_daytime_windows(start, end, expected):
     assert selfwatch._day_elapsed(start, end) == expected
@@ -122,10 +123,10 @@ def test_day_elapsed_counts_only_the_overlap_with_the_kktc_daytime_windows(start
 
 def test_the_windows_follow_the_local_clock_not_a_fixed_utc_offset():
     assert kk(7, 8, 30).hour == 5 and kk(10, 8, 30, month=12).hour == 6  # yazın 05:30 UTC, kışın 06:30 UTC
-    now = datetime(2026, 12, 10, 5, 30, tzinfo=timezone.utc)  # kış: KKTC 07:30 (pencere henüz kapalı)
-    assert selfwatch._day_elapsed(now - H, now) == timedelta(0)
-    now = datetime(2026, 10, 7, 5, 30, tzinfo=timezone.utc)  # yaz: KKTC 08:30
+    now = datetime(2026, 12, 10, 5, 30, tzinfo=timezone.utc)  # kış: KKTC 07:30 (pencere yarım saattir açık)
     assert selfwatch._day_elapsed(now - H, now) == 30 * M
+    now = datetime(2026, 10, 7, 5, 30, tzinfo=timezone.utc)  # yaz: KKTC 08:30
+    assert selfwatch._day_elapsed(now - H, now) == H
 
 
 # --- yargı: susma ve alt durumlar ---------------------------------------------------------------------------------------------
@@ -214,9 +215,9 @@ def test_the_reader_counts_as_stopped_after_one_daytime_hour_without_a_file_writ
     assert (selfwatch.judge_social(doc({}, now - minutes * M), now).stale is not None) is stale
 
 
-def test_the_overnight_gap_does_not_make_the_reader_look_stopped_at_08_05():
-    now = kk(7, 8, 5)
-    assert selfwatch.judge_social(doc({}, kk(6, 22, 40)), now).stale is None  # 20 dk + 5 dk gündüz
+def test_the_overnight_gap_does_not_make_the_reader_look_stopped_at_07_05():
+    now = kk(7, 7, 5)
+    assert selfwatch.judge_social(doc({}, kk(6, 23, 40)), now).stale is None  # 20 dk + 5 dk gündüz
 
 
 def test_counts_and_reasons_of_odd_types_are_ignored():
@@ -297,8 +298,8 @@ def test_a_stopped_reader_with_no_platforms_gives_just_the_warning_and_a_healthy
 
 
 def test_no_false_stopped_warning_at_the_morning_message_after_a_quiet_night(social):
-    now = kk(7, 8, 5)
-    social(doc({"instagram": plat(last=kk(6, 22, 50), new=2)}, kk(6, 22, 55)))
+    now = kk(7, 8, 5)  # son tur dün 22:50, okuyucu sabah dosyasını yazdı: gündüz süresi 1 sa 10 dk + 1 sa 5 dk < 5 sa
+    social(doc({"instagram": plat(last=kk(6, 22, 50), new=2)}, kk(7, 7, 55)))
     assert lines(now) == ["Sosyal: Instagram ✅ (son tur 9 saat önce, 2 yeni)"]
 
 
@@ -446,8 +447,8 @@ def test_healthy_state_sends_nothing_and_recovery_sends_no_message(social, tg):
     assert len(tg) == 1  # yalnız fren uyarısı; "düzeldi" mesajı yok
 
 
-@pytest.mark.parametrize("hh,mm,sends", [(23, 0, False), (23, 59, False), (0, 0, False), (3, 30, False), (7, 59, False),
-                                         (8, 0, True), (12, 0, True), (22, 59, True)])
+@pytest.mark.parametrize("hh,mm,sends", [(23, 0, True), (23, 59, True), (0, 0, False), (3, 30, False), (6, 59, False),
+                                         (7, 0, True), (12, 0, True), (22, 59, True)])
 def test_alerts_go_only_during_kktc_daytime(social, tg, hh, mm, sends):
     now = kk(7, hh, mm)
     put(social, now, {"facebook": plat("fren", None, reason="x")})
@@ -464,7 +465,7 @@ def test_a_stopped_reader_is_not_announced_at_night_either(social, tg):
 
 def test_the_reader_is_not_judged_stopped_right_after_a_quiet_night_and_alerts_nothing_at_08_05(social, tg):
     now = kk(7, 8, 5)
-    put(social, now, {"instagram": plat(last=kk(6, 22, 50))}, written=kk(6, 22, 55))
+    put(social, now, {"instagram": plat(last=kk(6, 22, 50))}, written=kk(7, 7, 55))
     watch(Repo(), now)
     assert tg == []
 

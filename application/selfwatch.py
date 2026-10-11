@@ -49,7 +49,9 @@ GH_BROWSER_MAX_AGE = timedelta(hours=5)  # aynısı collect-browser için (2 saa
 BACKUP_MAX_AGE = timedelta(days=8)  # sabah satırı: haftalık veritabanı yedeği bundan eskiyse ⚠️
 SOCIAL_STATUS_PATH = "/var/lib/kktc-social-durum/durum.json"  # sosyal okuyucunun durum dosyası (~20 dk'da bir, yalnız VPS'te); çağrı anında aranır: testler değiştirir
 SOCIAL_SCHEMA = 1  # dosyadaki "surum"; başkası = biçim değişmiş, okunmaz (satır da uyarı da yok)
-SOCIAL_DAY = (time(8), time(23))  # okuyucunun tur attığı KKTC gündüzü [08:00, 23:00); gece boşluğu "susma" sayılmaz, uyarı da yalnız bu saatlerde gider
+# Okuyucunun tur attığı KKTC gündüzü, saat olarak [07:00, 24:00) (sosyal oturum 91a454f, 11.10.2026: gündüz 07–24 + gece 02:30–05:30 arası tek
+# okuma; önceden [08:00, 23:00)). Gece boşluğu "susma" sayılmaz (gece okuması da beklenmez), uyarı da yalnız bu saatlerde gider.
+SOCIAL_DAY = (7, 24)
 SOCIAL_SILENT_AFTER = timedelta(hours=5)  # "tamam" diyen platform GÜNDÜZ saatiyle bu kadar süredir tur atmadıysa susuyor (turlar ~4 saatte bir)
 SOCIAL_FILE_STALE = timedelta(hours=1)  # durum dosyası gündüz saatiyle bundan uzun süredir yazılmadıysa okuyucunun kendisi durmuş (~20 dk'da bir yazar)
 SOCIAL_REASON_MAX = 60  # fren nedeninin mesajdaki en çok uzunluğu
@@ -237,13 +239,14 @@ class SocialView:
 
 def _day_elapsed(start: datetime, end: datetime) -> timedelta:
     """[start, end] aralığının KKTC gündüz pencereleriyle (SOCIAL_DAY, yerel saat: yaz/kış domain/kktc_time'dan) kesişen süresi: gece boşluğu sayılmaz
-    (22:50'de tur atmış okuyucu 08:30'da 40 dk'lıktır, 9 saat 40 dk'lık değil). Yalnız eşik karşılaştırması içindir: son 3 gün dışı kesilir
-    (her 3 günde 45 saat gündüz var, eşiklerin çok üstünde); aşırı eski bozuk kayıt döngüyü uzatamaz."""
+    (22:50'de tur atmış okuyucu 08:30'da 2 sa 40 dk'lıktır, 9 saat 40 dk'lık değil). Yalnız eşik karşılaştırması içindir: son 3 gün dışı kesilir
+    (her 3 günde 51 saat gündüz var, eşiklerin çok üstünde); aşırı eski bozuk kayıt döngüyü uzatamaz."""
     start = max(start, end - timedelta(days=3))
     total, day, last = timedelta(0), to_kktc(start).date(), to_kktc(end).date()
     while day <= last:
-        opens = datetime.combine(day, SOCIAL_DAY[0], tzinfo=KKTC).astimezone(timezone.utc)  # UTC'ye çevir: aynı saat dilimli çıkarma duvar saatiyle yapılırdı
-        closes = datetime.combine(day, SOCIAL_DAY[1], tzinfo=KKTC).astimezone(timezone.utc)
+        midnight = datetime.combine(day, time(0), tzinfo=KKTC)  # yerel gece yarısı + saat: duvar saatiyle (24 = ertesi gün 00:00)
+        opens = (midnight + timedelta(hours=SOCIAL_DAY[0])).astimezone(timezone.utc)  # UTC'ye çevir: aynı saat dilimli çıkarma duvar saatiyle yapılırdı
+        closes = (midnight + timedelta(hours=SOCIAL_DAY[1])).astimezone(timezone.utc)
         total += max(timedelta(0), min(end, closes) - max(start, opens))
         day += timedelta(days=1)
     return total
@@ -319,10 +322,10 @@ def judge_social(data: dict, now: datetime) -> SocialView | None:
 
 
 def social_watch(repo, now: datetime, path: str | None = None) -> None:
-    """VPS tick'inde (yalnız KKTC gündüzü 08–23): durum dosyası bir platform için fren/hata/susma ya da okuyucunun kendisi için "durmuş" diyorsa sahibe
+    """VPS tick'inde (yalnız KKTC gündüzü 07–24): durum dosyası bir platform için fren/hata/susma ya da okuyucunun kendisi için "durmuş" diyorsa sahibe
     BİR uyarı (`social_<platform>_<durum>` / `social_okuyucu_durmus`, 24 saatte bir tekrar). Okuyucu durmuşsa yalnız o uyarı gider: dosyadaki platform
     bilgisi bayattır, ayrıca "susuyor" demek aynı arızanın kopyası olur. Dosya yoksa/okunamıyorsa/biçim yanlışsa hiçbir şey yapılmaz; düzelince mesaj yok."""
-    if not SOCIAL_DAY[0].hour <= kktc_hour(now) < SOCIAL_DAY[1].hour:
+    if not SOCIAL_DAY[0] <= kktc_hour(now) < SOCIAL_DAY[1]:
         return
     data = read_social(path)
     view = judge_social(data, now) if data is not None else None
@@ -339,7 +342,7 @@ def social_watch(repo, now: datetime, path: str | None = None) -> None:
 
 def handoff_check(repo, now: datetime, path: str | None = None) -> None:
     """KKTC gündüzü: Facebook devir hattının sessiz arızaları (application/handoff_watch). Durum dosyası yoksa/bozuksa hiçbir şey yapılmaz."""
-    if not SOCIAL_DAY[0].hour <= kktc_hour(now) < SOCIAL_DAY[1].hour:
+    if not SOCIAL_DAY[0] <= kktc_hour(now) < SOCIAL_DAY[1]:
         return
     from application import handoff_watch  # tembel: aktarıcının bağımlılıkları yalnız VPS turunda yüklenir
     handoff_watch.watch(repo, read_social(path), now)
