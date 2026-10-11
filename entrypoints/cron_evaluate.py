@@ -11,7 +11,7 @@ from application.dedupe import mark_duplicates
 from application.digest import send_daily_digest
 from application.discovery import send_discovery
 from application.estimate_guard import guard_estimates
-from application.evaluate import evaluate_new, load_book, pending_alerts
+from application.evaluate import LazyBook, evaluate_new, load_book, pending_alerts
 from application.health import check_fx, check_sources, notify_owner
 from application.llm_reader import deal_notes
 from application.notify import send_alerts
@@ -160,7 +160,7 @@ def run(repo: Repository) -> None:
         pass
     except Exception as e:  # tablo kurulamasa da değerlendirme sürer (eski tablo/emsal yolu)
         print("değer tablosu kurulamadı:", type(e).__name__, redact(str(e))[:150])
-    book = load_book(repo) if settings.estimated_alerts else None  # tek kez yüklenir
+    book = LazyBook(lambda: load_book(repo) if settings.estimated_alerts else None)  # yalnız gerekince (değerlendirilecek ilan / bekleyen fırsat varsa), en çok bir kez okunur
     failures: list[tuple[str, str]] = []
     eval_error: Exception | None = None
     eval_full = full_pass_due(repo, EVAL_FULL_KEY, now)
@@ -194,11 +194,13 @@ def run(repo: Repository) -> None:
             print("LLM notu alınamadı:", type(e).__name__)
     sent = send_alerts(repo, token, strong, notes)
     est_sent = 0
-    if settings.estimated_alerts and book is not None:  # 🟠 tahmini fırsat: ayrı gönderim (tablo yoksa hiç çıkmaz)
+    if settings.estimated_alerts:  # 🟠 tahmini fırsat: ayrı gönderim (tablo yoksa hiç çıkmaz)
         try:
             # aynı gönderim kontrolü; 🟠 doğrudan emsal < 8 iken doğar: dürüst 🟠 KONTROL ET gelene kadar emsal kapısında kalır
-            est, _ = gonderim_kontrol(repo, pending_alerts(repo, tier=Tier.ESTIMATED, book=book), "🟠")
-            est_sent = send_alerts(repo, token, est, tier=Tier.ESTIMATED, s=settings)
+            waiting = pending_alerts(repo, tier=Tier.ESTIMATED, book=book)
+            if waiting and book() is not None:
+                est, _ = gonderim_kontrol(repo, waiting, "🟠")
+                est_sent = send_alerts(repo, token, est, tier=Tier.ESTIMATED, s=settings)
         except Exception as e:  # 🟠 hatası özet/rapor gibi yan işleri engellemesin
             print("tahmini fırsat gönderimi başarısız:", type(e).__name__, redact(str(e))[:150])
     for name, job in (("kaynak düşürme", lambda: demote_failing_sources(repo)),

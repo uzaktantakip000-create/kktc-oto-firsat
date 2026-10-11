@@ -55,6 +55,23 @@ def load_book(repo) -> PriceBook | None:
         return None
 
 
+class LazyBook:
+    """Değer tablosu yalnız GEREKİNCE ve en çok bir kez okunur (11.10.2026, çıkış kotası): tablo ~180 kB, her turda okunuyordu; turların çoğunda
+    değerlendirilecek ilan da bekleyen bildirim de yoktur. Çağrılınca tabloyu döndürür; 🟠 kapalıysa ya da yüklenemezse None (eski davranış)."""
+
+    def __init__(self, loader):
+        self._loader, self._done, self._book = loader, False, None
+
+    def __call__(self) -> PriceBook | None:
+        if not self._done:
+            self._book, self._done = self._loader(), True
+        return self._book
+
+
+def _resolve(book):
+    return book() if isinstance(book, LazyBook) else book
+
+
 def assess_listing(listing: dict, pool: list[dict], s: Settings, book: PriceBook | None = None) -> Decision | None:
     """Eski ad: karar mantığı domain/decision.py `decide()`'dedir (taranan ilan, iletilen ilan ve altın dosya aynı kuralı kullanır)."""
     return decide(listing, pool, s, book)
@@ -128,8 +145,6 @@ def evaluate_new(repo: Repository, settings: Settings | None = None, book=_LOAD,
     "emsal yok" birikimi yalnız backlog=True turunda (cron: günde bir). Bildirim üretebilecek her ilan iki türde de alınır.
     Emsal havuzu yalnız değerlendirilecek ilanların (marka, model) çiftleri için okunur (find_market zaten marka+model eşitliği ister)."""
     s = settings or Settings()
-    if book is _LOAD:
-        book = load_book(repo) if s.estimated_alerts else None
     if quick:
         listings = repo.unevaluated_active(recent_hours=QUICK_NEW_HOURS)
     elif backlog:
@@ -138,7 +153,8 @@ def evaluate_new(repo: Repository, settings: Settings | None = None, book=_LOAD,
         listings = repo.unevaluated_active(rules_version=RULES_VERSION, unevaluated_hours=BACKLOG_AFTER_HOURS)
     candidates = [l for l in listings if is_car_brand(l.get("brand_norm"))]  # motosiklet/tekne/karavan/ticari: bu sistem otomobil içindir
     if not candidates:
-        return []
+        return []  # değerlendirilecek ilan yok: değer tablosu da okunmaz
+    book = (load_book(repo) if s.estimated_alerts else None) if book is _LOAD else _resolve(book)
     pool = [r for r in repo.market_pool(days=s.comparable_window_days + 30, keys=pool_keys(candidates)) if is_car_brand(r.get("brand_norm"))]
     results, attempted, failed = [], 0, 0
     for listing in candidates:
@@ -161,11 +177,14 @@ def evaluate_new(repo: Repository, settings: Settings | None = None, book=_LOAD,
     return results
 
 
-def pending_alerts(repo: Repository, hours: int = 36, tier: Tier = Tier.STRONG, book: PriceBook | None = None) -> list[Evaluated]:
+def pending_alerts(repo: Repository, hours: int = 36, tier: Tier = Tier.STRONG, book=None) -> list[Evaluated]:
     """Gönderilmesi gereken fırsatlar (varsayılan 🟢; tier=Tier.ESTIMATED ile 🟠): yeni değerlendirilenler + daha önce
-    gönderilemeyenler (hata, hız sınırı, yeni abone). `book` verilirse mesaja "📘 Değer tablosu" satırı için satır eklenir."""
+    gönderilemeyenler (hata, hız sınırı, yeni abone). `book` (PriceBook ya da LazyBook) verilirse mesaja "📘 Değer tablosu" satırı için satır
+    eklenir; LazyBook yalnız bekleyen fırsat varsa okunur."""
     out = []
-    for r in repo.pending_strong(hours, tier.value, rules_version=RULES_VERSION):
+    rows = repo.pending_strong(hours, tier.value, rules_version=RULES_VERSION)
+    book = _resolve(book) if rows else None
+    for r in rows:
         text = (r["raw_text"] or "") + " " + (r["model"] or "")
         med = r["market_median_gbp"]
         evidence = r.get("evidence") if isinstance(r.get("evidence"), dict) else {}

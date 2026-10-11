@@ -277,3 +277,23 @@ def test_strong_is_held_back_when_even_the_plus_minus_one_comparables_skew_a_yea
     repo = FakeRepo([car("t", 5000, year=2015)], mixed)
     (ev,) = evaluate_new(repo)
     assert ev.profit.tier is Tier.STRONG
+
+
+
+def test_price_book_is_read_only_when_there_is_something_to_evaluate_or_send(monkeypatch):
+    """Çıkış kotası (11.10.2026): değer tablosu (~180 kB) turların çoğunda gereksizdi. LazyBook yalnız değerlendirilecek ilan ya da bekleyen
+    fırsat varsa ve en çok bir kez okunur; karar aynı tabloyla verilir."""
+    from application import evaluate as ev
+    calls = []
+    lazy = ev.LazyBook(lambda: calls.append(1) or "TABLO")
+    assert evaluate_new(FakeRepo([], POOL), book=lazy) == [] and calls == []  # ilan yok: okunmadı
+
+    class NoPending(FakeRepo):
+        def pending_strong(self, hours, tier, rules_version=None):
+            return []
+    assert ev.pending_alerts(NoPending([], POOL), book=lazy) == [] and calls == []  # bekleyen yok: okunmadı
+    seen = []
+    monkeypatch.setattr(ev, "_evaluate_one", lambda repo, l, pool, s, book: seen.append(book))
+    evaluate_new(FakeRepo([car("t", 5000)], POOL), book=lazy)
+    evaluate_new(FakeRepo([car("u", 5000)], POOL), book=lazy)
+    assert seen == ["TABLO", "TABLO"] and calls == [1]  # gerekince bir kez
