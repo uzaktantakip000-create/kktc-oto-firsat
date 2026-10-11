@@ -6,7 +6,10 @@ kısa bir kart yollar: aracın piyasa ortası ve "%20 kâr için en çok £X" (d
 hesap; domain.decision.ask_value). Satıcı bu rakamın altını söylerse fırsattır. Bu bir 🟢 DEĞİLDİR (fiyat yok, araç görülmedi), ayrı etikettir; otomatik mesaj yok.
 Seçim: son WINDOW_H saatte ilk kez görülen, kopya olmayan, galeri görünmeyen (satıcı radarı + metin), sahibin engellediği marka/satıcı
 olmayan, tuzak metni olmayan ve 🟢 kadar emsali (8) olan ilan. Gölge kaynaklar dahil (kart emsal ya da 🟢 üretmez). Yalnız sahip (v1).
-Gönderim en çok bir kez: önce "işlendi" yazılır, sonra gönderilir. Günlük üst sınır var (KKTC günü)."""
+Gönderim en çok bir kez: önce "işlendi" yazılır, sonra gönderilir. Günlük üst sınır var (KKTC günü).
+Fotoğraftan fiyat (sahip onayı 11.10.2026): fiyatı yalnız fotoğrafta yazan ilanın fiyatını görüntü okuyucu okur (social_import; "foto_fiyat").
+Okunan fiyat %20 sınırının en çok PHOTO_SLACK üstündeyse kart fiyatı gösterir ve sınırla kıyaslar ("teyit et"); daha pahalıysa kart yok;
+piyasa ortasının yarısından ucuzsa yanlış okuma sayılır, kart fiyatsız gibi gider. Yine 🟢 değildir (fiyatı yapay zekâ okudu)."""
 import json
 import re
 from datetime import datetime, timedelta, timezone
@@ -24,6 +27,7 @@ SENT_KEY = "fiyatsor:islenen"  # bot_state: işlenen ilan kimlikleri (JSON liste
 PRINTS_KEY = "fiyatsor:izler"  # bot_state: kart giden aracın izi (aynı aracın yeniden paylaşımı ikinci kart almasın; JSON liste, son KEEP)
 DAY_KEY = "fiyatsor:gun:{}"  # bot_state: o KKTC gününde gönderilen kart sayısı
 KEEP = 600
+PHOTO_SLACK = 1.10  # fotoğraftaki fiyat %20 sınırının en çok %10 üstündeyse kart (pazarlıkla sınıra iner); daha pahalısı fırsat değil
 # galeri/ticari gönderi işaretleri (satıcı radarı bilinmediğinde metinden): kart bireysel satıcıyı hedefler. "plakasız" = yeni ithal araç
 # (çoğu galeri; emsaller plakalı araç fiyatıdır)
 _DEALER = re.compile(r"\b(?:motors?|auto|oto\s*galeri|galeri(?:miz)?|car\s+dealership|showroom|taksit|kredi(?:li)?|senet(?:le)?|"
@@ -64,6 +68,10 @@ def card(l: dict, median: float, n: int, offer: float) -> str:
     if l.get("location"):
         bits.append(l["location"])
     lines = [" · ".join(bits), f"   📊 piyasa ortası {_gbp(median)} ({n} emsal) → %20 kâr için en çok {_gbp(offer)}"]
+    photo = l.get("_foto")
+    if photo:
+        verdict = ("%20 sınırının altında ✅" if photo <= offer else f"sınırın {_gbp(photo - offer)} üstünde (pazarlıkla iner)")
+        lines.append(f"   🖼 fotoğrafta {_gbp(photo)} yazıyor (yapay zekâ okudu, teyit et) → {verdict}")
     if l.get("url"):
         lines.append(f"   {l['url']}")
     return "\n".join(lines)
@@ -82,6 +90,12 @@ def pick(rows: list[dict], pool: list[dict], s: Settings, now: datetime, seen: s
         v = ask_value(l, pool, s, now)
         if v is None or (s.max_buy_gbp is not None and v.median_gbp * s.absurd_price_ratio > s.max_buy_gbp):
             continue  # bütçenin çok üstündeki araç: makul bir fiyatla bile bütçeye girmez
+        photo = l.get("price_gbp") if "foto_fiyat" in (l.get("urgency_signals") or []) else None
+        if photo is not None and photo < v.median_gbp * s.absurd_price_ratio:
+            photo = None  # piyasanın yarısından ucuz: büyük olasılıkla yanlış okuma ("5" ya da taksit tutarı); fiyatsız kart
+        if photo is not None and photo > v.max_buy_gbp * PHOTO_SLACK:
+            continue  # fotoğraftaki fiyat sınırın çok üstünde: fırsat değil
+        l = {**l, "_foto": photo}
         seen.add(fingerprint(l))
         out.append((l, v.median_gbp, v.comparables_n, v.max_buy_gbp))
     return out
@@ -110,7 +124,7 @@ def run(repo, send, s: Settings, now: datetime | None = None) -> int:
     repo.set_state(PRINTS_KEY, json.dumps((prints + [fingerprint(l) for l, *_ in chosen])[-KEEP:]))
     for i in range(0, len(chosen), PER_MESSAGE):
         part = chosen[i:i + PER_MESSAGE]
-        head = ("📞 FİYAT SOR · Facebook'ta fiyatı yazmayan " + ("yeni ilan" if len(part) == 1 else f"{len(part)} yeni ilan")
+        head = ("📞 FİYAT SOR · Facebook'ta fiyatı yazıda olmayan " + ("yeni ilan" if len(part) == 1 else f"{len(part)} yeni ilan")
                 + "\nSatıcı aşağıdaki rakamın altını söylerse %20 kâr kalır (🟢 değil: fiyat ve araç görülmedi).")
         body = [card(l, med, n, offer) for l, med, n, offer in part]
         tail = "km yazmıyorsa rakam yaşına göre ortalama km'li araç içindir."

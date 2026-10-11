@@ -94,12 +94,14 @@ def _save(sink: ListingSink, source: SocialSource, post: SocialPost, data: dict 
 
 
 def ingest_facebook(posts: Iterable[SocialPost], source: SocialSource, sink: ListingSink, *, reader: LlmReader | None = None,
-                    fetch_image=None, budget: ReadBudget | None = None, priceless: bool = False) -> IngestStats:
+                    fetch_image=None, budget: ReadBudget | None = None, priceless: bool = False, text_llm: bool = True) -> IngestStats:
     """collect_facebook_groups döngüsünün aynısı (km tamamlama, yapay zekâ yeniden deneme, fotoğraftan fiyat; tavanlar ve süre bütçesi).
     reader=None (deneme kipi): yalnız kural okur. fetch_image: okuyucunun kendi bağlantısıyla görsel indirme (yoksa fotoğraf okunmaz).
     Aynı gönderiye ikinci kez para harcanmasın diye bilinen gönderiler (sink.known_item_ids) yapay zekâya gitmez.
     priceless=True (devir aktarıcısı): fiyatı hiçbir yoldan okunamayan araç gönderisi (marka + yıl var) fiyatsız ilan olarak yazılır
-    (collect_facebook.priceless_data) ve `priceless` sayacına girer (neden sayacında "fiyat_yok" olarak görünmez)."""
+    (collect_facebook.priceless_data) ve `priceless` sayacına girer (neden sayacında "fiyat_yok" olarak görünmez).
+    text_llm=False: yapay zekâ yalnız fotoğraf okur (km tamamlama ve yazıyı yeniden okuma yok; devir aktarıcısı, sahip onayı 11.10.2026).
+    Fotoğraftan fiyat okunan ilan `urgency_signals`'a "foto_fiyat" alır ("📞 FİYAT SOR" kartı fotoğraftaki fiyatı gösterir)."""
     st, budget = IngestStats(), budget or ReadBudget()
     hint = steering_hint(source)
     known = sink.known_item_ids(sink_source_id(source)) if reader else set()
@@ -116,7 +118,7 @@ def ingest_facebook(posts: Iterable[SocialPost], source: SocialSource, sink: Lis
             data = listing_data(raw, hint)
             if data is not None:
                 st.parsed += 1
-            if data is not None and data["km"] is None and reader and budget.km_left > 0 and llm_open() and fresh:
+            if data is not None and data["km"] is None and reader and text_llm and budget.km_left > 0 and llm_open() and fresh:
                 budget.km_left -= 1  # fiyat yazıda var ama km yok: tek ucuz okuma km'yi tamamlar (alıntı doğrulamalı)
                 read = reader.read(raw.text)
                 if read is not None and read.is_car and read.km:
@@ -125,7 +127,7 @@ def ingest_facebook(posts: Iterable[SocialPost], source: SocialSource, sink: Lis
             why = None
             if data is None:
                 why = diagnose(raw.text)
-                if reader and why in LLM_RETRY and llm_open() and fresh:  # araç gönderisi ama kural okuyamadı: yapay zekâ bir kez dener
+                if reader and text_llm and why in LLM_RETRY and llm_open() and fresh:  # araç gönderisi ama kural okuyamadı: yapay zekâ bir kez dener
                     data = llm_listing_data(raw, hint, reader)
                     if data:
                         st.llm_read += 1
@@ -136,6 +138,7 @@ def ingest_facebook(posts: Iterable[SocialPost], source: SocialSource, sink: Lis
                         data = photo_listing_data(raw, hint, reader, fetch_image)
                         if data:
                             st.photo_read += 1
+                            data["urgency_signals"] = [*(data.get("urgency_signals") or []), "foto_fiyat"]
                         _count(st.reasons, "foto_fiyat" if data else "foto_okunamadi")
                 elif data is None and why == "fiyat_yok":
                     _count(st.reasons, "foto_url_yok")  # okuyucu görsel adresi vermedi (şablon kontrolü için sayaç)

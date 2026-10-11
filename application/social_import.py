@@ -22,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 
 from application.collect_facebook import group_default_steering
-from application.social_ingest import ingest_facebook
+from application.social_ingest import ReadBudget, ingest_facebook
 from application.social_port import SocialPost, SocialSource
 from domain.source_links import key_of_url
 
@@ -39,6 +39,13 @@ _FILE = re.compile(r"^facebook-\d{8}\.jsonl$")
 _GROUP = re.compile(r"^[a-z0-9._-]{1,64}$")  # kaynaklar.json grup anahtarı (social_files._FB_GROUP ile aynı)
 _POST_ID = re.compile(r"^(?:\d{5,25}|pfbid[A-Za-z0-9]{10,})$")  # facebook_browser._PID_OK ile aynı
 _CDN = re.compile(r"^https://scontent[^/\s]*\.fbcdn\.net/\S+$", re.I)
+# Fotoğraf devri (sosyal oturum 43bba41; sahip onayı 11.10.2026 "fotoğraftan fiyat okuma: evet"): okuyucu fiyatı yazmayan araç gönderisinin
+# sayfada zaten yüklenmiş ilk görselini <devir>/foto/<gonderi>.jpg olarak kaydeder (ek istek yok), satıra "foto_dosya" yazar. Bot o dosyayı
+# yerelden okur ve görüntü okuyucuya verir; ağdan görsel ÇEKİLMEZ (CDN adresi asla indirilmez).
+FILE_PREFIX = "file:"
+PHOTO_READS = 20  # tur başına en çok fotoğraf okuması (okuyucunun tur tavanıyla aynı)
+PHOTO_MAX_BYTES = 400_000
+_PHOTO_FILE = re.compile(r"^foto/[A-Za-z0-9]{5,60}\.jpg$")
 
 
 @dataclass
@@ -126,12 +133,29 @@ def parse_line(line: str) -> tuple[str, SocialPost] | str:
     group = key[3:] if isinstance(key, str) and key.startswith("fb:") else ""
     if not (_GROUP.match(group) and isinstance(pid, str) and _POST_ID.match(pid) and isinstance(text, str)):
         return "alan"
-    photo, radar = doc.get("foto_url"), doc.get("satici_gonderi_14g")
+    photo, radar, photo_file = doc.get("foto_url"), doc.get("satici_gonderi_14g"), doc.get("foto_dosya")
+    image = photo if isinstance(photo, str) and _CDN.match(photo) else None
+    if isinstance(photo_file, str) and photo_file == f"foto/{pid}.jpg" and _PHOTO_FILE.match(photo_file):
+        image = FILE_PREFIX + photo_file  # yerel kopya (yalnız bu gönderinin adıyla)
     post = SocialPost(platform=PLATFORM, source_key=group, post_id=pid, url=f"https://www.facebook.com/groups/{group}/posts/{pid}/",
                       posted_at=_parse_time(doc.get("paylasim_utc")) or _parse_time(doc.get("goruldu_utc")), text=text[:MAX_TEXT],
-                      image_url=photo if isinstance(photo, str) and _CDN.match(photo) else None,
+                      image_url=image,
                       seller_posts_14d=radar if type(radar) is int and 1 <= radar <= MAX_RADAR else None)
     return key, post
+
+
+def read_photo(devir_dir: Path | str, image_url: str | None) -> tuple[bytes, str] | None:
+    """Devir klasöründeki fotoğraf kopyası (bytes, mime). Yalnız "file:foto/<gonderi>.jpg" okunur; CDN adresi, eksik/okunamayan ya da çok
+    büyük dosya None (fotoğraf okunmaz, ilan fiyatsız kalır). Dosyaya yazılmaz, silinmez (okuyucu 3 günde siler)."""
+    if not image_url or not image_url.startswith(FILE_PREFIX) or not _PHOTO_FILE.match(image_url[len(FILE_PREFIX):]):
+        return None
+    path = Path(devir_dir) / image_url[len(FILE_PREFIX):]
+    try:
+        if path.stat().st_size > PHOTO_MAX_BYTES:
+            return None
+        return path.read_bytes(), "image/jpeg"
+    except OSError:
+        return None
 
 
 def source_map(rows: list[dict]) -> dict[str, dict]:
@@ -146,8 +170,11 @@ def source_map(rows: list[dict]) -> dict[str, dict]:
     return out
 
 
-def import_facebook(repo, devir_dir: Path | str, *, limit: int = MAX_LINES, log: Callable[[str], None] = lambda _: None) -> ImportReport:
+def import_facebook(repo, devir_dir: Path | str, *, limit: int = MAX_LINES, log: Callable[[str], None] = lambda _: None,
+                    make_reader=None) -> ImportReport:
     """Bir aktarım turu. repo: Repository (sources, get_state/set_state, upsert_listing, mark_checked, count_recent).
+    Fotoğraf kopyası olan satır varsa görüntü okuyucu kurulur (make_reader; yoksa llm_reader.from_env): yalnız fotoğraf okur, turda en çok
+    PHOTO_READS; anahtar yoksa ya da günlük bütçe dolduysa ilan fiyatsız kalır.
     İmleç ancak bütün satırlar yazıldıktan sonra ilerler (yarıda kalırsa satırlar bir dahaki turda yeniden gelir; upsert etkisiz)."""
     rep = ImportReport()
     cursor = _cursor(repo.get_state(STATE_KEY))
@@ -173,11 +200,18 @@ def import_facebook(repo, devir_dir: Path | str, *, limit: int = MAX_LINES, log:
             _count(rep.skipped, "kaynak_kapali")
             continue
         by_key.setdefault(key, []).append(post)
+    reader, budget = None, ReadBudget(km_left=0, photos_left=PHOTO_READS)
+    if any(p.image_url and p.image_url.startswith(FILE_PREFIX) for ps in by_key.values() for p in ps):
+        if make_reader is None:
+            from application import llm_reader  # tembel: yapay zekâ bağımlılıkları yalnız fotoğraf varken
+            make_reader = llm_reader.from_env
+        reader = make_reader(repo)
     for key, posts in by_key.items():
         row = sources[key]
         source = SocialSource(platform=PLATFORM, key=key[3:], url=row["url"], alias=key, source_id=row["id"],
                               default_steering=group_default_steering(row))
-        st = ingest_facebook(posts, source, repo, reader=None, priceless=True)
+        st = ingest_facebook(posts, source, repo, reader=reader, fetch_image=lambda url: read_photo(devir_dir, url), budget=budget,
+                             priceless=True, text_llm=False)
         rep.posts += st.fetched
         rep.new_listings += st.new
         rep.priceless += st.priceless

@@ -276,10 +276,11 @@ class Repository:
 
     def priceless_recent(self, hours: int, platform: str = "facebook") -> list[dict]:
         """"📞 FİYAT SOR" adayları (application/ask_price): son `hours` saatte ilk kez görülen, aktif, kopya olmayan, marka + yılı okunmuş
-        FİYATSIZ sosyal ilanlar (devir aktarıcısının fiyatsız kaydı), ilk görülme sırasıyla."""
+        FİYATSIZ sosyal ilanlar (devir aktarıcısının fiyatsız kaydı) ve fiyatı yalnız FOTOĞRAFTAN okunanlar ("foto_fiyat"), ilk görülme sırasıyla."""
         return self.conn.execute(
-            """SELECT l.*, s.name AS source_name, s.platform FROM listings l JOIN sources s ON s.id = l.source_id
-               WHERE s.platform = %s AND l.price_gbp IS NULL AND 'fiyatsiz' = ANY(l.urgency_signals) AND l.is_active
+            """SELECT l.*, l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform FROM listings l JOIN sources s ON s.id = l.source_id
+               WHERE s.platform = %s AND l.is_active
+                 AND ((l.price_gbp IS NULL AND 'fiyatsiz' = ANY(l.urgency_signals)) OR 'foto_fiyat' = ANY(l.urgency_signals))
                  AND l.duplicate_of IS NULL AND l.brand_norm IS NOT NULL AND l.year IS NOT NULL
                  AND l.first_seen_at > NOW() - make_interval(hours => %s)
                ORDER BY l.first_seen_at""", (platform, hours)).fetchall()

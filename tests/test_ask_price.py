@@ -89,7 +89,7 @@ def test_turn_sends_one_message_once_and_respects_the_daily_cap(monkeypatch):
     sent = []
     assert ask_price.run(repo, sent.append, Settings(), NOW) == 2
     (msg,) = sent
-    assert msg.startswith("📞 FİYAT SOR · Facebook'ta fiyatı yazmayan 2 yeni ilan") and "km yazmıyor · sahibinden" in msg
+    assert msg.startswith("📞 FİYAT SOR · Facebook'ta fiyatı yazıda olmayan 2 yeni ilan") and "km yazmıyor · sahibinden" in msg
     assert repo.keys == [("Toyota", "vitz")] and "eski" not in msg
     assert ask_price.run(repo, sent.append, Settings(), NOW) == 0 and len(sent) == 1  # ikinci turda aynı ilan yok
     monkeypatch.setattr(ask_price, "MAX_PER_DAY", 3)
@@ -124,3 +124,59 @@ def test_a_repost_of_the_same_car_gets_one_card_in_a_turn_and_later():
     assert ask_price.run(repo, sent.append, Settings(), NOW) == 1
     repo.rows.append(post("c"))
     assert ask_price.run(repo, sent.append, Settings(), NOW) == 0 and len(sent) == 1
+
+
+# --- fotoğraftan fiyat (sahip onayı 11.10.2026) ---
+class PhotoReader:
+    def __init__(self, text):
+        self.text, self.images, self.texts = text, 0, 0
+
+    def read_image(self, image, mime="image/jpeg"):
+        self.images += 1
+        return self.text
+
+    def read(self, text):
+        self.texts += 1
+        return None
+
+
+def test_handoff_photo_copy_is_read_locally_and_only_photos_go_to_the_reader(tmp_path):
+    (tmp_path / "foto").mkdir()
+    (tmp_path / "foto" / "1000000001.jpg").write_bytes(b"\xff\xd8jpeg")
+    repo, reader = FakeRepo(_rows()), PhotoReader("SATILIK Fiyat 4.500 STG")
+    _file(tmp_path, SI_NOW, _line("1000000001", text=NO_PRICE, foto_dosya="foto/1000000001.jpg"),
+          _line("1000000002", text="2014 Honda Fit otomatik, irtibat", foto_dosya="foto/9999999999.jpg"),  # başka gönderinin adı: yok sayılır
+          _line("1000000003", text="2016 Mazda Demio 60.000 km Fiyat 6.000 STG"))  # fiyatlı, km'li: yapay zekâya gitmez
+    rep = si.import_facebook(repo, tmp_path, make_reader=lambda r: reader)
+    assert reader.images == 1 and reader.texts == 0 and rep.priceless == 1
+    photo = next(d for (s, i), d in repo.listings.items() if i == "1000000001")
+    assert photo["price_amount"] == 4500 and photo["extraction_by"] == "llm" and photo["urgency_signals"] == ["foto_fiyat"]
+
+
+def test_read_photo_accepts_only_its_own_small_local_copy(tmp_path):
+    (tmp_path / "foto").mkdir()
+    (tmp_path / "foto" / "12345.jpg").write_bytes(b"x" * 10)
+    (tmp_path / "foto" / "77777.jpg").write_bytes(b"x" * (si.PHOTO_MAX_BYTES + 1))
+    assert si.read_photo(tmp_path, "file:foto/12345.jpg") == (b"x" * 10, "image/jpeg")
+    for url in ("file:foto/77777.jpg", "file:foto/../12345.jpg", "file:foto/yok00.jpg", "https://scontent.xx.fbcdn.net/a.jpg", None):
+        assert si.read_photo(tmp_path, url) is None, url
+
+
+@pytest.mark.parametrize("photo,shown", [(5000, "%20 sınırının altında ✅"), (7500, None), (3000, "")])
+def test_photo_price_is_compared_with_the_limit(photo, shown):
+    offer = buy_ceiling(8700 * 0.95, Settings()) // 50 * 50  # 6.600
+    picked = ask_price.pick([post("a", price_gbp=photo, urgency_signals=["foto_fiyat"])], POOL, Settings(), NOW)
+    if shown is None:  # sınırın %10'undan fazla üstünde: kart yok
+        assert offer * 1.1 < 7500 and picked == []
+        return
+    ((l, med, n, off),) = picked
+    text = ask_price.card(l, med, n, off)
+    if shown:
+        assert f"🖼 fotoğrafta £5.000 yazıyor (yapay zekâ okudu, teyit et) → {shown}" in text
+    else:  # piyasanın yarısından ucuz: yanlış okuma, fiyatsız kart
+        assert "🖼" not in text
+
+
+def test_photo_price_a_little_above_the_limit_says_how_much():
+    ((l, med, n, off),) = ask_price.pick([post("a", price_gbp=7000, urgency_signals=["foto_fiyat"])], POOL, Settings(), NOW)
+    assert "🖼 fotoğrafta £7.000 yazıyor (yapay zekâ okudu, teyit et) → sınırın £400 üstünde (pazarlıkla iner)" in ask_price.card(l, med, n, off)

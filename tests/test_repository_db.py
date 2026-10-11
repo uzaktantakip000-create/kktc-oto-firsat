@@ -1344,5 +1344,7 @@ def test_priceless_recent_returns_only_new_priceless_social_rows_and_shadow_coun
     add_listing(c, fb, "pasif", **none, is_active=False, first_seen_at=ago(minutes=30))
     add_listing(c, fb, "fiyatli", first_seen_at=ago(minutes=30))
     add_listing(c, web, "site", **none, first_seen_at=ago(minutes=30))
-    assert items(db.priceless_recent(3)) == {"yeni"}
-    assert db.shadow_summary("facebook", 24)["new"] == 1  # yalnız fiyatlı gölge ilan
+    add_listing(c, fb, "foto", price_gbp=5000, urgency_signals=["foto_fiyat"], extraction_by="llm", first_seen_at=ago(minutes=20))
+    got = db.priceless_recent(3)
+    assert items(got) == {"yeni", "foto"} and {r["source_item_id"]: r["price_gbp"] for r in got} == {"yeni": None, "foto": 5000.0}
+    assert db.shadow_summary("facebook", 24)["new"] == 2  # fiyatlı gölge ilanlar (fotoğraftan okunan dahil); fiyatsız kayıt sayılmaz
