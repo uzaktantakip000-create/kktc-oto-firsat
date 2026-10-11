@@ -31,11 +31,17 @@ WARNING = {
     "ufak masraf var": r"ufak (masraf|tamir)|k[üu][çc][üu]k (masraf|tamir)|masraf[ıi] var",
     "modifiyeli": r"stage ?[123]|chip ?tuning|modifiye|\b\d{3}\+? ?hp\b",
 }
+# Satıcının acelesi (11.10.2026 genişletildi; sahip: "insanlar acil satıyor, adadan ayrılmak için vs; en erken bulan kazanır"). KibrisArabaAl
+# satıcıları "İhtiyaçtan Acil" rozetini işaretleyebiliyor (yeni ilanların ~%20'si). Karar kurallarına girmez: mesajda gösterilir ve
+# "⚡ ACİL SATICI" bildirimini (application/urgent) tetikler. "pazarlık" aciliyet değildir, yalnız gösterilir.
 URGENCY = {
-    "acil": r"\bacil\b|\burgent\b|must sell|срочно",
-    "mezun/ayrılıyor": r"mezun|adadan ayr[ıi]l|gidiyorum|leaving|уезжаю",
+    "acil": r"\bacil\b|\bacele\b|ihtiya[çc]tan|\burgent\b|must sell|quick sale|need(s)? gone|срочно",
+    "mezun/ayrılıyor": r"mezun|adadan ayr[ıi]l|ayr[ıi]l[ıi]yorum|gidiyorum|kesin d[öo]n[üu][şs]|d[öo]n[üu][şs] nedeniyle|d[öo]n[üu]yorum|yurt ?d[ıi][şs][ıi]na|ta[şs][ıi]n[ıi]yorum|"
+                       r"tayin|terhis|leaving|relocat|moving (back|abroad|to)|graduat|уезжаю",
+    "nakit/borç": r"nakit ihtiya|bor[çc]tan|borcum|zarar[ıi]na|kelepir",
     "pazarlık": r"pazarl[ıi]k (pay[ıi] )?(var|mevcut)|pazarl[ıi]k yap[ıi]l[ıi]r",
 }
+MOTIVATED = ("acil", "mezun/ayrılıyor", "nakit/borç")  # satıcının acelesini gösteren sınıflar (pazarlık değil)
 
 
 def _scan(table: dict[str, str], text: str) -> list[str]:

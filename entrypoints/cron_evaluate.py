@@ -14,7 +14,8 @@ from application.estimate_guard import guard_estimates
 from application.evaluate import LazyBook, evaluate_new, load_book, pending_alerts
 from application.health import check_fx, check_sources, notify_owner
 from application.llm_reader import deal_notes
-from application.notify import send_alerts
+from application import urgent
+from application.notify import api, send_alerts
 from application.report import send_weekly_report
 from application.runner_gate import TICK_FRESH, VPS_TICK_KEY, github_should_skip
 from application.send_gate import gonderim_kontrol
@@ -207,6 +208,12 @@ def run(repo: Repository) -> None:
                 est_sent = send_alerts(repo, token, est, tier=Tier.ESTIMATED, s=settings)
         except Exception as e:  # 🟠 hatası özet/rapor gibi yan işleri engellemesin
             print("tahmini fırsat gönderimi başarısız:", type(e).__name__, redact(str(e))[:150])
+    try:  # ⚡ ACİL SATICI (application/urgent): bu turda değerlendirilen ilanlardan acelesi olan bireysel satıcı, piyasanın %10+ altında; yalnız sahip
+        urgent_sent = urgent.run(repo, evaluated, lambda text: api(token, "sendMessage", chat_id=owner, text=text), settings)
+        if urgent_sent:
+            print(f"acil satıcı: {urgent_sent} mesaj")
+    except Exception as e:  # yan iş: 🟢 yolunu ve raporları bozmasın
+        print("acil satıcı bildirimi başarısız:", type(e).__name__, redact(str(e))[:150])
     for name, job in (("kaynak düşürme", lambda: demote_failing_sources(repo)),
                       ("tahmini öğrenme", lambda: guard_estimates(repo)),
                       ("özet", lambda: send_daily_digest(repo, token)),  # 🟡 özet kapalı (digest.ENABLED)

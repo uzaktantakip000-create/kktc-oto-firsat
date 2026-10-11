@@ -242,7 +242,7 @@ class Repository:
                                    OR (last_ev.tier IN ('guclu','tahmini') AND last_ev.at > NOW() - interval '36 hours')))"""
                 args.append(rules_version)
         return self.conn.execute(
-            f"""SELECT l.*, l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform
+            f"""SELECT l.*, l.price_gbp::float8 AS price_gbp, s.name AS source_name, s.platform, s.alert_level = 'golge' AS shadow
                FROM listings l JOIN sources s ON s.id=l.source_id
                LEFT JOIN LATERAL (SELECT evaluated_at AS at, rules_version AS rv, tier FROM evaluations e WHERE e.listing_id=l.id
                                   ORDER BY evaluated_at DESC LIMIT 1) last_ev ON TRUE
