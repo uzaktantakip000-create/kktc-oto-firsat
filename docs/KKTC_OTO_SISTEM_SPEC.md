@@ -851,7 +851,7 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
 - **Facebook grubuna kendiliğinden katılım (11.10 akşam):**
   - Sahip (sosyal oturumda): "Gruba katılma tamamen stratejik ve senin kararınla olsun ve direk katılabilir, ben mevcutları bottan takip ederim, oraya bildirim atsın". Marketplace: "gerek yok". Ana oturumda: "Ortağınla iletişim kur ve ne gerekiyorsa yapın".
   - Okuyucu (sosyal oturum, 688abb0) kaynak listesindeki "aday" gruplara katılır:
-    - 13.10 15:24 UTC'den (yavaş başlangıç sonu) önce değil; katılım ve kesik gönderi açma ortam değişkeniyle açılır, açmadan önce ana oturuma haber verilir.
+    - 13.10 12:24 UTC'den (yavaş başlangıç sonu, KKTC 15:24) önce değil; katılım ve kesik gönderi açma ortam değişkeniyle açılır, açmadan önce ana oturuma haber verilir.
     - En çok 48 saatte bir grup; yalnız öncelik ≤2 aday (bugün 4 grup); listede 8 açık FB kaynağı varsa katılım yok.
     - Soru/kural onayı isteyen grupta cevap uydurmaz; bekleyen istek 12 saat sonra hâlâ "Katıl" görünüyorsa "reddedildi" yazar, yeniden istemez.
     - Uyarı gelirse katılımı durdurur, okumayı sürdürür.
@@ -877,3 +877,40 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
   - **Kapalı döngü: "Hayır, şimdi değil."**
     - Yapılmıyor. Sosyal oturumun önerdiği sıra, sahip isterse plan olarak burada: (a) arama kartı + sonuç düğmeleri (ilk hafta yalnız sahip), (b) sabah özeti, (c) web ilan izleme, (d) stok/satış.
   - **KKTC Fiyat Rehberi sayfası (sosyal oturum):** silinmiyor, güncellenmiyor (gizli sayfa; sahip isterse silinir).
+
+### 24.26 FACEBOOK ÖNCE (11.10.2026 akşam; sahip: "başta Facebook ve Instagram'a yoğunlaşmasını istemiştim… fırsat arabaları Facebook'tan bulunuyor… çok fazla grubu, gerekirse hepsini tarayan bir sistem… hâlâ yetersiz"; sonra "daha hızlı ama stratejik bir büyüme")
+- **Dürüst durum (ölçüm, 11.10):**
+  - Son 7 günde gelen ilan: web 953, Facebook 13, Instagram 0 (IG okuyucusu bota bağlı değil).
+  - Okuyucu hesabı 5 günlük, telefonsuz; 4 gruba üye, 3'ünü okuyor.
+  - En büyük grupta tur başına 25 gönderi sınırına dayanılıyordu, gönderi kaçıyordu (sınır 60 oldu, 73b04b0).
+  - 524 gönderiden 29'u ilan oldu. En büyük kayıp fiyat_yok: 210 gönderi (152 tekil), marka ve yıl var, fiyat yok.
+  - Arama motorları FB gruplarını dizinlemiyor (alt ajan 58 sorguda 0 grup buldu). Grup bulmanın yolu okuyucunun FB araması ya da sahibin linkleri.
+- **Bot tarafı (ana oturum):**
+  - 📞 FİYAT SOR (1ea4dac):
+    - Fiyatsız FB araç gönderisi fiyatsız ilan olarak kaydedilir; sahibe "piyasa ortası + %20 kâr için en çok £X" kartı gider. Hesap domain.decision.ask_value'dadır.
+    - Galeri, tuzak, plaka ve tekrar ilan elenir. Günde ≤15 kart. 🟢 değil.
+    - Kuru çalışma: 2 günde 30 → 8 kart.
+  - FB üst sınırı 8 → 50; sahibin eklediği grup 'aday' + öncelik 1 olur, okuyucu kendisi katılır (fe27947).
+  - Ayrıştırıcı (4e14d6b): tek satırlık FB ilanı "araç değil" sayılmaz; "takas alınır" alım ilanı değildir.
+  - Fotoğraftan fiyat (ef13037):
+    - Okuyucunun kaydettiği görsel kopyası yerelden okunur; ağdan görsel çekilmez. Sonuç 'llm' etiketli.
+    - Kart fiyatı %20 sınırıyla kıyaslar. Sahip onayı 11.10 "Evet, aç"; 09.10'daki "fotoğraftan fiyat okunmasın" kararı değişti.
+  - Keşif (63187c3): açık grup üye olmadan okunur ('aktif' + gölge, günde ≤5); kapalı grup katılma sırasına girer. Günde ≤10 ekleme; var olan kayda dokunulmaz.
+- **Okuyucu tarafı (sosyal oturum):**
+  - Turda en çok 8 grup, fazlası sırayla döner. Gruplar arası bekleme 1,5–3 dk.
+  - Birleşik akış A/B 13.10 ve 14.10'da yapılacak. ≥%90 çıkarsa 30–50 grup saatte bir okunur.
+  - Grup araması: günde ≤4 sorgu; bölge + araç sözcüğü süzgeci.
+  - Katılım takvimi (uyarıda en alta döner):
+    - Telefonsuz: günde 1, 14 gün temizse 2.
+    - Telefonlu: 2 → 7 gün temizse 3 → 14 gün temizse 4.
+  - Katılma sınırı uyarısı yalnız katılımı 72 saat durdurur. Engel ya da kontrol noktası gelirse sert fren.
+- **Sahip kararları (11.10 ~17:30 UTC, ana oturumda doğrudan):**
+  - Fotoğraftan fiyat: EVET.
+  - Okuyucu hesabı: "Mevcut hesapla büyüsün". Eski ya da ana hesap yok.
+- **Sahibe önerilen:**
+  - Hesaba AYRI ön ödemeli hattan telefon eklenmesi. Kişisel numara değil; ekleme okuyucunun kendi tarayıcısında, uzak ekranda yapılır.
+  - Kendisinin ve çevresinin takip ettiği grup linklerini bota atması (öncelik 1).
+- **Sırada:**
+  - 7 günde 0 ilan veren grubu bırakma (pasif; gruptan çıkılmaz) ve sahibe "araç dışı" satırı. İlk keşif gruplarının 7 günü dolunca.
+  - Açık grup üyesiz okunamazsa 'aday'a çevirme (okuyucunun hata kodu bekleniyor).
+  - Modelden marka çıkarımı: önce ölçülecek.
