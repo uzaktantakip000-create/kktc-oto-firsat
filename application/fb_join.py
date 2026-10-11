@@ -149,8 +149,13 @@ DISCOVER_DAY_KEY = "fb_kesif:gun:{}"  # bot_state: o UTC gününde eklenen {"n":
 _NAME_BAD = re.compile(r"[\x00-\x1f\x7f]")
 
 
-def discovery_priority(members, posts_per_day) -> int:
-    """Katılma/okuma önceliği: büyük ve canlı grup önce (sahibin eklediği 1'dir)."""
+def discovery_priority(members, posts_per_day, kind: str | None = "arac") -> int:
+    """Katılma/okuma önceliği: büyük ve canlı grup önce (sahibin eklediği 1'dir). Alım-satım ve öğrenci grupları (keşif "tur":
+    "alim_satim" | "ogrenci"; sosyal oturum 5d81b83) bir basamak geride: gönderilerinin çoğu araç değil, ama ayrılan satıcı oradadır."""
+    return min(5, _size_priority(members, posts_per_day) + (1 if kind in ("alim_satim", "ogrenci") else 0))
+
+
+def _size_priority(members, posts_per_day) -> int:
     m = members if type(members) is int and members >= 0 else 0
     p = posts_per_day if isinstance(posts_per_day, (int, float)) and not isinstance(posts_per_day, bool) and posts_per_day >= 0 else 0
     if m >= 10_000 or (m >= 2_000 and p >= 5):
@@ -200,14 +205,14 @@ def discover(repo, data: dict | None, now: datetime, log=print) -> tuple[int, in
     except (ValueError, TypeError, AttributeError):
         added, opened = 0, 0
     open_n = sources_cmd._open_count(repo, PLATFORM)
-    new.sort(key=lambda d: (discovery_priority(d.get("uye"), d.get("gonderi_gun")), -(d.get("uye") or 0) if type(d.get("uye")) is int else 0))
+    new.sort(key=lambda d: (discovery_priority(d.get("uye"), d.get("gonderi_gun"), d.get("tur")), -(d.get("uye") or 0) if type(d.get("uye")) is int else 0))
     done_open, done_wait = [], []
     for d in new:
         if added >= DISCOVER_PER_DAY:
             break
         public = d["gizlilik"] == "acik" and opened < DISCOVER_OPEN_PER_DAY and open_n < sources_cmd.MAX_OPEN[PLATFORM]
         name = _NAME_BAD.sub(" ", d["ad"]).strip()[:80]
-        if not _insert_discovered(repo, d["anahtar"], name, "aktif" if public else "aday", discovery_priority(d.get("uye"), d.get("gonderi_gun"))):
+        if not _insert_discovered(repo, d["anahtar"], name, "aktif" if public else "aday", discovery_priority(d.get("uye"), d.get("gonderi_gun"), d.get("tur"))):
             continue
         added += 1
         if public:

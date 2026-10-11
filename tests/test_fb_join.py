@@ -227,3 +227,10 @@ def test_a_discovered_public_group_starts_its_shadow_clock(sent, inserted):
     fb_join.discover(repo, kesif(("fb:333", "KKTC Araba Pazarı", 20000, "acik", 30), ("fb:444", "Girne Oto", 800, "kapali", 2)), NOW, log=lambda _: None)
     assert fb_join.SHADOW_KEY.format("fb:333") in repo.state and fb_join.SHADOW_KEY.format("fb:444") not in repo.state
     assert "İlk 3 gün gölgede okunur" in sent[0][1]
+
+
+
+@pytest.mark.parametrize("kind,prio", [("arac", 2), (None, 2), ("alim_satim", 3), ("ogrenci", 3)])
+def test_buy_sell_and_student_groups_come_one_step_later(kind, prio):
+    assert fb_join.discovery_priority(15000, 9, kind) == prio
+    assert fb_join.discovery_priority(100, 0, "ogrenci") == 5
