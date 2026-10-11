@@ -846,3 +846,5 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
 - **Ertelenenler:**
   - Ortağın "pazarlık kozu" (🟢 mesajına yaş/satıcı/açılış teklifi): mesaj biçimi değişikliği, gürültü kapısından sonra.
   - Ava "bireysel" süzgeci: sitelerde satıcı türü çoğunlukla bilinmiyor.
+- **Güven önce (11.10 sabah):** gürültü kapısı + temkinli km (sahip onayı "Evet, açalım") canlıya (f8c48b7, 8514f22; RULES_VERSION 2026-10-11). 🟢 19 → 9; abone 👎'lerinin hiçbiri 🟢 kalmadı. Ayrıntı: DEGER_MOTORU §9.
+- **Kapalı döngü önerisi** (sosyal oturumla ortak, sahibe sunuldu, cevap bekleniyor): 📞 arama kartı ("önce hâlâ satılık mı?", KKTC'ye özgü sabit sorular, açılış/tavan) + 🔁 görüşme sonucu düğmeleri (feedback tablosu; migration yok) → izleme → sabah planı/haftalık huni (mevcut mesajlara bölüm) → stok/satış. Otomatik mesaj/teklif/alım yok.
