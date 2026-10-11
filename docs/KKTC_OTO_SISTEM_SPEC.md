@@ -868,11 +868,11 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
     - Önce (id, eski değer) yedeği alındı: ~/KKTC-yedek/kaa_sehir_oncesi_20261011.json, repo dışı. Son tam yedek 01:43 UTC.
     - Tek UPDATE, autocommit. Yeni bağlantıdan doğrulandı: kalan yanlış 0.
     - Saklanan metinden şehir kurtarılamadı (uzun tireli şehir 0); tahmin yazılmadı.
-  - **BiArabacik: "Evet, ekle" → ölçüldü, BEKLETİLİYOR.**
+  - **BiArabacik: "Evet, ekle" → ölçüldü → sahip vazgeçti, YAPILMAYACAK.**
     - robots.txt yok (404). Site haritası tek istekle okundu (17:1x UTC, tur arası).
     - 1.233 yazı/ilan adresi var, çoğu 2025 tarihli; numaralı 767 adres kategori sayfası.
     - Son ilanlar: Eylül 2026'da 4, Ağustos'ta 1, Temmuz'da ~5; yani ayda ~5, son 60 günde ~8. "Haftada 2–5" tahmini yanlıştı.
-    - 60 günden eski ilan emsal olarak alınmıyor (ortak toplayıcı). Bu yüzden okuyucu yazılmadı; sahibe rakamla söylendi, isterse yazılır.
+    - 60 günden eski ilan emsal olarak alınmıyor (ortak toplayıcı). Sahibe rakamla söylendi; sahip: "Biarabacık bu kadar durgunsa yapma" → YAPILMAYACAK (kaynak aday kalır).
     - Yazılırsa şartlar: açık kimlik (KKTCOtoBot UA, tarayıcı taklidi yok), nazik hız, ilk 3 gün yalnız toplama.
   - **Kapalı döngü: "Hayır, şimdi değil."**
     - Yapılmıyor. Sosyal oturumun önerdiği sıra, sahip isterse plan olarak burada: (a) arama kartı + sonuç düğmeleri (ilk hafta yalnız sahip), (b) sabah özeti, (c) web ilan izleme, (d) stok/satış.
