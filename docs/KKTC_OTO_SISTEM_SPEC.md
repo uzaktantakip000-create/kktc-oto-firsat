@@ -914,3 +914,23 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
   - 7 günde 0 ilan veren grubu bırakma (pasif; gruptan çıkılmaz) ve sahibe "araç dışı" satırı. İlk keşif gruplarının 7 günü dolunca.
   - Açık grup üyesiz okunamazsa 'aday'a çevirme (okuyucunun hata kodu bekleniyor).
   - Modelden marka çıkarımı: önce ölçülecek.
+- **Sahip kararları (11.10 ~18:50–19:05 UTC, ana oturumda doğrudan):**
+  - Fiyatsız kart İSTENMEDİ: "zaten arayıp soruyoruz; önemli olan bütün piyasayı tarayıp fiyatı olanları bulup iletmek" (0c32be1). Kart yalnız fotoğraftaki fiyat %20 sınırının altındaysa gider (🖼 FOTOĞRAFTA FİYAT). Fiyatsız kayıt tutulur, kart almaz.
+  - Facebook fırsatları açıldı: 4 grup `yesil` (veritabanında elle, yedekle; doğrulandı). Sahibin bottan eklediği grup doğrudan `yesil`; keşifle gelen grup 3 gün gölge, sonra kendiliğinden `yesil` (EUR payı >%30 ise sahibe sorulur).
+  - İhaleler elendi ("mantıksız"). Sahibin mantığı: "insanlar FB'de, IG'de, sitelerde acil satıyor, adadan ayrılmak için vs; en erken bulan kazanır, tabii nereye baktığını bilen."
+  - Hız: tek erken tur (06:30) yerine "daha iyisi olabilir". Ortak öneriye iki EVET:
+    - Gece okuması: okuma 07:00–24:00 + gece 02:30–05:30 arası tek okuma. Telefon eklenip 14 gün temiz geçerse 2 okuma.
+    - Açık sekme denemesi: okuyucu FB'yi gündüz bir sekmede açık tutar, gruplarda "All posts" bildirimi; yeni bildirim sayfaya kendiliğinden düşer (ek sayfa yüklemesi yok), yalnız markalı bildirimin gönderisi açılır. 14–16.10 2–3 grupta; ölçüt kapsama ≥%90 ve gecikme; sonuç sahibe; iyiyse ~17.10 tüm araç grupları.
+    - Bildirim sayfasını 10–15 dk'da bir yenilemek ÖNERİLMEDİ (günde 60–90 yükleme, genç hesap; bildirimde fiyat yok).
+    - Hedef: gönderi paylaşıldıktan en geç 15 dk sonra sahibin telefonunda. En büyük risk tek hesabın kaybı; her yeni davranış önce küçük denenir, uyarıda okuyucu kendiliğinden geri çekilir.
+- **⚡ ACİL SATICI (91d27a0):** her değerlendirmeden sonra, o turda değerlendirilen ilanlardan:
+  - ilanda satıcının acelesi yazan (domain.red_flags.MOTIVATED: acil / ayrılıyor-mezun / nakit-borç; "pazarlık" sayılmaz),
+  - bireysel (galeri değil), gölge kaynakta değil, tuzak metni yok, taze (≤6 saat),
+  - fiyatı piyasa ortasının en az %10 altında (≥5 emsal; yarısından ucuzsa yanlış fiyat sayılır) olan ilan sahibe hemen yazılır.
+  - Mesaj %20 kâr için en çok ödenecek tutarı ve pazarlıkla ne kadar inmesi gerektiğini söyler. 🟢 olan ilan zaten 🟢 gider. Günde ≤8, ilan başına bir kez, yalnız sahip.
+- **Facebook hızlı şerit (bot tarafı, sosyal oturumla ortak tasarım; kod hazır, birim 14.10 A/B'den sonra açılır):**
+  - VPS'te `kktc-fb-fast.path` devir klasörünü izler (PathChanged). Okuyucu satır yazınca `entrypoints/fb_fast` çalışır: 20 sn birleşme beklemesi → aktarım → yalnız az önce aktarılan ilanların gruplarında mükerrer taraması (aynı aracın başka gruptaki paylaşımı iki kez gitmesin) → yalnız bu ilanların değerlendirmesi → gönderim (🟢/🟠 yalnız Facebook, ⚡ ACİL SATICI, 🖼, 🎯 av).
+  - Kilitler turla ortak: aktarım "sosyal_devir", değerlendirme "evaluate" (hızlı şerit en çok 4 dk, tur en çok 90 sn bekler; tur artık atlanmaz).
+  - Turun yan işleri (bakım, raporlar, sağlık, tam taramalar, kaynaklar arası ikizler, sitelerin canlılık kontrolü) hızlı şeritte YOK; kaçan her şeyi 15 dakikalık tur yakalar.
+  - Veritabanı çıkışı: her okuma "az önce aktarılanlar"la daralır (ölçüm 11.10: tam hızlı tur okumaları ~100 KB; daraltılmış hali birkaç KB + emsal havuzu). Günde ≤400 çalışma.
+- **Araştırma notu (11.10, alt ajanlar):** taranan sitelere ajanlar sayfa isteği attı (kural ihlali; sahibe söylendi, kural sıkılaştırıldı: ajan istemlerinde taranan siteler AÇIKÇA "erişme" listesinde). Bulgu: fırsatın kaynağı ucuz ilan değil, acelesi olan bireysel satıcı + ilk bulan olmak → ⚡ ACİL SATICI ve hız işleri.
