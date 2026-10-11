@@ -345,6 +345,12 @@ def handoff_check(repo, now: datetime, path: str | None = None) -> None:
     handoff_watch.watch(repo, read_social(path), now)
 
 
+def join_check(repo, now: datetime, path: str | None = None) -> None:
+    """Her VPS turunda (gece de): okuyucunun Facebook grubu katılım sonuçları (application/fb_join). Durum dosyası yoksa/alan yoksa hiçbir şey."""
+    from application import fb_join  # tembel: kaynak yönetiminin bağımlılıkları yalnız VPS turunda yüklenir
+    fb_join.check(repo, read_social(path), now)
+
+
 def after_tick(repo, beat_written: bool, now: datetime | None = None) -> None:
     """tick.py'nin son adımı (hata yutar). GitHub (atlamadan tarayan tur): sunucu turları durduysa uyarı.
     VPS: kalp atışı yazıldıysa kesinti sonu bildirimi; her VPS turunda (değerlendirme çökse de) dinleyici bekçisi, disk/bellek ve sosyal okuyucu kontrolü."""
@@ -358,6 +364,7 @@ def after_tick(repo, beat_written: bool, now: datetime | None = None) -> None:
         _safe("kaynak izleme", lambda: resource_watch(repo, now))
         _safe("sosyal okuyucu uyarısı", lambda: social_watch(repo, now))
         _safe("sosyal devir izleme", lambda: handoff_check(repo, now))
+        _safe("facebook katılım", lambda: join_check(repo, now))
 
 
 def after_browser(repo, beat_written: bool, now: datetime | None = None) -> None:
