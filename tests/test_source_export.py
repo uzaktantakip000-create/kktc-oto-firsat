@@ -27,7 +27,8 @@ def test_export_build_keeps_closed_rows_and_skips_bad_ones():
 
 def test_facebook_candidates_are_written_for_the_reader_to_join_but_never_closed_or_excluded_ones():
     """11.10.2026: okuyucu "aday" Facebook gruplarına kendisi katılır (application/fb_join). Aynı grubun kapalı satırı adayı ezer;
-    dışarıda tutulan/erişilemeyen grup hiç yazılmaz; Instagram adayı ve Marketplace yazılmaz."""
+    dışarıda tutulan/erişilemeyen grup aday yazılmaz, "disari" yazılır (12.10.2026: okuyucu onu keşifte yeniden bildirmesin);
+    Instagram adayı ve Marketplace yazılmaz."""
     rows = [src("f1", "facebook", "Aday", "https://www.facebook.com/groups/111/", status="aday", priority=1),
             src("f2", "facebook", "Kapalı", "https://www.facebook.com/groups/222/", status="aday", priority=1),
             src("f3", "facebook", "Kapalı", "https://www.facebook.com/groups/222/", status="pasif", priority=5),
@@ -38,7 +39,12 @@ def test_facebook_candidates_are_written_for_the_reader_to_join_but_never_closed
             src("f8", "facebook", "Market", "https://www.facebook.com/marketplace/1/cars/", status="aday", priority=2),
             src("f9", "facebook", "Reddeden", "https://www.facebook.com/groups/555/", status="erisim_reddediyor"),
             src("i1", "instagram", "aday.hesap", "https://www.instagram.com/aday.hesap/", status="aday")]
-    assert [(i["anahtar"], i["durum"]) for i in source_export.build(rows)] == [("fb:111", "aday"), ("fb:444", "aktif"), ("fb:222", "pasif")]
+    assert [(i["anahtar"], i["durum"]) for i in source_export.build(rows)] == [("fb:111", "aday"), ("fb:333", "disari"), ("fb:444", "aktif"),
+                                                                             ("fb:222", "pasif"), ("fb:555", "disari")]
+    ig_out = src("i2", "instagram", "kapali.hesap", "https://www.instagram.com/kapali.hesap/", status="disari")
+    assert source_export.build([ig_out]) == []  # Instagram'da keşif yok: dışarıdaki hesap yazılmaz
+    both = [src("f1", "facebook", "Açık", "https://www.facebook.com/groups/666/"), src("f2", "facebook", "Dışarı", "https://www.facebook.com/groups/666/", status="disari")]
+    assert [i["durum"] for i in source_export.build(both)] == ["aktif"]  # aynı grubun açık satırı okumaya devam eder (bugünkü davranış)
 
 
 class ExportRepo:

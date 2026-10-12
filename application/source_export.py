@@ -3,9 +3,11 @@ yönde, sosyal oturumla anlaşılan sözleşme). Tek doğru liste veritabanında
 bağlanmaz, bu dosyayı okur. Dosya yoksa/bozuksa okuyucu kendi son iyi listesiyle devam eder.
 
 Biçim (surum 1): {"surum": 1, "yazildi_utc": ISO, "kaynaklar": [{"anahtar": "ig:<kullanıcı>" | "fb:<grup>", "platform", "kullanici" | "grup",
-"url", "ad", "oncelik", "durum": "aktif" | "pasif" | "aday"}]}. Kapatılan kaynak "pasif" olarak listede KALIR (okuyucu "okuma" bilgisini açıkça alır).
-"aday" (11.10.2026, sahip: "gruba katılma senin kararınla olsun"): okuyucunun KATILABİLECEĞİ Facebook grubu; okunmaz. Katılınca sonuç durum
-dosyasından gelir ve bot grubu açar (application/fb_join). Sahibin kapattığı/dışarıda tuttuğu grup aday yazılmaz; Instagram adayı yazılmaz.
+"url", "ad", "oncelik", "durum": "aktif" | "pasif" | "aday" | "disari"}]}. Kapatılan kaynak "pasif" olarak listede KALIR (okuyucu "okuma"
+bilgisini açıkça alır). "aday" (11.10.2026, sahip: "gruba katılma senin kararınla olsun"): okuyucunun KATILABİLECEĞİ Facebook grubu; okunmaz.
+Katılınca sonuç durum dosyasından gelir ve bot grubu açar (application/fb_join). Sahibin kapattığı/dışarıda tuttuğu grup aday yazılmaz;
+Instagram adayı yazılmaz. "disari" (12.10.2026, sosyal oturum 53e8ba4): sahibin dışarıda tuttuğu ya da erişilemeyen Facebook grubu; okunmaz,
+katılınmaz, okuyucunun keşif listesine yeniden yazılmaz (yazılsaydı botun okuma sınırı olan ilk 200 satırda 14 gün yer tutardı).
 Yalnız VPS turunda yazılır (klasör yalnız orada var: kktc-tick.service StateDirectory); GitHub/yerelde hiçbir şey yapılmaz. Veritabanı
 okunamazsa dosyaya dokunulmaz (eski liste kalır). İçerik değişmediyse yeniden yazılmaz (yazildi_utc yalnız gerçek değişiklikte ilerler).
 Atomik yazılır (aynı klasörde geçici dosya + rename): okuyucu yarım dosya görmez."""
@@ -22,16 +24,18 @@ SOCIAL = ("instagram", "facebook")
 OPEN = ("aktif", "deneme")
 CANDIDATE = "aday"
 NEVER = ("disari", "erisim_reddediyor")  # sahibin istemediği/erişilemeyen grup: aday olarak da yazılmaz
-RANK = {"aktif": 2, "pasif": 1, "aday": 0}  # aynı anahtarda: açık > kapalı > aday
+OUT = "disari"  # NEVER Facebook grubunun dosyadaki durumu (Instagram'da keşif yok: yazılmaz)
+RANK = {"aktif": 3, "pasif": 2, OUT: 1, "aday": 0}  # aynı anahtarda: açık > kapalı > dışarıda > aday
 
 
 def build(rows: list[dict]) -> list[dict]:
     """Saf: sources satırlarından dosya kayıtları. Geçerli hesap/grup adresi olmayan satır atlanır; aktif/deneme "aktif", Facebook adayı "aday",
-    öbür durumlar "pasif" yazılır. Aynı anahtar iki kez varsa açık > kapalı > aday. Anahtarın dışarıda/erişilemez satırı varsa aday yazılmaz."""
+    dışarıda/erişilemez Facebook grubu "disari", öbür durumlar "pasif" yazılır. Aynı anahtar iki kez varsa açık > kapalı > dışarıda > aday.
+    Anahtarın dışarıda/erişilemez satırı varsa aday yazılmaz."""
     out: dict[str, dict] = {}
     never = {key_of_url(r["platform"], r["url"]) for r in rows if r["status"] in NEVER and r["platform"] in SOCIAL}
     for r in rows:
-        if r["status"] in NEVER or (r["status"] == CANDIDATE and r["platform"] != "facebook"):
+        if r["status"] in (*NEVER, CANDIDATE) and r["platform"] != "facebook":
             continue
         if r["platform"] not in SOCIAL:
             continue
@@ -42,7 +46,7 @@ def build(rows: list[dict]) -> list[dict]:
         item = {"anahtar": key, "platform": r["platform"], ("kullanici" if r["platform"] == "instagram" else "grup"): handle,
                 "url": (f"https://www.instagram.com/{handle}/" if r["platform"] == "instagram" else f"https://www.facebook.com/groups/{handle}/"),
                 "ad": r["name"], "oncelik": r["priority"] if type(r["priority"]) is int else 99,
-                "durum": "aktif" if r["status"] in OPEN else (CANDIDATE if r["status"] == CANDIDATE else "pasif")}
+                "durum": "aktif" if r["status"] in OPEN else CANDIDATE if r["status"] == CANDIDATE else OUT if r["status"] in NEVER else "pasif"}
         if key not in out or RANK[item["durum"]] > RANK[out[key]["durum"]]:
             out[key] = item
     return sorted(out.values(), key=lambda x: (x["platform"], x["oncelik"], x["anahtar"]))
