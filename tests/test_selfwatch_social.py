@@ -71,6 +71,7 @@ def test_the_agreed_path_and_thresholds(monkeypatch):
     assert selfwatch.SOCIAL_STATUS_PATH == "/var/lib/kktc-social-durum/durum.json" and selfwatch.SOCIAL_SCHEMA == 1
     assert selfwatch.SOCIAL_DAY == (7, 24)  # okuyucu 91a454f: gündüz 07–24 + gece tek okuma (gece beklenmez)
     assert selfwatch.SOCIAL_SILENT_AFTER == 5 * H and selfwatch.SOCIAL_FILE_STALE == H and selfwatch.SOCIAL_REPEAT_H == 24
+    assert selfwatch.SOCIAL_FILE_MAX == 256 * 1024  # okuyucu 60.000 baytın altında tutar; 50 grup + sayaçlar sığar
 
 
 # --- dosya okuma: sağlamlık ---------------------------------------------------------------------------------------------------
@@ -80,6 +81,8 @@ GOOD = {"platformlar": {}, "surum": 1, "yazildi_utc": "2026-10-07T11:20:02+00:00
 def test_read_social_returns_the_parsed_document(social):
     assert selfwatch.read_social(social(GOOD)) == GOOD
     assert selfwatch.read_social() == GOOD  # yol verilmezse modül sabiti (çağrı anında aranır)
+    big = {**GOOD, "x": "a" * 100_000}  # 64 KB'tan büyük (eski sınır), 256 KB'tan küçük: okunur
+    assert selfwatch.read_social(social(big)) == big
 
 
 @pytest.mark.parametrize("content", [
@@ -89,7 +92,7 @@ def test_read_social_returns_the_parsed_document(social):
     json.dumps({**GOOD, "surum": 1.0}), json.dumps({**GOOD, "surum": None}), json.dumps({"surum": 1}),
     json.dumps({**GOOD, "platformlar": []}), json.dumps({**GOOD, "platformlar": None}), json.dumps({**GOOD, "platformlar": "instagram"}),
     b"\xff\xfe\x00\x01",  # geçersiz UTF-8
-    '{"surum": 1, "platformlar": {}, "x": "' + "a" * 70000 + '"}',  # sınırdan büyük: kesilir, JSON bozulur
+    '{"surum": 1, "platformlar": {}, "x": "' + "a" * 270000 + '"}',  # sınırdan büyük: kesilir, JSON bozulur
     "[" * 60000,  # aşırı iç içe
 ], ids=lambda c: repr(c)[:30])
 def test_read_social_gives_none_for_every_bad_shape(social, content):

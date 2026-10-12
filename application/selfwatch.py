@@ -49,6 +49,8 @@ GH_BROWSER_MAX_AGE = timedelta(hours=5)  # aynısı collect-browser için (2 saa
 BACKUP_MAX_AGE = timedelta(days=8)  # sabah satırı: haftalık veritabanı yedeği bundan eskiyse ⚠️
 SOCIAL_STATUS_PATH = "/var/lib/kktc-social-durum/durum.json"  # sosyal okuyucunun durum dosyası (~20 dk'da bir, yalnız VPS'te); çağrı anında aranır: testler değiştirir
 SOCIAL_SCHEMA = 1  # dosyadaki "surum"; başkası = biçim değişmiş, okunmaz (satır da uyarı da yok)
+SOCIAL_FILE_MAX = 256 * 1024  # dosyanın okunan en çok baytı; fazlası kesilir, JSON bozulur, dosya okunmaz (12.10.2026: 64 KB'tı; okuyucu kaynak
+# başına sayaç ekledi, 50 grupta ~60 KB olur; okuyucu kendi tarafında 60.000 baytı aşmamaya çalışır)
 # Okuyucunun tur attığı KKTC gündüzü, saat olarak [07:00, 24:00) (sosyal oturum 91a454f, 11.10.2026: gündüz 07–24 + gece 02:30–05:30 arası tek
 # okuma; önceden [08:00, 23:00)). Gece boşluğu "susma" sayılmaz (gece okuması da beklenmez), uyarı da yalnız bu saatlerde gider.
 SOCIAL_DAY = (7, 24)
@@ -300,7 +302,7 @@ def read_social(path: str | None = None) -> dict | None:
     sosyal taraf kurulu olmayabilir). Dosya yazarı tarafından yeniden adlandırılarak (tmp+rename) yazılır: yarım dosya okunmaz."""
     try:
         with open(path or SOCIAL_STATUS_PATH, encoding="utf-8") as f:
-            data = json.loads(f.read(65536))
+            data = json.loads(f.read(SOCIAL_FILE_MAX))
     except (OSError, ValueError, RecursionError):  # ValueError: bozuk JSON ve UTF-8
         return None
     ok = isinstance(data, dict) and type(data.get("surum")) is int and data["surum"] == SOCIAL_SCHEMA and isinstance(data.get("platformlar"), dict)
