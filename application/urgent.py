@@ -14,8 +14,9 @@ import json
 from datetime import datetime, timezone
 
 from application.notify import is_fresh
-from domain.kktc_time import to_kktc
 from domain.data_gate import FIELD_PRICE
+from domain.decision import CONFUSABLE_CURRENCIES
+from domain.kktc_time import to_kktc
 from domain.profit import Tier, buy_ceiling
 from domain.red_flags import MOTIVATED
 from domain.settings import Settings
@@ -53,6 +54,9 @@ def candidates(evaluated: list, s: Settings, now: datetime) -> list:
             continue
         if price < m.median_gbp * s.absurd_price_ratio:
             continue  # piyasanın yarısından ucuz: büyük olasılıkla yanlış fiyat (🟢 de vermez)
+        if l.get("currency") in CONFUSABLE_CURRENCIES and l.get("price_amount") and float(l["price_amount"]) > m.median_gbp * MAX_RATIO:
+            continue  # USD/EUR: aynı rakam STG olsaydı ucuz değil, ucuzluk yalnız kur çevriminden (Auris dersi; 13.10.2026: Facebook satış
+            # kutusu Kıbrıs'ta fiyatı € gösteriyor, satıcı STG/TL düşünüyor olabilir)
         if s.max_buy_gbp is not None and price > s.max_buy_gbp:
             continue
         if not is_fresh(l["first_seen_at"], l.get("posted_at"), now=now, fresh_hours=FRESH_HOURS, price_changed_at=l.get("price_changed_at"),

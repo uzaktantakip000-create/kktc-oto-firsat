@@ -57,6 +57,7 @@ def test_urgent_individual_seller_ten_percent_under_market_gets_an_instant_messa
     dict(blocking=["hasarlı"]),
     dict(first_seen_at=NOW - timedelta(hours=7)),  # taze değil
     dict(brand_norm="Nissan"),  # /istemiyorum
+    dict(currency="EUR", price_amount=8800),  # €8.800 ≈ £7.600: ucuzluk yalnız kurdan, aynı rakam STG olsa piyasa ortası (13.10.2026)
 ])
 def test_not_urgent_not_cheap_dealer_shadow_green_trap_or_old_gets_nothing(kw):
     s = Settings(blocked_brands=["Nissan"])
@@ -73,6 +74,11 @@ def test_cheapest_first_once_per_listing_and_daily_cap(monkeypatch):
     monkeypatch.setattr(urgent, "MAX_PER_DAY", 4)
     assert urgent.run(repo, [ev("d"), ev("e")], sent.append, Settings(), NOW) == 1  # günde en çok 4
     assert json.loads(repo.state[urgent.SENT_KEY]) == ["b", "c", "a", "d"]
+
+
+def test_a_eur_price_that_is_cheap_even_read_as_sterling_still_counts():
+    (picked,) = urgent.candidates([ev(currency="EUR", price_amount=7600)], Settings(), NOW)  # £7.600 olarak da piyasanın %16 altında
+    assert picked.listing["currency"] == "EUR"
 
 
 def test_tl_priced_listing_shows_the_original_price():
