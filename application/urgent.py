@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from application.notify import is_fresh
 from domain.kktc_time import to_kktc
+from domain.data_gate import FIELD_PRICE
 from domain.profit import Tier, buy_ceiling
 from domain.red_flags import MOTIVATED
 from domain.settings import Settings
@@ -123,6 +124,6 @@ def run(repo, evaluated: list, send, s: Settings, now: datetime | None = None, s
     for ev in picked:
         text = message(ev, s, now)
         send(text)
-        if share is not None and worth_sharing(ev, s):
-            share(text)
+        if share is not None and worth_sharing(ev, s) and FIELD_PRICE not in (ev.listing.get("urgency_signals") or []):
+            share(text)  # fiyatı yalnız Facebook satış kutusundan gelen ilan doğrulanana dek yalnız sahibe
     return len(picked)

@@ -34,6 +34,8 @@ OPEN_STATUSES = ("aktif", "deneme")
 ALL_STATUSES = ("aktif", "deneme", "aday", "pasif", "disari", "erisim_reddediyor")
 MAX_LINES = 2000  # tur başına üst sınır (kalan bir sonraki tura)
 MAX_TEXT = 8000
+EXTRA_MAX_LINES = 8  # "ek_metin": satış kutusu satırları (sosyal oturum 13.10.2026: ≤8 satır, satır ≤120 karakter)
+EXTRA_LINE_MAX = 120
 MAX_RADAR = 10_000  # satıcı radarı sayısının makul üst sınırı (bozuk değer yok sayılır)
 _FILE = re.compile(r"^facebook-\d{8}\.jsonl$")
 _GROUP = re.compile(r"^[a-z0-9._-]{1,64}$")  # kaynaklar.json grup anahtarı (social_files._FB_GROUP ile aynı)
@@ -58,6 +60,7 @@ class ImportReport:
     posts: int = 0  # geçerli gönderi (ayrıştırmaya giden)
     new_listings: int = 0  # yeni yazılan ilan (fiyatsızlar dahil)
     priceless: int = 0  # bunlardan fiyatı yazmayan araç gönderisi (fiyatsız ilan, "📞 FİYAT SOR")
+    field_price: int = 0  # fiyatı yalnız Facebook satış kutusunda yazan ilan ("fiyat_alani": en fazla 🟡, emsal olmaz)
     not_listing: dict[str, int] = field(default_factory=dict)  # ilan sayılmayan gönderilerin nedeni (diagnose)
     skipped: dict[str, int] = field(default_factory=dict)  # bozuk_satir / surum / platform / alan / bilinmeyen_anahtar / kaynak_kapali
     sources: int = 0  # satırı olan kaynak
@@ -68,6 +71,7 @@ class ImportReport:
             return ["sosyal devir: yeni satır yok"]
         out = [f"sosyal devir: {self.lines} satır, {self.posts} gönderi, {self.sources} kaynak, {self.new_listings} yeni ilan"
                + (f" ({self.priceless} fiyatsız)" if self.priceless else "")
+               + (f" ({self.field_price} fiyatı satış kutusundan)" if self.field_price else "")
                + (" (kalan var, sonraki turda)" if self.pending else "")]
         if self.not_listing:
             out.append("  ilan değil: " + ", ".join(f"{k}={v}" for k, v in sorted(self.not_listing.items())))
@@ -121,6 +125,16 @@ def _parse_time(value) -> datetime | None:
     return t if t.tzinfo is not None else None
 
 
+def _extra_text(value) -> str | None:
+    """Devir "ek_metin" alanı: boş olmayan satırlar, en çok EXTRA_MAX_LINES; sınırdan uzun satır atılır. Dize değilse ya da boşsa None
+    (satır yine aktarılır: alan isteğe bağlı)."""
+    if not isinstance(value, str):
+        return None
+    lines = [ln.strip() for ln in value.split("\n")]
+    keep = [ln for ln in lines if ln and len(ln) <= EXTRA_LINE_MAX and ln.isprintable()][:EXTRA_MAX_LINES]
+    return "\n".join(keep) or None
+
+
 def parse_line(line: str) -> tuple[str, SocialPost] | str:
     """Satır -> (anahtar, gönderi) ya da atlama nedeni. Gönderinin grup anahtarı (source_key) DB satırına eşlenirken doldurulur."""
     try:
@@ -144,7 +158,8 @@ def parse_line(line: str) -> tuple[str, SocialPost] | str:
     post = SocialPost(platform=PLATFORM, source_key=group, post_id=pid, url=f"https://www.facebook.com/groups/{group}/posts/{pid}/",
                       posted_at=_parse_time(doc.get("paylasim_utc")) or _parse_time(doc.get("goruldu_utc")), text=text[:MAX_TEXT],
                       image_url=image,
-                      seller_posts_14d=radar if type(radar) is int and 1 <= radar <= MAX_RADAR else None)
+                      seller_posts_14d=radar if type(radar) is int and 1 <= radar <= MAX_RADAR else None,
+                      extra_text=_extra_text(doc.get("ek_metin")))
     return key, post
 
 
@@ -219,6 +234,7 @@ def import_facebook(repo, devir_dir: Path | str, *, limit: int = MAX_LINES, log:
         rep.posts += st.fetched
         rep.new_listings += st.new
         rep.priceless += st.priceless
+        rep.field_price += st.field_price
         for why, n in st.reasons.items():
             _count(rep.not_listing, why, n)
         latest = max((p.posted_at for p in posts if p.posted_at), default=None)

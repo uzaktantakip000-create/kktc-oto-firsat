@@ -200,6 +200,8 @@ class Repository:
                       COALESCE(posted_at, data_as_of, first_seen_at) AS ref_date
                FROM listings WHERE price_gbp IS NOT NULL AND brand_norm IS NOT NULL
                  AND COALESCE(extraction_by, '') <> 'llm'  -- yapay zekâ okuması emsal olmaz
+                 -- fiyatı yalnız Facebook satış kutusunda yazan ilan (13.10.2026) emsal olmaz: yer tutucu fiyat havuzu bozmasın
+                 AND NOT ('fiyat_alani' = ANY(COALESCE(urgency_signals, ARRAY[]::text[])))
                  AND karantina_nedeni IS NULL
                  AND COALESCE(posted_at, data_as_of, first_seen_at) > NOW() - make_interval(days => %s)
                  -- oyla "yanlış" denen ilan emsal olmaz: herkes eşit, en az 2 kişi ve çoğunluk; sahibin denetimi tek başına yeter

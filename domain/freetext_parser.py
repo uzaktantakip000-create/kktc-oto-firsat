@@ -108,6 +108,13 @@ def _price(lines: list[str]) -> tuple[float, str, str] | None:
     return None
 
 
+def body_price(text: str) -> tuple[float, str] | None:
+    """Metnin kendi fiyatı (tutar, para birimi), parse_freetext ile aynı kural (telefon atılır, tek/ipuçlu tutar). Facebook satış kutusu
+    satırlarının (devir "ek_metin") eklenmediği gövde için: fiyat yalnız kutudan mı geldi? (application/social_ingest, 13.10.2026)"""
+    price = _price(_clean_lines(_PHONE.sub(" ", text or "")))
+    return (price[0], price[1]) if price else None
+
+
 def _km_value(token: str) -> int | None:
     m = re.fullmatch(r"(\d{1,3})[^\S\n]*(?:bin|k)", token, re.I)
     digits = int(m.group(1)) * 1000 if m else int(re.sub(r"[.,]", "", token))

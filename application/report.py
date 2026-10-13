@@ -47,7 +47,8 @@ SHORT_REASON = {"km_yuksek": "km yüksek", "tl_fiyat": "fiyat TL (TL ilanlar ucu
                 "ucuz_ceyrek_degil": "benzerlerin en ucuz çeyreğinde değil", "para_birimi_tahmin": "para birimi yazmıyor", "para_birimi_supheli": "USD/EUR yazıyor, STG olabilir",
                 "fiyat_gurultu": "fiyat farkı olağan dağınıklık içinde", "km_temkinli": "km yok, yüksek km'yle fırsat değil",
                 "model_yok": "model okunamadı", "plaka_uyari": "TR/yabancı plaka", "sessiz_model": "sessize aldığın model",
-                "deger_supheli": "değer tablosu yeni değişti", "llm_okudu": "yapay zekâ okudu"}
+                "deger_supheli": "değer tablosu yeni değişti", "llm_okudu": "yapay zekâ okudu",
+                "fiyat_alani": "fiyat yalnız FB satış kutusunda"}
 PLATFORM_NAMES = {"instagram": "Instagram", "facebook": "Facebook"}
 VOTE_ASK_OWNER = "Sistemi senin oylarınla ölçüyorum: her birine 👍 (işe yarar) ya da 👎 (yanlış) bas; aşağıdaki numaralı düğmeler de olur."
 VOTE_ASK_SUBSCRIBER = "Her birine 👍 (işe yarar) ya da 👎 (yanlış) bas; oyun kaydedilir. Aşağıdaki numaralı düğmeler de olur."

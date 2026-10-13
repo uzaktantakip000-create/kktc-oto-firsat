@@ -518,6 +518,15 @@ def test_market_pool_carries_currency_so_the_tl_rule_can_work(db):
     assert sorted(got.values()) == ["GBP", "TRY"]
 
 
+def test_market_pool_leaves_out_prices_read_only_from_the_facebook_sale_box(db):
+    """13.10.2026: fiyatı yalnız Facebook satış kutusunda yazan ilan ("fiyat_alani") emsal olmaz; öbür işaretler ve işaretsiz satırlar kalır."""
+    c, sid = db.conn, add_source(db.conn, platform="facebook")
+    add_listing(c, sid, "kutu", urgency_signals=["fiyat_alani"])
+    keep = {add_listing(c, sid, "acil", urgency_signals=["acil"]), add_listing(c, sid, "yok", urgency_signals=None),
+            add_listing(c, sid, "bos", urgency_signals=[])}
+    assert {r["id"] for r in db.market_pool(days=120)} == keep
+
+
 def test_renormalize_dry_candidates_apply_and_undo(db):
     c, sid = db.conn, add_source(db.conn)
     cx5 = add_listing(c, sid, "a", brand="Mazda", model="CX-5 2.0 Skyactiv-G", brand_norm="Mazda", model_norm="cx")  # eski anahtar

@@ -15,7 +15,8 @@ from application.collect_instagram import listing_data as instagram_listing_data
 from application.llm_reader import LlmReader, listing_fields
 from application.social_port import ListingSink, SocialPost, SocialSource
 from domain.caption_parser import is_sold_post, sold_ilan_no
-from domain.freetext_parser import diagnose
+from domain.data_gate import FIELD_PRICE  # fiyat yalnız Facebook satış kutusunda: ilk hafta en fazla 🟡, emsal olmaz
+from domain.freetext_parser import body_price, diagnose
 from infrastructure.collectors.facebook_groups import RawGroupPost
 from infrastructure.collectors.instagram_apify import RawPost
 
@@ -32,6 +33,7 @@ class IngestStats:
     photo_candidates: int = 0  # fiyat yazıda yok ama fotoğraf var (okuyucu bağlıysa fotoğraftan okunabilir)
     sold: int = 0  # "SATILDI" paylaşımı (Instagram)
     priceless: int = 0  # fiyatı yazmayan araç gönderisi fiyatsız ilan olarak yazıldı ("📞 FİYAT SOR"; yalnız priceless=True çağrıda)
+    field_price: int = 0  # fiyat yalnız Facebook satış kutusundan ("fiyat_alani"; ilk hafta en fazla 🟡)
     reasons: dict[str, int] = field(default_factory=dict)  # ilan sayılmayan gönderilerin nedeni + fotoğraf okuma sayaçları
 
 
@@ -62,8 +64,17 @@ def steering_hint(source: SocialSource) -> dict:
 
 
 def raw_group_post(post: SocialPost, source: SocialSource) -> RawGroupPost:
-    return RawGroupPost(post_id=post.post_id, url=post.url, posted_at=post.posted_at, text=post.text,
+    text = f"{post.text}\n{post.extra_text}" if post.extra_text else post.text  # satış kutusunun başlık/fiyat/konum satırları da okunur
+    return RawGroupPost(post_id=post.post_id, url=post.url, posted_at=post.posted_at, text=text,
                         group_url=source.url, image_url=post.image_url)
+
+
+def price_only_in_field(post: SocialPost, data: dict) -> bool:
+    """Okunan fiyat gövdenin kendi fiyatı değil (gövdede fiyat yok ya da farklı): fiyat satış kutusundan geldi. Satış kutusunda fiyat
+    zorunlu olduğundan yer tutucu ("£1") ya da dikkat çekmek için düşük yazılmış olabilir: önce ölçülür, 🟢 sonra açılır (13.10.2026)."""
+    if not post.extra_text or data.get("price_amount") is None or data.get("extraction_by") == "llm":
+        return False
+    return body_price(post.text) != (data["price_amount"], data["currency"])
 
 
 def raw_instagram_post(post: SocialPost, source: SocialSource) -> RawPost:
@@ -153,6 +164,9 @@ def ingest_facebook(posts: Iterable[SocialPost], source: SocialSource, sink: Lis
                     why = "okunamadi" if why == "ok" else why  # tanı "okunur" dedi ama kural okuyamadı
                     st.skipped += 1
                     _count(st.reasons, why)
+            if data is not None and price_only_in_field(post, data):
+                data["urgency_signals"] = [*(data.get("urgency_signals") or []), FIELD_PRICE]
+                st.field_price += 1
             kind = seller_kind(getattr(post, "seller_posts_14d", None))
             if data is not None and kind is not None:
                 data["seller_type"] = kind

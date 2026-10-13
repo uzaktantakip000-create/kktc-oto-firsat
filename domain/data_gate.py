@@ -28,7 +28,9 @@ GAP_LABELS = {
     "deger_supheli": "değer tablosu bu modelde yeni değişti, bekleniyor",
     "tahmini_az_emsal": "az emsal: değer tablosu eğrisinden tahmin",
     "llm_okudu": "kural okuyamadı, yapay zekâ okudu (kontrol et)",
+    "fiyat_alani": "fiyat yalnız Facebook'un satış kutusunda yazıyor (yer tutucu ya da dikkat çekmek için düşük yazılmış olabilir; kontrol et)",
 }
+FIELD_PRICE = "fiyat_alani"  # application/social_ingest.FIELD_PRICE ile aynı işaret (listings.urgency_signals)
 GAP_LABELS.update(MISMATCH_LABELS)
 
 
@@ -63,6 +65,8 @@ def data_gaps(listing: dict, market: Market, settings: Settings | None = None, n
         gaps.append("model_belirsiz")  # farklı modeller aynı anahtarda (geçici yama; kalıcısı model adı tablosu)
     if listing.get("extraction_by") == "llm":
         gaps.append("llm_okudu")  # yapay zekâ okuması tek başına 🟢 vermez
+    if FIELD_PRICE in (listing.get("urgency_signals") or []):
+        gaps.append(FIELD_PRICE)  # fiyat yalnız Facebook satış kutusunda (13.10.2026): ölçülene dek tek başına 🟢 vermez
     km, med = effective_km(listing, today), market.median_km
     if km and med and market.near_n is None and km > med * s.km_high_ratio and km - med >= s.km_high_margin:
         gaps.append("km_yuksek")  # yalnız km'ye göre DÜZELTİLMEMİŞ piyasada (07.10.2026): düzeltilmiş fiyatta yüksek km zaten düşülmüş; yüksek km'li

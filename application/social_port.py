@@ -55,6 +55,9 @@ class SocialPost:
     # yalnız Facebook devir satırı (satıcı radarı, sosyal oturum 10.10.2026): gönderideki telefonun son 14 günde geçtiği FARKLI gönderi sayısı
     # (aynı ilanın yeniden paylaşımı bir sayılır; telefon yazılmaz). Telefon yoksa ya da eski satırda None.
     seller_posts_14d: int | None = None
+    # yalnız Facebook devir satırı "ek_metin" (sosyal oturum, 13.10.2026): satış biçimli gönderinin gövde dışındaki kısa satırları (başlık,
+    # fiyat, konum; yazar adı asla). Ayrıştırma gövde + bu satırlar üzerinde yapılır; fiyat yalnız buradan geldiyse ilan "fiyat_alani" alır.
+    extra_text: str | None = None
 
 
 @dataclass
