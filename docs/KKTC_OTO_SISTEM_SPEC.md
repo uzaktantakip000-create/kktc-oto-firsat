@@ -950,3 +950,26 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
 - **Aynı gece küçük değişiklikler:** 3008c86 kaynak listesinde dışarıda tutulan Facebook grubu "disari" yazılır (okuyucu keşifte yeniden bildirmesin; sosyal 53e8ba4). 899db99 sosyal durum dosyası okuma sınırı 64 → 256 KB.
 - **Facebook kaybı (sosyal oturum teşhisi, 13.10 00:40–05:06 UTC):** (1) okuyucu grup başına en çok 60 kaydırma yapıyordu; kalabalık grupta gündüz kapsama tahminen %25–35'ti. 7ca6fb2 ile 150'ye çıktı; 07:16 KKTC turunda hiçbir grup sınırda durmadı. (2) Kimliği okunamayan gönderiler alınmıyordu: fareyle bağlantı okuma sınırı 5 idi, bir grupta 78 gönderinin 63'ü kimliksizdi. cff83f4 ile 80'e çıktı; ölçüm 11:34 KKTC turunda.
 - **Modelden marka çıkarımı ölçüldü (13.10 05:10 UTC, bot):** 10–13.10 devirinde 408 gönderi var. 204'ü "marka_yok"; bunların yalnız 10'unda bilinen bir model adı geçiyor ve hiçbiri marka eklense de tam ilan olmuyor (9'unda yıl, 1'inde fiyat yok). Kazanç yok, yapılmayacak. Tam ilan oranı 18/408 (%4,4).
+
+### 24.28 Facebook okumasının ince ayarı (13–14.10.2026; sahip: "Yapılması gerekenleri tamamla", "devam et durma"; sosyal oturumla ortak)
+- **Satış kutusu (60cd7d4, 3bae9a3):** Satış biçimli gönderide başlık, fiyat ve konum satırları gövdenin dışında durduğu için okunmuyordu. Okuyucu artık bu satırları devirde "ek_metin" alanında taşıyor; bot bunları gövdenin altına ekleyip okuyor. Sınırlar: en çok 8 satır, satır en çok 120 karakter, yazdırılabilir olmalı ve en az 2 harf/rakam içermeli. Görünmez U+034F karakteri temizlenir; böylece Facebook'un harf harf böldüğü zaman ve "Sponsored" yazısı atılır. Fiyat yalnız kutudan geliyorsa (gövdede aynı tutar yoksa) ilan "fiyat_alani" işareti alır: en fazla 🟡 olur, emsal olmaz, ⚡ yalnız sahibe gider. Bu işaretli ilanların 🟢 olup olamayacağı ~20.10'da, bir haftalık veriyle sahibe sorulacak.
+- **⚡ USD/EUR koruması (3b177fd):** USD/EUR fiyatlı ilanda aynı rakam sterlin okunduğunda da piyasanın %10 altında değilse ⚡ gitmez. Böyle bir ilanda ucuzluk yalnız kur çevriminden gelir (Auris dersi).
+- **Facebook "€" (56964c0):** Satış kutusu Kıbrıs'ta fiyatı € gösteriyor; bu satıcının para birimi değil. 13.10'da 24 saatte 13 € fiyat görüldü, kutu okunmadan önce hiç yoktu. Örnekler: "€175,000" aslında 175.000 TL; "€111,111" bir yer tutucu.
+  - Kural: Facebook ilanında € tutar ≥50.000 ise TL, değilse STG okunur.
+  - İlan "currency_guess" işaretlenir: en fazla 🟡 ("para_birimi_tahmin"), emsal olmaz, ⚡ almaz. Asıl yazı price_raw'da kalır.
+  - Daha önce € olarak kaydedilmiş 13 ilan eski çevrimde kalır; DB düzeltmesi yapılmadı, 30 günde düşerler.
+- **Tazelik (2d8703f):** Okuyucu her gönderiye bir "tazelik" değeri verir:
+  - "kesin": paylaşım tarihi var.
+  - "imlec": tarih yok ama okuma önceki turun son gönderisine ulaştı.
+  - "belirsiz": tarih yok ve imlece ulaşılmadı.
+
+  Grup akışı yeni yoruma göre sıralandığı için "belirsiz" gönderi haftalık olabilir. Bu ilan "tarih_belirsiz" işareti alır; emsal ve değerlendirmeye girer ama hiçbir anlık mesaj almaz: 🟢 kapısı, ⚡, 🎯 av, 🟡 özet, 🖼 fotoğraf kartı ve fiyat sorma listesinin hepsi dışarıda.
+- **"Okuyucu susuyor" uyarısı (1889e81, 79e9b8b):** Sınır 5 saatten 3,5 gündüz saatine indi. Facebook turu 2 saatte bir başlıyor; ölçülen aralık 2 sa 24 dk, en kötü ~2 sa 45 dk. Bir tur kaçarsa aralık ≥4 sa 25 dk olur ve uyarı gelir.
+  - Sorun: son_tur_utc yalnız tur bitince ilerliyor; 75 dakikalık bir turda bu, her gün yanlış uyarıya yol açardı.
+  - Çözüm: okuyucu "tur_suruyor" ve "tur_basladi_utc" yazıyor. Tur sürüyorsa susma süresi süren turun başından sayılır.
+  - Bayrak yalnız şu durumda geçerli: değeri tam olarak true, zaman geçerli, ileri tarihli değil ve tur ≤115 dk. Öldürülmüş bir turdan kalan bayrak duran okuyucuyu gizlemez.
+- **Hızlı şerit (f77c14d + kurulum 14.10):** Yeni devir satırı yazılınca kktc-fb-fast.path tetiklenir ve kktc-fb-fast.service yalnız Facebook ilanlarını işler. Amaç: 15 dakikalık turu beklemeden ilk bulan olmak.
+  - Art arda 2 hatalı çalışmada sahibe tek uyarı gider: 24 saatte bir, gece sessiz. Başarılı bir çalışma sayacı sıfırlar.
+  - Hızlı şerit dursa bile ilanları 15 dakikalık tur işlemeye devam eder; bildirim kaybolmaz, en çok ~15 dk gecikir.
+  - Okuyucu satırları tek tek yazar (tek os.write + fsync) ve fotoğrafları satırlardan önce yazar; yarım satır okunmaz (sosyal oturum teyidi).
+- **Facebook hacmi:** 13.10'da 308 ilan (67 fiyatlı). 12.10'da 51 ilan (0 fiyatlı), 11.10'da 19 ilan (6 fiyatlı).
