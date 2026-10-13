@@ -57,6 +57,9 @@ SOCIAL_DAY = (7, 24)
 SOCIAL_SILENT_AFTER = timedelta(hours=3, minutes=30)  # "tamam" diyen platform GÜNDÜZ saatiyle bu kadar süredir tur BAŞLATMADIYSA susuyor (son_tur_utc =
 # tur başı). 13.10.2026: Facebook turu 2 saatte bir, zamanlayıcı 20 dk adımlı: başlangıçlar arası ölçülen 2 sa 24 dk, en kötü ~2 sa 45 dk. Bir tur
 # kaçarsa aralık ≥4 sa 25 dk olur ve uyarı gelir; 3 saatlik sınır yanlış uyarıya 15 dk pay bırakırdı. Önceden 4 saatlik turla 5 saat.
+# Süren tur (sosyal oturum 48d6f79, 13.10.2026): "tur_suruyor": true + "tur_basladi_utc". son_tur_utc yalnız tur BİTİNCE ilerler; 75 dk'lık turda
+# susma süresi süren turun başından sayılır. Bayrak bundan eskiyse (systemd'nin öldürdüğü turdan kalmış: birim sınırı 110 dk) yok sayılır.
+SOCIAL_RUN_MAX = timedelta(minutes=115)
 SOCIAL_FILE_STALE = timedelta(hours=1)  # durum dosyası gündüz saatiyle bundan uzun süredir yazılmadıysa okuyucunun kendisi durmuş (~20 dk'da bir yazar)
 SOCIAL_REASON_MAX = 60  # fren nedeninin mesajdaki en çok uzunluğu
 SOCIAL_REPEAT_H = 24  # aynı sosyal uyarı en erken bu kadar saat sonra tekrar yazılır
@@ -274,6 +277,14 @@ def _reason(value) -> str | None:
     return text if len(text) <= SOCIAL_REASON_MAX else text[:SOCIAL_REASON_MAX - 1].rstrip() + "…"
 
 
+def _running_age(p: dict, now: datetime) -> timedelta | None:
+    """Süren turun yaşı: "tur_suruyor" tam olarak true ve "tur_basladi_utc" geçerli, ileri tarihli değil ve SOCIAL_RUN_MAX'tan yeni ise; yoksa None."""
+    if p.get("tur_suruyor") is not True:
+        return None
+    age = _age(p.get("tur_basladi_utc"), now)
+    return age if age is not None and age <= SOCIAL_RUN_MAX else None
+
+
 def _social_platform(key: str, p: dict, now: datetime) -> SocialPlatform:
     name = SOCIAL_NAMES.get(key, key.capitalize())
     result, errors = p.get("sonuc"), _count(p.get("kaynak_hatasi")) or 0
@@ -282,11 +293,15 @@ def _social_platform(key: str, p: dict, now: datetime) -> SocialPlatform:
         if ages is None:  # "tamam" diyor ama tur zamanı yok/bozuk: susup susmadığı bilinemez
             return SocialPlatform(key, "belirsiz", f"{name} ⚠️ durum belirsiz", None)
         age, day_age = ages
+        running = _running_age(p, now)
+        if running is not None and running < age:  # tur sürüyor: susma süresi süren turun başından
+            day_age = _day_elapsed(now - running, now)
         if day_age > SOCIAL_SILENT_AFTER:
             return SocialPlatform(key, "susuyor", f"{name} ⚠️ susuyor (son tur {_span(age)} önce)",
                                   f"⚠️ {name} okuyucusu sustu: son tur {_span(age)} önce. Sunucuda sosyal okuyucunun çalışıp çalışmadığına bakılmalı.")
         new = _count(p.get("yeni_ilan"))
-        notes = [f"son tur {_span(age)} önce"] + ([f"{new} yeni"] if new is not None else []) + ([f"{errors} kaynak hatası"] if errors else [])
+        notes = ([f"son tur {_span(age)} önce"] + (["tur sürüyor"] if running is not None else []) + ([f"{new} yeni"] if new is not None else [])
+                 + ([f"{errors} kaynak hatası"] if errors else []))
         return SocialPlatform(key, "tamam", f"{name} ✅ ({', '.join(notes)})", None)
     if result == "fren":
         reason = _reason(p.get("fren_nedeni"))

@@ -154,6 +154,30 @@ def test_the_silence_limit_is_three_and_a_half_daytime_hours_and_the_boundary_is
     assert got["facebook"].state == state
 
 
+def test_a_running_round_counts_silence_from_its_own_start():
+    """13.10.2026 (sosyal 48d6f79): son_tur_utc tur BİTİNCE ilerler. 14:40'ta başlayıp 15:29'da biten turdan sonra 17:04'te başlayan tur
+    18:25'e dek sürer; 18:20'de son tur 3 sa 40 dk önce görünür ama tur sürüyor: susmuyor."""
+    now = kk(7, 21, 20)
+    running = plat(last=kk(7, 17, 40)) | {"tur_suruyor": True, "tur_basladi_utc": kk(7, 20, 4).isoformat()}
+    _, got = judged(doc({"facebook": running}, now), now)
+    assert got["facebook"].state == "tamam" and "tur sürüyor" in got["facebook"].part
+
+
+@pytest.mark.parametrize("over", [
+    {"tur_suruyor": True, "tur_basladi_utc": None},  # zaman yok
+    {"tur_suruyor": "true", "tur_basladi_utc": "NOW"},  # bool değil
+    {"tur_suruyor": True, "tur_basladi_utc": "OLD"},  # 116 dk önce: öldürülen turdan kalmış bayrak
+    {"tur_suruyor": True, "tur_basladi_utc": "FUTURE"},  # ileri tarih
+    {"tur_suruyor": False, "tur_basladi_utc": "NOW"},
+])
+def test_a_stale_or_bad_running_flag_does_not_hide_silence(over):
+    now = kk(7, 21, 20)
+    stamp = {"NOW": now - 10 * M, "OLD": now - 116 * M, "FUTURE": now + 10 * M}
+    over = {k: (stamp[v].isoformat() if v in stamp else v) for k, v in over.items()}
+    _, got = judged(doc({"facebook": plat(last=kk(7, 17, 40)) | over}, now), now)
+    assert got["facebook"].state == "susuyor"
+
+
 def test_a_round_the_evening_before_that_is_five_and_a_half_daytime_hours_old_is_silent_at_08_30():
     now = kk(7, 8, 30)
     _, got = judged(doc({"instagram": plat(last=kk(6, 18, 0))}, now), now)
