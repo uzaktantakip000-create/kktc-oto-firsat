@@ -18,7 +18,8 @@ from datetime import datetime, timedelta, timezone
 from application import ask_price, hunt, social_import
 from application.dedupe import mark_duplicates
 from application.evaluate import LazyBook, evaluate_new, load_book
-from application.notify import api
+from application.health import notify_owner
+from application.notify import api, quiet_extra
 from application.settings_store import load_settings
 from domain.kktc_time import to_kktc
 from entrypoints import cron_evaluate
@@ -34,6 +35,10 @@ MAX_ROUNDS = 3
 ROUND_GAP_S = 5
 MAX_RUNS_PER_DAY = 400  # gündüz saatlik okuma ~8 grup/saat; açık sekmede gönderi başına bir çalışma
 DAY_KEY = "hizli:gun:{}"  # bot_state: o KKTC gününde başlayan çalışma sayısı
+FAIL_KEY = "hizli:hata_say"  # bot_state: art arda hatalı çalışma sayısı (başarılı çalışma sıfırlar)
+FAIL_ALERT_AT = 2  # tek seferlik ağ/veritabanı hıçkırığı uyarı üretmez; art arda 2 hata sahibe BİR uyarı (24 saatte bir)
+FAIL_ALERT = ("⚠️ Facebook hızlı şeridi art arda hata verdi ({kind}). Yeni Facebook ilanlarını 15 dakikalık tur işlemeye devam ediyor: bildirim "
+              "kaybolmaz, en çok ~15 dk gecikir. Sunucu kaydı: journalctl -u kktc-fb-fast -n 50")
 SKEW = timedelta(minutes=2)  # ilk görülme zamanını veritabanı yazar: sunucu saatleri arasındaki fark payı
 
 
@@ -96,6 +101,20 @@ def run_round(repo, devir_dir, token: str, owner: str, wait=wait_lock, log=print
     return True
 
 
+def note_failure(repo, e: Exception) -> None:
+    """Hatalı çalışmayı say; art arda FAIL_ALERT_AT hatada sahibe tek uyarı (gece sessiz). Sayaç yazılamazsa (veritabanı da düşmüşse) sessiz."""
+    try:
+        try:
+            n = int(repo.get_state(FAIL_KEY) or 0) + 1
+        except ValueError:
+            n = 1
+        repo.set_state(FAIL_KEY, str(n))
+        if n >= FAIL_ALERT_AT:
+            notify_owner(repo, "hizli_serit_hata", FAIL_ALERT.format(kind=type(e).__name__), repeat_hours=24, **quiet_extra())
+    except Exception as inner:  # uyarı yolu da çökerse tur işlemeye devam eder; kayıtta görünür
+        print(f"hızlı şerit: hata sayacı yazılamadı ({type(inner).__name__})")
+
+
 def main(devir_dir=social_import.HANDOFF_DIR, sleep=time.sleep) -> None:
     sys.stdout.reconfigure(line_buffering=True)
     sleep(SETTLE_S)
@@ -117,7 +136,10 @@ def main(devir_dir=social_import.HANDOFF_DIR, sleep=time.sleep) -> None:
                 break
     except Exception as e:  # kilitler bırakıldı (finally); aktarılan ilanları 15 dakikalık turun değerlendirmesi alır (son 3 saat)
         print(f"hızlı şerit: HATA {type(e).__name__}: {redact(str(e))[:150]}")
+        note_failure(repo, e)
         sys.exit(1)
+    if (repo.get_state(FAIL_KEY) or "0") != "0":
+        repo.set_state(FAIL_KEY, "0")
     print(f"hızlı şerit: {time.monotonic() - t0:.0f} sn")
 
 

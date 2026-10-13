@@ -180,3 +180,22 @@ def test_import_lock_is_shared_and_released(tmp_path):
     repo = R(_rows())
     rep = si.import_facebook_locked(repo, tmp_path)
     assert rep.lines == 1 and not repo.held
+
+
+def test_two_failures_in_a_row_alert_the_owner_once_and_a_success_resets(world, monkeypatch):
+    repo, sent = Repo(), []
+    monkeypatch.setattr(fb_fast, "load_env", lambda: None)
+    monkeypatch.setattr(fb_fast, "require", lambda name: "x")
+    monkeypatch.setattr(fb_fast, "Repository", lambda url: repo)
+    monkeypatch.setattr(fb_fast.frankfurter, "use_store", lambda repo: None)
+    monkeypatch.setattr(fb_fast, "notify_owner", lambda repo, key, text, **kw: sent.append((key, text)))
+    world.boom = RuntimeError("veritabanı")
+    with pytest.raises(SystemExit):
+        fb_fast.main(devir_dir="/devir", sleep=lambda s: None)
+    assert sent == [] and repo.state[fb_fast.FAIL_KEY] == "1"  # tek hıçkırık: uyarı yok
+    with pytest.raises(SystemExit):
+        fb_fast.main(devir_dir="/devir", sleep=lambda s: None)
+    assert [k for k, _ in sent] == ["hizli_serit_hata"] and "RuntimeError" in sent[0][1] and "15 dakikalık tur" in sent[0][1]
+    world.boom = None
+    fb_fast.main(devir_dir="/devir", sleep=lambda s: None)
+    assert repo.state[fb_fast.FAIL_KEY] == "0"
