@@ -70,7 +70,7 @@ def test_the_agreed_path_and_thresholds(monkeypatch):
     monkeypatch.undo()  # tests/conftest.py her testte yolu var olmayan bir yere çevirir; gerçek varsayılanı görmek için geri al
     assert selfwatch.SOCIAL_STATUS_PATH == "/var/lib/kktc-social-durum/durum.json" and selfwatch.SOCIAL_SCHEMA == 1
     assert selfwatch.SOCIAL_DAY == (7, 24)  # okuyucu 91a454f: gündüz 07–24 + gece tek okuma (gece beklenmez)
-    assert selfwatch.SOCIAL_SILENT_AFTER == 5 * H and selfwatch.SOCIAL_FILE_STALE == H and selfwatch.SOCIAL_REPEAT_H == 24
+    assert selfwatch.SOCIAL_SILENT_AFTER == 3 * H + 30 * M and selfwatch.SOCIAL_FILE_STALE == H and selfwatch.SOCIAL_REPEAT_H == 24
     assert selfwatch.SOCIAL_FILE_MAX == 256 * 1024  # okuyucu 60.000 baytın altında tutar; 50 grup + sayaçlar sığar
 
 
@@ -146,9 +146,10 @@ def test_a_round_at_08_10_is_silent_at_15_00():
     assert got["instagram"].state == "susuyor" and got["instagram"].part == "Instagram ⚠️ susuyor (son tur 6 saat önce)"
 
 
-@pytest.mark.parametrize("minutes,state", [(5 * 60, "tamam"), (5 * 60 + 1, "susuyor")])
-def test_the_silence_limit_is_five_daytime_hours_and_the_boundary_is_not_silent(minutes, state):
-    now = kk(7, 13, 10) + (minutes - 5 * 60) * M
+@pytest.mark.parametrize("minutes,state", [(2 * 60 + 45, "tamam"), (3 * 60 + 30, "tamam"), (3 * 60 + 31, "susuyor"), (4 * 60 + 25, "susuyor")])
+def test_the_silence_limit_is_three_and_a_half_daytime_hours_and_the_boundary_is_not_silent(minutes, state):
+    """13.10.2026: Facebook turu 2 saatte bir, 20 dk adımlı zamanlayıcı (başlangıçlar arası en kötü ~2 sa 45 dk: susmaz); bir tur kaçarsa ≥4 sa 25 dk."""
+    now = kk(7, 8, 10) + minutes * M
     _, got = judged(doc({"facebook": plat(last=kk(7, 8, 10))}, now), now)
     assert got["facebook"].state == state
 
@@ -287,9 +288,9 @@ def test_a_missing_or_unusable_brake_reason_leaves_just_fren(social, reason):
 
 
 def test_a_stopped_reader_puts_its_warning_in_front_of_the_platform_parts(social):
-    now = kk(7, 14, 20)
+    now = kk(7, 13, 20)  # dosya 2 saat 20 dk yazılmadı (>1 saat: durmuş); tur da 2 saat 20 dk önce (<3 saat: susmuyor)
     social(doc({"instagram": plat(last=kk(7, 11, 0)), "facebook": plat("fren", None, reason="doğrulama isteniyor")}, kk(7, 11, 0)))
-    assert lines(now) == ["Sosyal: ⚠️ sosyal okuyucu durmuş görünüyor (son yazım 3 saat önce) · Instagram ✅ (son tur 3 saat önce, 0 yeni) · Facebook ⚠️ fren (doğrulama isteniyor)"]
+    assert lines(now) == ["Sosyal: ⚠️ sosyal okuyucu durmuş görünüyor (son yazım 2 saat önce) · Instagram ✅ (son tur 2 saat önce, 0 yeni) · Facebook ⚠️ fren (doğrulama isteniyor)"]
 
 
 def test_a_stopped_reader_with_no_platforms_gives_just_the_warning_and_a_healthy_empty_file_gives_no_line(social):

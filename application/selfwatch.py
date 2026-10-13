@@ -54,7 +54,9 @@ SOCIAL_FILE_MAX = 256 * 1024  # dosyanın okunan en çok baytı; fazlası kesili
 # Okuyucunun tur attığı KKTC gündüzü, saat olarak [07:00, 24:00) (sosyal oturum 91a454f, 11.10.2026: gündüz 07–24 + gece 02:30–05:30 arası tek
 # okuma; önceden [08:00, 23:00)). Gece boşluğu "susma" sayılmaz (gece okuması da beklenmez), uyarı da yalnız bu saatlerde gider.
 SOCIAL_DAY = (7, 24)
-SOCIAL_SILENT_AFTER = timedelta(hours=5)  # "tamam" diyen platform GÜNDÜZ saatiyle bu kadar süredir tur atmadıysa susuyor (turlar ~4 saatte bir)
+SOCIAL_SILENT_AFTER = timedelta(hours=3, minutes=30)  # "tamam" diyen platform GÜNDÜZ saatiyle bu kadar süredir tur BAŞLATMADIYSA susuyor (son_tur_utc =
+# tur başı). 13.10.2026: Facebook turu 2 saatte bir, zamanlayıcı 20 dk adımlı: başlangıçlar arası ölçülen 2 sa 24 dk, en kötü ~2 sa 45 dk. Bir tur
+# kaçarsa aralık ≥4 sa 25 dk olur ve uyarı gelir; 3 saatlik sınır yanlış uyarıya 15 dk pay bırakırdı. Önceden 4 saatlik turla 5 saat.
 SOCIAL_FILE_STALE = timedelta(hours=1)  # durum dosyası gündüz saatiyle bundan uzun süredir yazılmadıysa okuyucunun kendisi durmuş (~20 dk'da bir yazar)
 SOCIAL_REASON_MAX = 60  # fren nedeninin mesajdaki en çok uzunluğu
 SOCIAL_REPEAT_H = 24  # aynı sosyal uyarı en erken bu kadar saat sonra tekrar yazılır
