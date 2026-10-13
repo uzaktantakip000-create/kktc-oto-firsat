@@ -115,3 +115,34 @@ def test_unsure_date_is_never_fresh_for_any_instant_message():
     unsure = ev("eski", price=7000)
     unsure.listing["urgency_signals"] = [DATE_UNSURE]
     assert urgent.candidates([unsure], Settings(), EVAL_NOW) == []  # ⚡
+
+
+# --- Facebook "€" (13.10.2026): satış kutusu Kıbrıs'ta fiyatı € gösterir; satıcının para birimi değildir ------------------------------
+@pytest.mark.parametrize("amount,currency,gbp", [(9000, "GBP", 9000), (175000, "TRY", 3500), (49999, "GBP", 49999), (50000, "TRY", 1000)])
+def test_facebook_euro_is_read_as_a_guessed_sterling_or_lira(monkeypatch, amount, currency, gbp):
+    from application import social_ingest
+    monkeypatch.setattr(social_ingest, "gbp_rate", lambda c: {"GBP": 1.0, "TRY": 0.02}[c])
+    data = {"price_amount": float(amount), "currency": "EUR", "price_gbp": amount * 0.86, "currency_guess": False, "price_raw": f"€{amount:,}"}
+    social_ingest.fb_euro(data)
+    assert (data["currency"], data["price_gbp"], data["currency_guess"]) == (currency, gbp, True) and data["price_raw"].startswith("€")
+
+
+def test_other_currencies_are_untouched():
+    from application import social_ingest
+    data = {"price_amount": 8500.0, "currency": "GBP", "price_gbp": 8500.0, "currency_guess": False}
+    social_ingest.fb_euro(data)
+    assert data == {"price_amount": 8500.0, "currency": "GBP", "price_gbp": 8500.0, "currency_guess": False}
+
+
+def test_euro_from_the_box_is_guessed_after_the_field_check(tmp_path, monkeypatch):
+    from application import social_ingest
+    monkeypatch.setattr(social_ingest, "gbp_rate", lambda c: {"GBP": 1.0, "TRY": 0.02}[c])
+    _, data = _imported(tmp_path, "Temiz araç, ilk sahibinden.", "2018 Honda Civic otomatik\n€8,750\nGirne, Cyprus")
+    assert (data["currency"], data["price_gbp"], data["currency_guess"]) == ("GBP", 8750, True)
+    assert FIELD_PRICE in data["urgency_signals"]  # kutu karşılaştırması asıl tutar/birimle yapıldı
+
+
+def test_guessed_currency_gets_no_urgent_message():
+    guess = ev("tahmin", price=7000)
+    guess.listing["currency_guess"] = True
+    assert urgent.candidates([guess], Settings(), EVAL_NOW) == []

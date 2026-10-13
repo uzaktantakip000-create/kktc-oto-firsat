@@ -19,6 +19,7 @@ from domain.data_gate import DATE_UNSURE, FIELD_PRICE  # fiyat yalnız FB satı�
 from domain.freetext_parser import body_price, diagnose
 from infrastructure.collectors.facebook_groups import RawGroupPost
 from infrastructure.collectors.instagram_apify import RawPost
+from infrastructure.fx.frankfurter import gbp_rate
 
 
 @dataclass
@@ -67,6 +68,19 @@ def raw_group_post(post: SocialPost, source: SocialSource) -> RawGroupPost:
     text = f"{post.text}\n{post.extra_text}" if post.extra_text else post.text  # satış kutusunun başlık/fiyat/konum satırları da okunur
     return RawGroupPost(post_id=post.post_id, url=post.url, posted_at=post.posted_at, text=text,
                         group_url=source.url, image_url=post.image_url)
+
+
+FB_EURO_TL_FROM = 50_000  # Facebook'ta "€" ile görünen tutar bundan büyükse TL'dir (KKTC'de araç TL ile 100.000+ yazılır), küçükse STG
+
+
+def fb_euro(data: dict) -> None:
+    """Facebook satış kutusu Kıbrıs'ta fiyatı € gösterir (13.10.2026: 24 saatte 13 € fiyat, kutudan önce hiç yoktu; "€175,000" = TL tutarı).
+    € fiyat satıcının para birimi değildir: tutar ≥ FB_EURO_TL_FROM ise TL, değilse STG okunur ve `currency_guess` işaretlenir. Bu ilan en fazla
+    🟡 olur (veri kapısı "para_birimi_tahmin"), emsal olmaz (domain.comparables), ⚡ almaz. Asıl yazı `price_raw`da kalır."""
+    if data.get("currency") != "EUR" or data.get("price_amount") is None:
+        return
+    currency = "TRY" if data["price_amount"] >= FB_EURO_TL_FROM else "GBP"
+    data.update(currency=currency, currency_guess=True, price_gbp=round(data["price_amount"] * gbp_rate(currency), 2))
 
 
 def price_only_in_field(post: SocialPost, data: dict) -> bool:
@@ -169,6 +183,8 @@ def ingest_facebook(posts: Iterable[SocialPost], source: SocialSource, sink: Lis
             if data is not None and price_only_in_field(post, data):
                 data["urgency_signals"] = [*(data.get("urgency_signals") or []), FIELD_PRICE]
                 st.field_price += 1
+            if data is not None:
+                fb_euro(data)  # gövde/kutu karşılaştırmasından SONRA: o, ayrıştırıcının okuduğu asıl tutar ve birimle yapılır
             kind = seller_kind(getattr(post, "seller_posts_14d", None))
             if data is not None and kind is not None:
                 data["seller_type"] = kind

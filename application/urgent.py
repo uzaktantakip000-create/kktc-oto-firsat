@@ -45,8 +45,8 @@ def candidates(evaluated: list, s: Settings, now: datetime) -> list:
         l, m = ev.listing, ev.market
         if not any(u in MOTIVATED for u in ev.urgency) or ev.profit.tier is Tier.STRONG or ev.blocking:
             continue
-        if l.get("seller_type") == "galeri" or l.get("shadow") or l.get("duplicate_of"):
-            continue
+        if l.get("seller_type") == "galeri" or l.get("shadow") or l.get("duplicate_of") or l.get("currency_guess"):
+            continue  # para birimi tahminse (Facebook €: STG mi TL mi bilinmiyor) "ucuz" hesabı güvenilmez
         if (l.get("seller_phone") and l["seller_phone"] in blocked_phones) or l.get("brand_norm") in blocked_brands:
             continue
         price = l.get("price_gbp")
