@@ -15,7 +15,7 @@ from application.collect_instagram import listing_data as instagram_listing_data
 from application.llm_reader import LlmReader, listing_fields
 from application.social_port import ListingSink, SocialPost, SocialSource
 from domain.caption_parser import is_sold_post, sold_ilan_no
-from domain.data_gate import FIELD_PRICE  # fiyat yalnız Facebook satış kutusunda: ilk hafta en fazla 🟡, emsal olmaz
+from domain.data_gate import DATE_UNSURE, FIELD_PRICE  # fiyat yalnız FB satış kutusunda (ilk hafta en fazla 🟡); tarih belirsiz (anlık bildirim yok)
 from domain.freetext_parser import body_price, diagnose
 from infrastructure.collectors.facebook_groups import RawGroupPost
 from infrastructure.collectors.instagram_apify import RawPost
@@ -164,6 +164,8 @@ def ingest_facebook(posts: Iterable[SocialPost], source: SocialSource, sink: Lis
                     why = "okunamadi" if why == "ok" else why  # tanı "okunur" dedi ama kural okuyamadı
                     st.skipped += 1
                     _count(st.reasons, why)
+            if data is not None and post.freshness == "belirsiz":
+                data["urgency_signals"] = [*(data.get("urgency_signals") or []), DATE_UNSURE]  # emsal olur, anlık bildirim almaz
             if data is not None and price_only_in_field(post, data):
                 data["urgency_signals"] = [*(data.get("urgency_signals") or []), FIELD_PRICE]
                 st.field_price += 1

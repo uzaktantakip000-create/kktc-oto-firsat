@@ -30,7 +30,9 @@ GAP_LABELS = {
     "llm_okudu": "kural okuyamadı, yapay zekâ okudu (kontrol et)",
     "fiyat_alani": "fiyat yalnız Facebook'un satış kutusunda yazıyor (yer tutucu ya da dikkat çekmek için düşük yazılmış olabilir; kontrol et)",
 }
-FIELD_PRICE = "fiyat_alani"  # application/social_ingest.FIELD_PRICE ile aynı işaret (listings.urgency_signals)
+FIELD_PRICE = "fiyat_alani"  # listings.urgency_signals: fiyat yalnız Facebook satış kutusunda (application/social_ingest)
+DATE_UNSURE = "tarih_belirsiz"  # listings.urgency_signals: Facebook gönderisinin tarihi yok ve okuyucu imlece ulaşmadan durdu (devir "tazelik";
+# application/notify.is_fresh: anlık bildirim yok, emsal olur)
 GAP_LABELS.update(MISMATCH_LABELS)
 
 

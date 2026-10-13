@@ -6,7 +6,7 @@ import httpx
 
 from application.evaluate import Evaluated, confidence_label
 from domain.comparables import Market, effective_km
-from domain.data_gate import KM_UNKNOWN_WARNING
+from domain.data_gate import DATE_UNSURE, KM_UNKNOWN_WARNING
 from domain.kktc_time import kktc_hour
 from domain.photo_date import kktcarabam_photo_time
 from domain.profit import Tier
@@ -270,12 +270,14 @@ def photo_stale(photo_urls, reference: datetime, fresh_hours: int = 36) -> bool:
 
 
 def is_fresh(first_seen_at, posted_at, now: datetime | None = None, fresh_hours: int = 36, max_post_days: int = 4,
-             price_changed_at=None, platform: str | None = None, social_max_hours: int = 48, photo_urls=None) -> bool:
+             price_changed_at=None, platform: str | None = None, social_max_hours: int = 48, photo_urls=None, signals=None) -> bool:
     """Yeni görülmüş VE (yayın tarihi biliniyorsa) en fazla 4 günlük: geçmiş doldurma eski ilan bildirmesin.
     Yakın zamanda fiyatı düşmüş/değişmiş ilan yaşına bakılmadan taze sayılır. KKTCarabam'da ilan tarihi hep boştur; `photo_urls` (kapak
     fotoğrafının adresi) yükleme anı gönderim anından `fresh_hours` saatten eskiyse ilan taze sayılmaz (`photo_stale`): fiyat değişikliği
     istisnası da bunu aşmaz (yeniden çıkmış ilan için numara kuralı da öyle: `resurfaced_ids`). Tarih yoksa davranış değişmez."""
     now = now or datetime.now(timezone.utc)
+    if signals and DATE_UNSURE in signals:
+        return False  # 13.10.2026: grup akışı yeni yoruma göre sıralanır; tarihsiz ve imlece ulaşılmadan okunan gönderi haftalık olabilir
     if photo_stale(photo_urls, now, fresh_hours):
         return False  # KKTCarabam: sitenin "en yeni" listesine geri ittiği eski ilan (fotoğrafı pencereden eski); yalnız SIKILAŞTIRIR
     if price_changed_at and price_changed_at >= now - timedelta(hours=fresh_hours):
@@ -299,7 +301,7 @@ def resurfaced_ids(repo: Repository, listings: list[dict]) -> set:
 
 def _is_fresh_ev(ev: Evaluated) -> bool:
     return is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
-                    platform=ev.listing.get("platform"), photo_urls=ev.listing.get("photo_urls"))
+                    platform=ev.listing.get("platform"), photo_urls=ev.listing.get("photo_urls"), signals=ev.listing.get("urgency_signals"))
 
 
 def _burst_summary(repo: Repository, token: str, fresh: list[Evaluated], subs: list[dict], limit: int, now: datetime | None = None) -> int:
@@ -406,7 +408,7 @@ def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes:
         if sent >= max_per_run or rate_limited:
             break
         if not is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
-                        platform=ev.listing.get("platform"), photo_urls=ev.listing.get("photo_urls")):
+                        platform=ev.listing.get("platform"), photo_urls=ev.listing.get("photo_urls"), signals=ev.listing.get("urgency_signals")):
             continue
         text = format_alert(ev, (notes or {}).get(ev.listing["id"]), _twins(repo, ev.listing))
         delivered = False

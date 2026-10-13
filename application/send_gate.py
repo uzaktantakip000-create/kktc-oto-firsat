@@ -20,7 +20,7 @@ LLM_REDDETTI = "llm_reddetti"  # yapay zekâ uyuşmazlık/gizli sorun buldu ya d
 def _fresh(ev: Evaluated) -> bool:
     l = ev.listing
     return is_fresh(l["first_seen_at"], l["posted_at"], price_changed_at=l.get("price_changed_at"), platform=l.get("platform"),
-                    photo_urls=l.get("photo_urls"))
+                    photo_urls=l.get("photo_urls"), signals=l.get("urgency_signals"))
 
 
 def _fresh_candidates(repo: Repository, candidates: list[Evaluated]) -> list[Evaluated]:

@@ -17,6 +17,7 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 
+from domain.data_gate import DATE_UNSURE
 from domain.decision import ask_value
 from domain.kktc_time import to_kktc
 from domain.normalize import fold
@@ -90,6 +91,8 @@ def pick(rows: list[dict], pool: list[dict], s: Settings, now: datetime, seen: s
             continue
         if l.get("posted_at") and l["posted_at"] < now - timedelta(hours=MAX_POST_AGE_H):
             continue
+        if DATE_UNSURE in (l.get("urgency_signals") or []):
+            continue  # tarihsiz ve okuyucu imlece ulaşmadan durdu: eski olabilir (13.10.2026)
         v = ask_value(l, pool, s, now)
         if v is None or (s.max_buy_gbp is not None and v.median_gbp * s.absurd_price_ratio > s.max_buy_gbp):
             continue  # bütçenin çok üstündeki araç: makul bir fiyatla bile bütçeye girmez

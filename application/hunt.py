@@ -116,7 +116,8 @@ def run(repo: Repository, chat: str, send, s: Settings, now: datetime | None = N
         rows = repo.search_active(h["brand"], h.get("model"), h.get("y1"), h.get("y2"), h.get("p1"), h.get("p2"), h.get("km"), h.get("t"),
                                   CANDIDATES, seen_after=after, seen_until=now)
         rows = [r for r in plausible(rows, view) if r["id"] not in used and not (r.get("seller_phone") and r["seller_phone"] in blocked)
-                and is_fresh(r["first_seen_at"], r.get("posted_at"), now=now, platform=r.get("platform"), photo_urls=r.get("photo_urls"))]
+                and is_fresh(r["first_seen_at"], r.get("posted_at"), now=now, platform=r.get("platform"), photo_urls=r.get("photo_urls"),
+                             signals=r.get("urgency_signals"))]
         if rows:
             old = resurfaced_ids(repo, rows)
             rows = [r for r in rows if r["id"] not in old]

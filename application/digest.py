@@ -42,7 +42,7 @@ def _item(i: int, r: dict) -> str:
 def build_digest(rows: list[dict], now: datetime | None = None) -> tuple[str, list[dict]]:
     """(mesaj, mesajda yer alan satırlar). Taze olmayan ilanlar (geçmiş doldurma) özete girmez."""
     fresh = [r for r in rows if is_fresh(r["first_seen_at"], r["posted_at"], now, fresh_hours=48,
-                                         price_changed_at=r.get("price_changed_at"))][:MAX_ITEMS]
+                                         price_changed_at=r.get("price_changed_at"), signals=r.get("urgency_signals"))][:MAX_ITEMS]
     if not fresh:
         return "", []
     head = "🟡 Günlük pazarlık özeti — pazarlıkla kâr bırakabilir (anlık 🟢 değil)"

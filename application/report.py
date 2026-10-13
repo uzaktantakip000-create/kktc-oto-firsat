@@ -178,7 +178,7 @@ def _unnotified_section(repo: Repository, recheck, now: datetime) -> _Section:
     rows = [r for r in repo.unnotified_strong(RULES_VERSION, UNNOTIFIED_DAYS)
             if send_allowed(Tier.STRONG, r["method"], r["comparables_n"] or 0)  # emsal kapısı (≥8): bildirimdeki kuralın aynısı
             and not is_fresh(r["first_seen_at"], r["posted_at"], now=now, price_changed_at=r["price_changed_at"],
-                             platform=r["platform"])]  # taze olan normal yoldan (anlık mesaj) gider
+                             platform=r["platform"], signals=r.get("urgency_signals"))]  # taze olan normal yoldan (anlık mesaj) gider
     # sitenin "en yeni" listesine geri ittiği eski KKTCarabam ilanı: fotoğrafı bize İLK göründüğü anda zaten tazelik penceresinden eskiydi (şimdiye
     # göre değil: bayat her ilanın fotoğrafı şimdiye göre eskidir) ya da tarihsiz ve numarası küçük (`notify.resurfaced_ids`): ne gider ne listelenir
     rows = [r for r in rows if not photo_stale(r.get("photo_urls"), r["first_seen_at"])]

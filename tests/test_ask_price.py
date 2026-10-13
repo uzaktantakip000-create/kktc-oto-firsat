@@ -81,6 +81,7 @@ def test_card_gives_the_market_middle_and_the_most_to_pay_for_twenty_percent():
     dict(brand_norm="Nissan"),  # /istemiyorum
     dict(posted_at=NOW - timedelta(hours=13)),
     dict(model_norm="nadir", model="Nadir"),  # emsal yok
+    dict(urgency_signals=["foto_fiyat", "tarih_belirsiz"]),  # tarihsiz, okuyucu imlece ulaşmadan durdu: eski olabilir (13.10.2026)
 ])
 def test_dealers_blocked_old_and_unvaluable_posts_get_no_card(kw):
     s = Settings(blocked_phones=["905330000009"], blocked_brands=["Nissan"])

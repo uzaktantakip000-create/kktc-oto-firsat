@@ -1,12 +1,14 @@
 """Facebook satış kutusu (devir "ek_metin", sosyal oturum 13.10.2026): satış biçimli gönderinin başlık/fiyat/konum satırları gövdenin dışında
 durur; okuyucu artık onları ayrı alanda taşır. Fiyat yalnız kutudan geldiyse ilan "fiyat_alani" alır: en fazla 🟡, emsal olmaz, ⚡ yalnız sahibe.
 Uydurma gönderiler; ağ yok."""
+from datetime import timedelta
+
 import pytest
 
 from application import social_import as si
 from application import urgent
 from domain.comparables import Market
-from domain.data_gate import FIELD_PRICE, data_gaps
+from domain.data_gate import DATE_UNSURE, FIELD_PRICE, data_gaps
 from domain.freetext_parser import body_price
 from domain.settings import Settings
 from tests.test_social_import import NOW, FakeRepo, _file, _line, _rows
@@ -84,3 +86,32 @@ def test_urgent_box_price_goes_only_to_the_owner():
     boxed.listing["urgency_signals"] = [FIELD_PRICE]
     assert urgent.run(UrgentRepo(), [boxed, ev("normal", price=6900)], owner.append, Settings(), EVAL_NOW, share=others.append) == 2
     assert len(owner) == 2 and len(others) == 1 and others[0] != next(m for m in owner if "/kutu/" in m)
+
+
+# --- devir "tazelik" (sosyal oturum 13.10.2026): tarihsiz ve imlece ulaşılmadan okunan gönderi anlık bildirim almaz ---------------------
+@pytest.mark.parametrize("value,want", [("kesin", "kesin"), ("imlec", "imlec"), ("belirsiz", "belirsiz"), ("baska", None), (1, None), (None, None)])
+def test_freshness_field_is_read_strictly(value, want):
+    _, post = si.parse_line(_line(tazelik=value))
+    assert post.freshness == want
+
+
+@pytest.mark.parametrize("text", ["2015 Toyota Corolla\nFiyat 6.500 STG", "2015 Toyota Corolla temiz"])  # fiyatlı ve fiyatsız ilan
+def test_unsure_date_marks_the_listing_and_sure_ones_do_not(tmp_path, text):
+    repo = FakeRepo(_rows())
+    _file(tmp_path, NOW, _line("1000000001", text=text, tazelik="belirsiz"), _line("1000000002", text=text, tazelik="imlec"))
+    si.import_facebook(repo, tmp_path)
+    got = {item: data.get("urgency_signals") or [] for (_, item), data in repo.listings.items()}
+    assert DATE_UNSURE in got["1000000001"] and DATE_UNSURE not in got["1000000002"]
+
+
+def test_unsure_date_is_never_fresh_for_any_instant_message():
+    from application import send_gate
+    from application.notify import is_fresh
+    seen = EVAL_NOW - timedelta(minutes=5)
+    assert is_fresh(seen, None, now=EVAL_NOW, platform="facebook")
+    assert not is_fresh(seen, None, now=EVAL_NOW, platform="facebook", signals=["acil", DATE_UNSURE])
+    listing = {"first_seen_at": seen, "posted_at": None, "platform": "facebook", "urgency_signals": [DATE_UNSURE]}
+    assert not send_gate._fresh(type("E", (), {"listing": listing})())  # 🟢 kapısı
+    unsure = ev("eski", price=7000)
+    unsure.listing["urgency_signals"] = [DATE_UNSURE]
+    assert urgent.candidates([unsure], Settings(), EVAL_NOW) == []  # ⚡

@@ -36,6 +36,7 @@ MAX_LINES = 2000  # tur başına üst sınır (kalan bir sonraki tura)
 MAX_TEXT = 8000
 EXTRA_MAX_LINES = 8  # "ek_metin": satış kutusu satırları (sosyal oturum 13.10.2026: ≤8 satır, satır ≤120 karakter)
 EXTRA_LINE_MAX = 120
+FRESHNESS = ("kesin", "imlec", "belirsiz")  # devir "tazelik" (sosyal oturum 13.10.2026); "belirsiz" ilan anlık bildirim almaz (domain.data_gate.DATE_UNSURE)
 MAX_RADAR = 10_000  # satıcı radarı sayısının makul üst sınırı (bozuk değer yok sayılır)
 _FILE = re.compile(r"^facebook-\d{8}\.jsonl$")
 _GROUP = re.compile(r"^[a-z0-9._-]{1,64}$")  # kaynaklar.json grup anahtarı (social_files._FB_GROUP ile aynı)
@@ -160,7 +161,8 @@ def parse_line(line: str) -> tuple[str, SocialPost] | str:
                       posted_at=_parse_time(doc.get("paylasim_utc")) or _parse_time(doc.get("goruldu_utc")), text=text[:MAX_TEXT],
                       image_url=image,
                       seller_posts_14d=radar if type(radar) is int and 1 <= radar <= MAX_RADAR else None,
-                      extra_text=_extra_text(doc.get("ek_metin")))
+                      extra_text=_extra_text(doc.get("ek_metin")),
+                      freshness=doc.get("tazelik") if doc.get("tazelik") in FRESHNESS else None)
     return key, post
 
 
