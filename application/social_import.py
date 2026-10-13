@@ -127,12 +127,13 @@ def _parse_time(value) -> datetime | None:
 
 def _extra_text(value) -> str | None:
     """Devir "ek_metin" alanı: boş olmayan satırlar, en çok EXTRA_MAX_LINES; sınırdan uzun satır atılır. Dize değilse ya da boşsa None
-    (satır yine aktarılır: alan isteğe bağlı)."""
+    (satır yine aktarılır: alan isteğe bağlı). Facebook'un zaman/"Sponsored" yazısını harf harf bölüp araya koyduğu görünmez birleştirici
+    (U+034F) atılır; 2'den az harf/rakamlı satır gürültüdür (13.10.2026: ilk satırların hepsinin 8 satırını tek harfler doldurmuştu)."""
     if not isinstance(value, str):
         return None
-    lines = [ln.strip() for ln in value.split("\n")]
-    keep = [ln for ln in lines if ln and len(ln) <= EXTRA_LINE_MAX and ln.isprintable()][:EXTRA_MAX_LINES]
-    return "\n".join(keep) or None
+    lines = [ln.replace("\u034f", "").strip() for ln in value.split("\n")]
+    keep = [ln for ln in lines if len(ln) <= EXTRA_LINE_MAX and ln.isprintable() and sum(ch.isalnum() for ch in ln) >= 2]
+    return "\n".join(keep[:EXTRA_MAX_LINES]) or None
 
 
 def parse_line(line: str) -> tuple[str, SocialPost] | str:

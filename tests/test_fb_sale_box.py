@@ -50,10 +50,12 @@ def test_two_unhinted_prices_mean_no_price(tmp_path):
 
 @pytest.mark.parametrize("value,want", [
     (None, None), (42, None), ("", None), ("\n \n", None),
-    ("a\nb", "a\nb"),
+    ("ab\ncd", "ab\ncd"),
     ("\n".join(f"satır {i}" for i in range(12)), "\n".join(f"satır {i}" for i in range(8))),  # en çok 8 satır
     ("kısa\n" + "x" * 121, "kısa"),  # sınırdan uzun satır atılır
     ("£8,750\x00gizli\nGirne", "Girne"),  # yazdırılamayan karakterli satır atılır
+    ("s\u034f\ne\u034f\nS\u034f\n" * 3 + "2018 Honda Civic\n£8,750", "2018 Honda Civic\n£8,750"),  # harf harf bölünmüş zaman yazısı (13.10)
+    ("·\n£\n9\nGirne", "Girne"),  # 2'den az harf/rakam: gürültü
 ])
 def test_extra_text_is_validated(value, want):
     assert si._extra_text(value) == want
