@@ -84,13 +84,38 @@ def test_switch_to_published_only_sitemap_does_not_trip_the_shrink_guard(monkeyp
     repo = Repo({"sitemap_n:S": "3396"})
     stats = kk.collect_kktcar(repo, {"id": "S", "name": "KKTCar"})
     assert stats.in_sitemap == 510 and stats.deactivated == 3 and len(repo.deactivated_with) == 510
-    assert repo.state["sitemap_n:S:yayinda"] == "510"
+    assert repo.state["sitemap_n:S:yayinda-tr"] == "510"
 
 
 def test_published_only_sitemap_still_guards_against_a_half_response(monkeypatch):
     entries = [kktcar.SitemapEntry(f"https://kktcar.com/listing/s{i}", f"s{i}", None) for i in range(250)]
     monkeypatch.setattr(kktcar, "fetch_sitemap", lambda c: entries)
-    repo = Repo({"sitemap_n:S:yayinda": "510"})
+    repo = Repo({"sitemap_n:S:yayinda-tr": "510"})
     with pytest.raises(RuntimeError, match="şüpheli biçimde küçüldü"):
         kk.collect_kktcar(repo, {"id": "S", "name": "KKTCar"})
-    assert repo.deactivated_with is None and repo.state["sitemap_n:S:yayinda"] == "510"
+    assert repo.deactivated_with is None and repo.state["sitemap_n:S:yayinda-tr"] == "510"
+
+
+# --- 14.10.2026: harita her ilanı üç dilde veriyor; yalnız Türkçe sayfa okunur (yeni ilan başına 3 yerine 1 istek) ---
+THREE_LANG = ('<?xml version="1.0" encoding="UTF-8"?><urlset>'
+              + "".join(f"<url><loc>https://kktcar.com/{lang}listing/2013-bmw-520d-lefkosa-dkcey</loc><lastmod>2026-10-14T13:4{i}:00+00:00</lastmod></url>"
+                        for i, lang in enumerate(("en/", "", "ru/")))
+              + "<url><loc>https://kktcar.com/en/listing/yalniz-ingilizce</loc></url>"
+              + "<url><loc>https://kktcar.com/listing/2013-bmw-520d-lefkosa-dkcey</loc></url></urlset>")
+
+
+def test_only_the_turkish_page_of_each_listing_is_read():
+    seen = []
+    with client({"https://kktcar.com/sitemap.xml": THREE_LANG}, seen) as c:
+        entries = kktcar.fetch_sitemap(c)
+    assert [(e.url, e.slug) for e in entries] == [("https://kktcar.com/listing/2013-bmw-520d-lefkosa-dkcey", "2013-bmw-520d-lefkosa-dkcey")]
+    assert entries[0].lastmod == datetime(2026, 10, 14, 13, 41, tzinfo=timezone.utc)
+
+
+def test_switch_to_turkish_only_count_does_not_trip_the_shrink_guard(monkeypatch):
+    """Üç dilli haritanın son boyutu 1.590; yalnız Türkçe ~500 (hepsi bilinen ilan): yeni anahtarla ölçülür, kaybolanlar pasifleşir."""
+    entries = [kktcar.SitemapEntry(f"https://kktcar.com/listing/s{i}", f"s{i}", None) for i in range(500)]
+    monkeypatch.setattr(kktcar, "fetch_sitemap", lambda c: entries)
+    repo = Repo({"sitemap_n:S:yayinda": "1590"})
+    stats = kk.collect_kktcar(repo, {"id": "S", "name": "KKTCar"})
+    assert stats.in_sitemap == 500 and stats.deactivated == 3 and repo.state["sitemap_n:S:yayinda-tr"] == "500"

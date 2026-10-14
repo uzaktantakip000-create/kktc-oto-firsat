@@ -110,7 +110,8 @@ def collect_kktcar(repo: Repository, source: dict, max_new: int = 25, clock=time
                 stats.new += 1
         # Güvenlik: sitemap makul büyüklükteyse kaybolanları pasifleştir. 08.10.2026: site haritası artık yalnız yayındaki ilanlar
         # (~500; eskisi satılmışlarla ~3.400): küçülme ölçüsü yeni anahtarda yeniden başlar, alt sınır 500 -> 200.
-        shrunk = sitemap_shrunk(repo, f"{source['id']}:yayinda", len(entries))
+        # 14.10.2026: harita her ilanı üç dilde veriyor (~1.590 adres); yalnız Türkçeler sayılır (~530): ölçü yine yeni anahtarda başlar.
+        shrunk = sitemap_shrunk(repo, f"{source['id']}:yayinda-tr", len(entries))
         if len(entries) > MIN_SITEMAP and not shrunk:
             stats.deactivated = repo.deactivate_missing(source["id"], {e.slug for e in entries})
         refresh_active(repo, source, client, stats, clock=clock)

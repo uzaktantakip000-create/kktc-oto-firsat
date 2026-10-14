@@ -93,3 +93,28 @@ def test_structured_fuel_and_gear_mapping():
     assert (diesel["fuel"], diesel["transmission"]) == ("dizel", "manuel")
     hybrid = parse_detail(LD_ONLY.replace("schema.org/Gasoline", "schema.org/HybridElectric"))
     assert hybrid["fuel"] == "hibrit"
+
+
+# --- 14.10.2026: fiyatsız ilan artık "Fiyatı satıcıya sor" diyor ve Vehicle verisinde teklif (offers) yok: satışta, fiyatsız saklanır ---
+ASK_SELLER = """<html><head><title>Mini Cooper 2009 - KKTCar</title>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "Vehicle", "brand": {"@type": "Brand", "name": "Mini"},
+ "model": "Cooper", "vehicleModelDate": "2009", "fuelType": "https://schema.org/Gasoline", "datePosted": "2026-09-20T08:00:00Z",
+ "description": "Temiz araç"}</script></head>
+<body><div>Ana sayfa</div><div>Mini</div><div>Cooper</div><div>PRICE</div><div>Yıl</div><div>2009</div><div>Açıklama</div><div>Temiz araç</div>
+<div>Keşfet</div><div>Benzer ilanlar</div><div>SIMILAR</div></body></html>"""
+
+
+def page(price: str, similar: str) -> str:
+    return ASK_SELLER.replace("PRICE", price).replace("SIMILAR", similar)
+
+
+def test_ask_the_seller_listing_is_stored_without_price():
+    d = parse_detail(page("Fiyatı satıcıya sor", "£6.000"))
+    assert (d["brand"], d["model"], d["year"], d["fuel"]) == ("Mini", "Cooper", 2009, "benzin")
+    assert d["price_amount"] is None and d["currency"] is None and d["urgency_signals"] == ["fiyatsiz"]
+    assert d["posted_at"].isoformat() == "2026-09-20T00:00:00+00:00"
+
+
+def test_missing_offer_is_not_read_as_for_sale_unless_the_listing_itself_asks_for_price():
+    assert parse_detail(page("£6.000", "Fiyatı satıcıya sor")) is None  # yalnız benzer ilan kartı fiyatsız
+    assert parse_detail(page("", "")) is None  # teklif yok, sayfa da fiyat sormuyor: bilinmiyor

@@ -19,6 +19,9 @@ UA = "KKTCOtoBot/0.1 (kisisel arac fiyat arastirmasi)"
 _FUEL = {"dizel": "dizel", "benzin": "benzin", "hibrit": "hibrit", "elektrik": "elektrikli", "lpg": "lpg"}
 
 
+_TR_LISTING = re.compile(r"https?://[^/]+/listing/[^/]+$")
+
+
 @dataclass(frozen=True)
 class SitemapEntry:
     url: str
@@ -43,19 +46,18 @@ def fetch_sitemap(client: httpx.Client) -> list[SitemapEntry]:
             c.raise_for_status()
             parts.append(c.text)
         text = "\n".join(parts)
-    out = []
+    out, slugs = [], set()
     for block in re.findall(r"<url>(.*?)</url>", text, re.S):
         loc = re.search(r"<loc>(.*?)</loc>", block)
-        if not loc or "/listing/" not in loc.group(1):
+        # 14.10.2026'dan beri her ilan üç dilde (/listing/, /en/listing/, /ru/listing/; aynı ilan numarası): yalnız Türkçe sayfa okunur
+        if not loc or not _TR_LISTING.match(loc.group(1)):
             continue
+        slug = loc.group(1).rsplit("/", 1)[-1]
+        if slug in slugs:
+            continue
+        slugs.add(slug)
         lm = re.search(r"<lastmod>(.*?)</lastmod>", block)
-        out.append(
-            SitemapEntry(
-                loc.group(1),
-                loc.group(1).rsplit("/", 1)[-1],
-                datetime.fromisoformat(lm.group(1)) if lm else None,
-            )
-        )
+        out.append(SitemapEntry(loc.group(1), slug, datetime.fromisoformat(lm.group(1)) if lm else None))
     return out
 
 
@@ -165,15 +167,27 @@ def _ld_number(node) -> float | None:
         return None
 
 
-def parse_structured(html: str, title: str) -> dict | None:
+ASK_PRICE = ("Fiyat Sorunuz", "Fiyatı satıcıya sor")  # fiyatsız ilan; 14.10.2026'dan beri ikincisi
+
+
+def asks_for_price(lines: list[str]) -> bool:
+    """Görünür sayfanın ilan bölümü (Açıklama'dan önce; alttaki benzer ilan kartları sayılmaz) fiyat yerine "satıcıya sor" diyor mu."""
+    head = lines[:lines.index("Açıklama")] if "Açıklama" in lines else lines
+    return any(t in head for t in ASK_PRICE)
+
+
+def parse_structured(html: str, title: str, lines: list[str] = ()) -> dict | None:
     """09.10.2026'dan beri yeni ilanların sayfası (normal tarayıcıda da) "Araç Bulunamadı" gösteriyor; araç bilgisi yalnız sayfadaki
     schema.org Vehicle verisinde (JSON-LD) var. Yalnız görünür sayfa okunamayınca kullanılır; yalnız "satışta" (InStock) ilan.
+    Fiyatsız ilanda Vehicle verisinde teklif (offers) HİÇ yok: görünür sayfa fiyat yerine "Fiyatı satıcıya sor" diyorsa satışta,
+    fiyatsız sayılır (14.10.2026; saklanır ki her turda yeniden okunmasın, değerlendirilmez; fiyat eklenirse yenilemede görülür).
     Satıcı adı OKUNMAZ (kişisel veri); satıcı bağlantısı bu veride yok."""
     v = _ld_vehicle(html)
     offer = (v or {}).get("offers") or {}
     if isinstance(offer, list):
         offer = offer[0] if offer else {}
-    if not v or "InStock" not in str(offer.get("availability", "")):
+    in_stock = "InStock" in str(offer.get("availability", ""))
+    if not v or not (in_stock or (not offer and asks_for_price(lines))):
         return None
     brand = (v.get("brand") or {}).get("name") if isinstance(v.get("brand"), dict) else v.get("brand")
     year = re.sub(r"\D", "", str(v.get("vehicleModelDate") or v.get("modelDate") or ""))[:4]
@@ -236,12 +250,12 @@ def parse_detail(html: str) -> dict | None:
         return _parse_sold(title, lines, "Bu ilan artık aktif değil.", "arsiv")
     f = _pairs(lines)
     if not f.get("Marka") or not f.get("Yıl"):
-        return parse_structured(raw_html, title)  # görünür sayfa boş ("Araç Bulunamadı"): yapılandırılmış veriden
+        return parse_structured(raw_html, title, lines)  # görünür sayfa boş ("Araç Bulunamadı") ya da yeni biçim: yapılandırılmış veriden
 
     # Güncel fiyat başlıkta: "BMW X5 2014 - 25.900£ - KKTCar" (üstü çizili eski fiyat varsa karışmaz)
     m = re.search(r"-\s*([\d.,]+\s*[£€$₺]|[£€$₺]\s*[\d.,]+)\s*-", title)
     price = parse_price(m.group(1)) if m else None
-    if not price and "Fiyat Sorunuz" not in lines:
+    if not price and not asks_for_price(lines):
         return None  # tanımadığımız sayfa biçimi
     # "Fiyat Sorunuz": aktif ama fiyatsız ilan. Saklanır (her turda yeniden denenmesin), değerlendirilmez.
 
