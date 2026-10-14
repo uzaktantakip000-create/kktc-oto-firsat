@@ -41,7 +41,7 @@ def safe_test_dsn(env=None) -> str | None:
 
 @pytest.fixture
 def db():
-    """Her test için sıfırdan kurulmuş şema (migration 001–018). Repository (autocommit) döner."""
+    """Her test için sıfırdan kurulmuş şema (migration 001–020). Repository (autocommit) döner."""
     dsn = safe_test_dsn()
     if not dsn:
         pytest.skip("TEST_DATABASE_URL yok ya da yerel bir test veritabanı değil (gerçek veritabanına dokunulmaz)")
