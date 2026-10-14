@@ -973,3 +973,17 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
   - Hızlı şerit dursa bile ilanları 15 dakikalık tur işlemeye devam eder; bildirim kaybolmaz, en çok ~15 dk gecikir.
   - Okuyucu satırları tek tek yazar (tek os.write + fsync) ve fotoğrafları satırlardan önce yazar; yarım satır okunmaz (sosyal oturum teyidi).
 - **Facebook hacmi:** 13.10'da 308 ilan (67 fiyatlı). 12.10'da 51 ilan (0 fiyatlı), 11.10'da 19 ilan (6 fiyatlı).
+
+### 24.29 Genel kontrol ve "hayata geçirme" (14.10.2026; sahip: "Şu ana kadar yapılanları kontrol et; eğer herhangi bir hata yok ise artık yapılanları hayata geçirme vakti")
+- **Kontrol (14.10 07:20 UTC, salt okunur):**
+  - Sunucu: 7 KKTC birimi çalışıyor, başarısız birim yok. Son 24 saatte 96/96 tur temiz (Mezunum bir kez HTTP 522 verdi, site kaynaklı). Disk %9 dolu.
+  - GitHub: son 40 çalışmanın hepsi başarılı; main = live = 2ea3cbb.
+  - Hızlı şerit: 24 saatte 14 çalışma, hata 0.
+  - Yeni ilan (24 saat): ~470 Facebook (fiyatlı ~115), 56 KKTCarabam, 9 KKTCar. KibrisArabaAl hâlâ 403 (bilinen).
+  - Tuzaklar: veritabanındaki 6.236 fiyatlı ilanda 26 yer tutucu fiyat var ("1.111", "111.111", "1.234.567"; çoğu Facebook satış kutusu). Hiçbiri bildirilmedi: fiyat_asiri_dusuk, fiyat_alani, para_birimi_tahmin kapıları yakaladı.
+  - Satış kutusu fiyatları 36 saatte çoğunlukla yer tutucu ya da € çıktı. Bu yüzden "fiyat_alani" ilanlarının 🟢 almasına bu veriyle izin verilmez (~20.10'da yeniden bakılacak).
+- **SAHİP KARARLARI (14.10 ~10:30 KKTC, AskUserQuestion; üçü de "Önerilen"):**
+  1. 13.10'da eklenen 6 Facebook grubu gölgeden şimdi çıktı ("Evet, şimdi aç"). Kural gereği 16.10 18:35'te kendiliğinden açılacaklardı. 1 günlük veride € payı 0, son 7 günde 184 ilan, 63 fiyatlı.
+  2. "KKTC Oto Ses Sistemi Alım Satım" kapatıldı (oto ses sistemi grubu, araba değil); durumu `disari`, okuyucu onu okumaz ve yeniden önermez.
+  3. CLAUDE.md'deki üç eski cümle güncellendi: sosyal okuyucu "deneme kipi" değil, Facebook canlı; Instagram bırakıldı; KibrisArabaAl 403; kktc-fb-fast.
+- **Uygulama:** Önce VPS yedeği alındı (kktc-backup 07:26 UTC, 9,2 MB) ve yerel kopya kaydedildi (`~/KKTC-yedek/fb_gruplar_oncesi_20261014.json`). Yazma autocommit ile yapıldı ve yeni bağlantıdan doğrulandı. Facebook grupları şimdi: aktif/yeşil 10, aktif/gölge 4 (14.10'da eklendi, 17.10'da kendiliğinden açılır), dışarıda 4, aday 17. Açılan grupların ilanları artık emsal havuzuna da girer.
