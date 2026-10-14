@@ -4,6 +4,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 from selectolax.parser import HTMLParser
@@ -280,11 +281,31 @@ def parse_detail(html: str) -> dict | None:
     }
 
 
+# Biçimi tanınmayan ilan sayfası teşhis için VPS'te saklanır (yeni istek atmadan nedene bakılabilsin; en çok UNREAD_KEEP dosya).
+# Klasör yazılamıyorsa (yerel/GitHub) sessizce atlanır.
+UNREAD_DIR = Path("/var/lib/kktc-bot/kktcar-okunamayan")
+UNREAD_KEEP = 20
+
+
+def keep_unread(entry: SitemapEntry, html: str, folder: Path | None = None) -> None:
+    folder = folder or UNREAD_DIR
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{re.sub(r'[^A-Za-z0-9_-]', '_', entry.slug)[:120]}.html").write_text(html, encoding="utf-8")
+        for old in sorted(folder.glob("*.html"), key=lambda f: f.stat().st_mtime)[:-UNREAD_KEEP]:
+            old.unlink()
+    except OSError:
+        pass
+
+
 def fetch_detail(client: httpx.Client, entry: SitemapEntry) -> dict | None:
     r = client.get(entry.url, timeout=30)
     if r.status_code != 200:
         return None
-    return parse_detail(r.text)
+    data = parse_detail(r.text)
+    if data is None:
+        keep_unread(entry, r.text)
+    return data
 
 
 def new_client() -> httpx.Client:

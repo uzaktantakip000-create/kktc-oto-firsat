@@ -23,6 +23,7 @@ class KktcarStats:
     refresh_failed: int = 0  # yenilemede okunamayan (HTTP != 200 ya da şablon değişti): okuma oranı korumasına sayılır
     time_limited: bool = False  # süre bütçesi dolduğu için kalan ilanlar sonraki tura bırakıldı (okunamadı SAYILMAZ)
     suspect: list[str] = field(default_factory=list)  # toplu "satıldı/arşiv" şüphesi: hiçbiri pasifleştirilmedi, tur sonunda hata
+    unread: list[str] = field(default_factory=list)  # okunamayan YENİ ilanların adresi (log'da görünsün; biçim hatasıysa sayfa VPS'te saklanır)
 
 
 # Site yavaşlarsa tur 13 dk bütçesini / iş akışı 20 dk sınırını aşmasın (en kötü durum eskiden ~26 dk: 50 istek x 30 sn zaman aşımı)
@@ -94,6 +95,7 @@ def collect_kktcar(repo: Repository, source: dict, max_new: int = 25, clock=time
             kktcar.polite_sleep()
             if not data:
                 stats.failed += 1
+                stats.unread.append(entry.url)
                 continue
             data.pop("swap", None)
             data["price_gbp"] = _gbp(data)

@@ -244,3 +244,50 @@ def test_apply_refresh_stores_the_reported_sold_time_without_overwriting():
     r.apply_refresh("L1", {"price_amount": 1, "currency": "GBP", "price_gbp": 1}, {"is_active": False, "urgency_signals": ["satildi"], "sold_at": at})
     sql, params = r.conn.calls[0]
     assert "sold_at=COALESCE(sold_at, %s)" in sql and params == (["satildi"], "satildi", at, "L1")
+
+
+# --- 14.10.2026: okunamayan yeni KKTCar ilanı log'da adıyla görünür, biçimi tanınmayan sayfa teşhis için saklanır (yeni istek atılmaz) ---
+def test_unread_new_listings_are_named_in_the_round_stats(monkeypatch):
+    entries = [site.SitemapEntry(f"https://kktcar.com/listing/{s}", s, None) for s in ("iyi", "bozuk")]
+    monkeypatch.setattr(site, "fetch_sitemap", lambda client: entries)
+    monkeypatch.setattr(site, "fetch_detail", lambda client, e: None if e.slug == "bozuk" else dict(OPEN))
+    r = CollectRepo()
+    stats = kk.collect_kktcar(r, SOURCE)
+    assert (stats.fetched, stats.new, stats.failed) == (2, 1, 1) and stats.unread == ["https://kktcar.com/listing/bozuk"]
+    assert "unread=['https://kktcar.com/listing/bozuk']" in repr(stats)  # tur log'u istatistiği olduğu gibi yazar
+
+
+class Page:
+    def __init__(self, status, text):
+        self.status_code, self.text = status, text
+
+
+class Client:
+    def __init__(self, page):
+        self.page = page
+
+    def get(self, url, timeout):
+        return self.page
+
+
+def test_only_an_unrecognised_page_is_kept_and_old_ones_are_pruned(monkeypatch, tmp_path):
+    monkeypatch.setattr(site, "UNREAD_DIR", tmp_path / "okunamayan")
+    entry = site.SitemapEntry("https://kktcar.com/listing/2020-x-y", "2020-x-y", None)
+    monkeypatch.setattr(site, "parse_detail", lambda html: None)
+    assert site.fetch_detail(Client(Page(200, "<html>yeni biçim</html>")), entry) is None
+    assert (tmp_path / "okunamayan" / "2020-x-y.html").read_text() == "<html>yeni biçim</html>"
+    assert site.fetch_detail(Client(Page(404, "yok")), site.SitemapEntry("u", "silinmis", None)) is None
+    assert not (tmp_path / "okunamayan" / "silinmis.html").exists()  # HTTP hatası saklanmaz (sayfa yok)
+    monkeypatch.setattr(site, "parse_detail", lambda html: {"price_amount": 1.0})
+    assert site.fetch_detail(Client(Page(200, "<html>okundu</html>")), site.SitemapEntry("u", "okundu", None))
+    assert not (tmp_path / "okunamayan" / "okundu.html").exists()
+    monkeypatch.setattr(site, "UNREAD_KEEP", 2)
+    for i in range(4):
+        site.keep_unread(site.SitemapEntry("u", f"s{i}/../x", None), "x")
+    assert len(list((tmp_path / "okunamayan").glob("*.html"))) == 2  # en çok UNREAD_KEEP; ad klasör dışına çıkamaz
+
+
+def test_keeping_a_page_never_breaks_the_round(tmp_path):
+    blocker = tmp_path / "dosya"
+    blocker.write_text("klasör değil")
+    site.keep_unread(site.SitemapEntry("u", "a", None), "x", folder=blocker / "alt")  # yazılamaz: sessizce atlanır
