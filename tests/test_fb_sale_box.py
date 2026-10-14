@@ -8,7 +8,7 @@ import pytest
 from application import social_import as si
 from application import urgent
 from domain.comparables import Market
-from domain.data_gate import DATE_UNSURE, FIELD_PRICE, data_gaps
+from domain.data_gate import DATE_SEEN, DATE_UNSURE, FIELD_PRICE, data_gaps
 from domain.freetext_parser import body_price
 from domain.settings import Settings
 from tests.test_social_import import NOW, FakeRepo, _file, _line, _rows
@@ -146,3 +146,35 @@ def test_guessed_currency_gets_no_urgent_message():
     guess = ev("tahmin", price=7000)
     guess.listing["currency_guess"] = True
     assert urgent.candidates([guess], Settings(), EVAL_NOW) == []
+
+
+# --- paylaşım saati (sosyal oturum 14.10.2026: okuyucu zamanı Facebook'un "9 minutes ago" yazısından okumaya başladı) ----------------------
+@pytest.mark.parametrize("posted,dated,want", [
+    (NOW - timedelta(hours=1), True, NOW - timedelta(hours=1)),
+    (None, False, NOW),  # paylaşım saati yok: görülme anı, "paylaşıldı" denmez
+    (NOW + timedelta(minutes=5), True, NOW + timedelta(minutes=5)),  # saat kayması payı
+    (NOW + timedelta(hours=3), False, NOW),  # görülmeden 3 saat sonra paylaşılmış olamaz: saat dilimi hatası, yok sayılır
+])
+def test_post_time_is_kept_only_when_plausible(posted, dated, want):
+    _, post = si.parse_line(_line(paylasim_utc=posted.isoformat() if posted else None))
+    assert (post.posted_at, post.dated) == (want, dated)
+
+
+def test_undated_post_is_marked_and_dated_one_is_not(tmp_path):
+    repo = FakeRepo(_rows())
+    _file(tmp_path, NOW, _line("1000000001", paylasim_utc=None), _line("1000000002"))
+    si.import_facebook(repo, tmp_path)
+    got = {item: data.get("urgency_signals") or [] for (_, item), data in repo.listings.items()}
+    assert DATE_SEEN in got["1000000001"] and DATE_SEEN not in got["1000000002"]
+
+
+@pytest.mark.parametrize("ago,platform,signals,want", [
+    (timedelta(minutes=25), "facebook", [], "🕒 25 dk önce paylaşıldı"),
+    (timedelta(hours=5, minutes=10), "facebook", None, "🕒 5 saat önce paylaşıldı"),
+    (timedelta(days=3, hours=2), "facebook", [], "🕒 3 gün önce paylaşıldı"),
+    (timedelta(minutes=25), "facebook", [DATE_SEEN], "🕒 Paylaşım saati okunamadı · 25 dk önce görüldü"),
+    (timedelta(days=2), "web", [DATE_SEEN], "🕒 İlan tarihi: 07.10.2026"),
+])
+def test_message_says_shared_only_when_the_time_was_read(ago, platform, signals, want):
+    from application.notify import posted_age_text
+    assert posted_age_text(NOW - ago, platform, now=NOW, signals=signals) == want

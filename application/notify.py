@@ -6,7 +6,7 @@ import httpx
 
 from application.evaluate import Evaluated, confidence_label
 from domain.comparables import Market, effective_km
-from domain.data_gate import DATE_UNSURE, KM_UNKNOWN_WARNING
+from domain.data_gate import DATE_SEEN, DATE_UNSURE, KM_UNKNOWN_WARNING
 from domain.kktc_time import kktc_hour
 from domain.photo_date import kktcarabam_photo_time
 from domain.profit import Tier
@@ -218,7 +218,7 @@ def format_alert(ev: Evaluated, note: dict | None = None, twins: list[dict] | No
     if note and note.get("gercek_firsat_mi") is False:  # yapay zekâ şüpheli buldu: mesaj yine gider ama uyarı görünür
         risks = note.get("risk_notlari") or []
         lines.append("⚠️ Yapay zekâ şüpheli buldu" + (": " + str(risks[0])[:160] if risks else ""))
-    age = posted_age_text(l.get("posted_at"), l.get("platform"))
+    age = posted_age_text(l.get("posted_at"), l.get("platform"), signals=l.get("urgency_signals"))
     if age:
         lines.append(age)
     if l.get("platform") == "facebook":  # sahibin kararı (09.10.2026): grup gönderisi üye olmayana açılmaz
@@ -228,14 +228,15 @@ def format_alert(ev: Evaluated, note: dict | None = None, twins: list[dict] | No
     return "\n".join(lines)
 
 
-def posted_age_text(posted_at, platform: str | None, now: datetime | None = None) -> str | None:
-    """Mesajda ilanın ne kadar taze olduğu. Sosyal medyada saat (gönderi saati kesin), sitelerde tarih (çoğu zaman saat yok)."""
+def posted_age_text(posted_at, platform: str | None, now: datetime | None = None, signals=None) -> str | None:
+    """Mesajda ilanın ne kadar taze olduğu. Sosyal medyada saat, sitelerde tarih (çoğu zaman saat yok). Facebook gönderisinin paylaşım saati
+    okunamadıysa (DATE_SEEN: posted_at okuyucunun gördüğü an) "paylaşıldı" denmez: yalnız ne zaman görüldüğü yazılır."""
     if not posted_at:
         return None
     now = now or datetime.now(timezone.utc)
     if platform in SOCIAL:
-        hours = max(0, int((now - posted_at).total_seconds() // 3600))
-        return f"🕒 {hours} saat önce paylaşıldı" if hours < 48 else f"🕒 {hours // 24} gün önce paylaşıldı"
+        ago = _ago(now - posted_at)
+        return f"🕒 Paylaşım saati okunamadı · {ago} önce görüldü" if signals and DATE_SEEN in signals else f"🕒 {ago} önce paylaşıldı"
     return f"🕒 İlan tarihi: {posted_at:%d.%m.%Y}"
 
 

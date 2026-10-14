@@ -25,7 +25,7 @@ def _item(i: int, r: dict) -> str:
         f"   £{r['price_gbp']:,.0f} → ~£{r['exit_price_gbp']:,.0f} · kâr ~£{r['profit_gbp']:,.0f} (%{r['profit_pct']:.0f}) · "
         f"güven {confidence_label(Confidence(r['confidence']))} ({r['comparables_n']} emsal)".replace(",", "."),
     ]
-    age = posted_age_text(r.get("posted_at"), r.get("platform"))
+    age = posted_age_text(r.get("posted_at"), r.get("platform"), signals=r.get("urgency_signals"))
     if age:
         lines.append("   " + age)
     if r.get("alert_level") == "sari" and r.get("tier") == "guclu":

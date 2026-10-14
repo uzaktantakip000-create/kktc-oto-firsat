@@ -33,6 +33,8 @@ GAP_LABELS = {
 FIELD_PRICE = "fiyat_alani"  # listings.urgency_signals: fiyat yalnız Facebook satış kutusunda (application/social_ingest)
 DATE_UNSURE = "tarih_belirsiz"  # listings.urgency_signals: Facebook gönderisinin tarihi yok ve okuyucu imlece ulaşmadan durdu (devir "tazelik";
 # application/notify.is_fresh: anlık bildirim yok, emsal olur)
+DATE_SEEN = "tarih_gorulme"  # listings.urgency_signals: Facebook gönderisinin paylaşım saati okunamadı, posted_at = ilk görülme (14.10.2026;
+# mesaj "N saat önce paylaşıldı" demez: application/notify.posted_age_text)
 GAP_LABELS.update(MISMATCH_LABELS)
 
 

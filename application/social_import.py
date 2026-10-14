@@ -18,7 +18,7 @@ import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from application.collect_facebook import group_default_steering
@@ -37,6 +37,7 @@ MAX_TEXT = 8000
 EXTRA_MAX_LINES = 8  # "ek_metin": satış kutusu satırları (sosyal oturum 13.10.2026: ≤8 satır, satır ≤120 karakter)
 EXTRA_LINE_MAX = 120
 FRESHNESS = ("kesin", "imlec", "belirsiz")  # devir "tazelik" (sosyal oturum 13.10.2026); "belirsiz" ilan anlık bildirim almaz (domain.data_gate.DATE_UNSURE)
+FUTURE_SLACK = timedelta(minutes=10)  # paylaşım saati görülme anından bundan fazla ilerideyse yanlış okunmuştur (saat dilimi): yok sayılır
 MAX_RADAR = 10_000  # satıcı radarı sayısının makul üst sınırı (bozuk değer yok sayılır)
 _FILE = re.compile(r"^facebook-\d{8}\.jsonl$")
 _GROUP = re.compile(r"^[a-z0-9._-]{1,64}$")  # kaynaklar.json grup anahtarı (social_files._FB_GROUP ile aynı)
@@ -157,9 +158,11 @@ def parse_line(line: str) -> tuple[str, SocialPost] | str:
     image = photo if isinstance(photo, str) and _CDN.match(photo) else None
     if isinstance(photo_file, str) and photo_file == f"foto/{pid}.jpg" and _PHOTO_FILE.match(photo_file):
         image = FILE_PREFIX + photo_file  # yerel kopya (yalnız bu gönderinin adıyla)
+    posted, seen = _parse_time(doc.get("paylasim_utc")), _parse_time(doc.get("goruldu_utc"))
+    if posted and seen and posted > seen + FUTURE_SLACK:
+        posted = None  # gelecekte paylaşılmış olamaz: saat dilimi/okuma hatası (14.10.2026: okuyucu zamanı Facebook yazısından okumaya başladı)
     post = SocialPost(platform=PLATFORM, source_key=group, post_id=pid, url=f"https://www.facebook.com/groups/{group}/posts/{pid}/",
-                      posted_at=_parse_time(doc.get("paylasim_utc")) or _parse_time(doc.get("goruldu_utc")), text=text[:MAX_TEXT],
-                      image_url=image,
+                      posted_at=posted or seen, text=text[:MAX_TEXT], image_url=image, dated=posted is not None,
                       seller_posts_14d=radar if type(radar) is int and 1 <= radar <= MAX_RADAR else None,
                       extra_text=_extra_text(doc.get("ek_metin")),
                       freshness=doc.get("tazelik") if doc.get("tazelik") in FRESHNESS else None)

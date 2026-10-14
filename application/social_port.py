@@ -61,6 +61,8 @@ class SocialPost:
     # yalnız Facebook devir satırı "tazelik" (sosyal oturum, 13.10.2026): "kesin" (paylaşım tarihi var), "imlec" (tarih yok ama okuma önceki
     # turun son gönderisine ulaştı: son turdan sonra paylaşıldı), "belirsiz" (tarih yok, imlece ulaşılmadı: eski olabilir). Eski satırda None.
     freshness: str | None = None
+    # yalnız Facebook devir satırı: paylaşım saati okundu mu (False: posted_at okuyucunun gördüğü an; mesaj "paylaşıldı" demez). Eski satırda True.
+    dated: bool = True
 
 
 @dataclass
