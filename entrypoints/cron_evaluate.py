@@ -16,7 +16,7 @@ from application.evaluate import LazyBook, evaluate_new, load_book, pending_aler
 from application.health import check_fx, check_sources, notify_owner
 from application.llm_reader import deal_notes
 from application import urgent
-from application.notify import api, send_alerts, send_to_subscribers
+from application.notify import send_alerts, send_to_subscribers, send_urgent
 from application.report import send_weekly_report
 from application.runner_gate import TICK_FRESH, VPS_TICK_KEY, github_should_skip
 from application.send_gate import gonderim_kontrol
@@ -244,9 +244,9 @@ def deliver(repo: Repository, token: str, owner: str, settings: Settings, evalua
         except Exception as e:  # 🟠 hatası özet/rapor gibi yan işleri engellemesin
             print("tahmini fırsat gönderimi başarısız:", type(e).__name__, redact(str(e))[:150])
     try:  # ⚡ ACİL SATICI (application/urgent): bu turda değerlendirilen ilanlardan acelesi olan bireysel satıcı, piyasanın %10+ altında; sahibe,
-        # az pazarlık isteyen herkese
-        urgent_sent = urgent.run(repo, evaluated, lambda text: api(token, "sendMessage", chat_id=owner, text=text), settings,
-                                 share=lambda text: send_to_subscribers(repo, token, text, skip_chat=owner))
+        # az pazarlık isteyen herkese. 20.10.2026: 👍/👎 (+ WhatsApp) düğmeli, ulaştığı her sohbet alerts'e 'acil' yazılır, aynı-araç kilidi
+        urgent_sent = urgent.run(repo, evaluated, lambda listing, text: send_urgent(repo, token, owner, listing, text), settings,
+                                 share=lambda listing, text: send_to_subscribers(repo, token, text, skip_chat=owner, listing=listing))
         if urgent_sent:
             print(f"acil satıcı: {urgent_sent} mesaj")
     except Exception as e:  # yan iş: 🟢 yolunu ve raporları bozmasın

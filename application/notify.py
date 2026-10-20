@@ -13,7 +13,7 @@ from domain.profit import Tier
 from domain.red_flags import customs_stated
 from domain.settings import Settings
 from infrastructure.config import mask_chat, redact
-from infrastructure.db.repository import Repository, unsaved_alert_key
+from infrastructure.db.repository import URGENT_TIER, Repository, unsaved_alert_key
 
 SOCIAL = ("instagram", "facebook")
 # KKTC yerel saatiyle 00:00–06:59 arası gelen fırsat mesajları (🟢/🟠 ve 🟠 özeti) HEMEN gider ama sessiz (sesi/titreşimi kapalı): uyuyanı uyandırmasın
@@ -352,8 +352,8 @@ def _record_alert(repo: Repository, listing_id, chat_id: str, tier: str, msg_id,
         except Exception as e:
             err = e
     print(f"UYARI: bildirim gitti ama kaydı yazılamadı (ilan {listing_id}): {type(err).__name__} {redact(str(err))[:150]}")
-    try:
-        repo.set_state(unsaved_alert_key(listing_id, chat_id), str(msg_id))
+    try:  # ⚡ ('acil') izi ayrı anahtarda: 🟢'nin "bu sohbete gitti" sayımına karışmaz (repository.unsaved_alert_key)
+        repo.set_state(unsaved_alert_key(listing_id, chat_id, tier), str(msg_id))
     except Exception as e:  # veritabanı tümden yoksa tur zaten hata verir; burada ikinci kez fırlatmanın faydası yok
         print(f"UYARI: yedek iz de yazılamadı: {type(e).__name__} {redact(str(e))[:150]}")
         return
@@ -365,20 +365,47 @@ def _record_alert(repo: Repository, listing_id, chat_id: str, tier: str, msg_id,
         pass
 
 
-def send_to_subscribers(repo: Repository, token: str, text: str, skip_chat: str | None = None, now: datetime | None = None) -> int:
+def urgent_keyboard(listing: dict) -> dict:
+    """⚡ ACİL SATICI düğmeleri (20.10.2026; sahip: "Facebook fırsatlarında neden oylama yok?"): 🟢 ile AYNI 👍 İşe yarar / 👎 Yanlış
+    (`keyboard`; bot_poll fb:ilgilendim / fb:yanlis_fiyat'ı her ilan kimliği için zaten kaydeder) ve geçerli telefon varsa WhatsApp."""
+    return keyboard(listing["id"], whatsapp_url(listing.get("seller_phone"), greeting(listing)))
+
+
+def _record_urgent(repo: Repository, listing: dict, chat_id, msg_id) -> None:
+    """Ulaşan ⚡ için alerts satırı (seviye URGENT_TIER, sohbet başına bir satır): /son ve haftalık raporun oy listesi görür; 🟢/🟠 sayımı ve
+    kotası görmez (repository.URGENT_TIER). Kayıt yolu 🟢 ile aynı: bir kez yeniden dene, olmazsa ⚡'e özel yedek iz + sahibe uyarı."""
+    _record_alert(repo, listing["id"], str(chat_id), URGENT_TIER, msg_id, evaluation_id=listing.get("evaluation_id"),
+                  price_gbp=float(listing["price_gbp"]))
+
+
+def send_urgent(repo: Repository, token: str, chat_id, listing: dict, text: str) -> None:
+    """⚡ mesajını TEK sohbete (sahibe) düğmeli gönderir ve gittiyse kaydeder. Gönderim hatası yukarı fırlar (eskisi gibi: cron_evaluate.deliver
+    yakalar). Sahibin mesajı eskisi gibi sesli ve bağlantı önizlemeli gider (yalnız düğmeler eklendi)."""
+    res = api(token, "sendMessage", chat_id=chat_id, text=text, reply_markup=urgent_keyboard(listing))
+    _record_urgent(repo, listing, chat_id, res["message_id"])
+
+
+def send_to_subscribers(repo: Repository, token: str, text: str, skip_chat: str | None = None, now: datetime | None = None,
+                        listing: dict | None = None) -> int:
     """Düz metni onaylı abonelere yollar (sahip `skip_chat` hariç: ona ayrıca gitti); ⚡ ACİL SATICI paylaşımı (application/urgent). Gece
-    (QUIET_HOURS_KKTC) sessiz. Bir abonenin hatası öbürlerini durdurmaz; botu engelleyen (403) abone durdurulur (send_alerts gibi). Dönen: ulaşan."""
+    (QUIET_HOURS_KKTC) sessiz. Bir abonenin hatası öbürlerini durdurmaz; botu engelleyen (403) abone durdurulur (send_alerts gibi). Dönen: ulaşan.
+    `listing` verilirse (⚡, 20.10.2026) mesaj sahibinkiyle aynı 👍/👎 (+ WhatsApp) düğmeleriyle gider ve ulaştığı her sohbet alerts'e 'acil'
+    olarak yazılır (aboneler de oylar; haftalık raporlarındaki oy listesinde görünür)."""
+    markup = {"reply_markup": urgent_keyboard(listing)} if listing is not None else {}
     n = 0
     for sub in repo.approved_subscribers():
         if skip_chat is not None and str(sub["chat_id"]) == str(skip_chat):
             continue
         try:
-            api(token, "sendMessage", chat_id=sub["chat_id"], text=text, disable_web_page_preview=True, **quiet_extra(now))
+            res = api(token, "sendMessage", chat_id=sub["chat_id"], text=text, disable_web_page_preview=True, **markup, **quiet_extra(now))
             n += 1
         except TelegramError as e:
             if e.status == 403:
                 repo.conn.execute("UPDATE subscribers SET status='durduruldu' WHERE chat_id=%s", (sub["chat_id"],))
             print(f"mesaj gönderilemedi ({mask_chat(sub['chat_id'])}): {e.status} {e.description}")
+            continue
+        if listing is not None:
+            _record_urgent(repo, listing, sub["chat_id"], res["message_id"])
     return n
 
 

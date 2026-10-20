@@ -135,6 +135,19 @@ def test_unvoted_list_says_how_the_system_is_measured_and_has_numbered_buttons()
     assert all(len(b["callback_data"].encode()) <= 64 for b in buttons)  # Telegram sınırı
 
 
+def test_flash_alerts_are_in_the_vote_list_with_their_own_mark_and_counted_apart():
+    """20.10.2026: ⚡ ACİL SATICI da düğmeli ve alerts'te ('acil'): oy listesinde ⚡ işaretiyle; sayımda payı ayrıca yazılır (🟢 sanılmasın).
+    🟢/🟠 listede ⚡'lerden önce gelir (her grup en yeni önce): sık ⚡ seyrek 🟢'yi ilk 10 satırdan itmesin (spec §24.5 oy kapsamı)."""
+    votes = [vote_row(1, tier="acil"), vote_row(2, tier="acil"), vote_row(3), vote_row(4, tier="acil", voted=True), vote_row(5, tier="tahmini")]
+    text, kb = build(FakeRepo(votes=votes))
+    assert "Son 30 günde 5 fırsat bildirimi gitti (3 tanesi ⚡ acil satıcı), 1 tanesine oy verdin." in text
+    assert "1) 🟢 2011 BMW" in text and "2) 🟠 2011 BMW" in text
+    assert "3) ⚡ 2011 BMW 3 Serisi 320i · £7.300 · 14.10" in text and "4) ⚡ 2011 BMW" in text
+    data = [b["callback_data"] for row in kb["inline_keyboard"] for b in row]
+    assert data[0] == "fb:ilgilendim:00000000-0000-0000-0000-000000000003"  # düğme numarası satırla aynı
+    assert data[4:6] == ["fb:ilgilendim:00000000-0000-0000-0000-000000000001", "fb:yanlis_fiyat:00000000-0000-0000-0000-000000000001"]
+
+
 def test_report_lines_show_the_listing_own_price_when_it_is_not_sterling():
     vote = vote_row(1) | {"price_amount": 9650.0, "currency": "USD", "price_gbp": 7300.0}
     near = near_row(1) | {"price_amount": 400000.0, "currency": "TRY", "price_gbp": 7750.0}

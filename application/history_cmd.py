@@ -1,8 +1,9 @@
-"""/son komutu: gönderilmiş son 10 fırsat, her biri için sahibin düğme cevabıyla (sade metin)."""
+"""/son komutu: gönderilmiş son 10 fırsat, her biri için sahibin düğme cevabıyla (sade metin). 20.10.2026'dan beri ⚡ ACİL SATICI da
+listelenir (alerts.tier 'acil'), 🟢/🟠'den ayrılsın diye ⚡ işaretiyle."""
 from domain.kktc_time import to_kktc
-from infrastructure.db.repository import Repository
+from infrastructure.db.repository import URGENT_TIER, Repository
 
-ICON = {"guclu": "🟢", "tahmini": "🟠"}
+ICON = {"guclu": "🟢", "tahmini": "🟠", URGENT_TIER: "⚡"}
 FEEDBACK_TEXT = {"satilmis": "✅ satılmış dedin", "pas": "🙅 pas dedin", "yanlis_fiyat": "❌ yanlış fiyat dedin",
                  "kusurlu": "⚠️ kusurlu/sahte dedin", "ilgilendim": "👍 ilgilendim dedin"}
 NO_BUTTON = "❔ düğmeye basılmadı"

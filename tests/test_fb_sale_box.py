@@ -14,6 +14,7 @@ from domain.settings import Settings
 from tests.test_social_import import NOW, FakeRepo, _file, _line, _rows
 from tests.test_evaluate import NOW as EVAL_NOW
 from tests.test_urgent import Repo as UrgentRepo
+from tests.test_urgent import collect
 from tests.test_urgent import ev
 
 BOX = "2018 Honda Civic otomatik\n£8,750\nGirne, Cyprus"
@@ -84,7 +85,8 @@ def test_urgent_box_price_goes_only_to_the_owner():
     owner, others = [], []
     boxed = ev("kutu", price=7000)
     boxed.listing["urgency_signals"] = [FIELD_PRICE]
-    assert urgent.run(UrgentRepo(), [boxed, ev("normal", price=6900)], owner.append, Settings(), EVAL_NOW, share=others.append) == 2
+    # "normal" başka yıl: aynı model/yıl ±%5 fiyatlı ikinci ilan aynı-araç kilidine takılırdı (20.10.2026); bu test yalnız paylaşımı sınar
+    assert urgent.run(UrgentRepo(), [boxed, ev("normal", price=6900, year=2016)], collect(owner), Settings(), EVAL_NOW, share=collect(others)) == 2
     assert len(owner) == 2 and len(others) == 1 and others[0] != next(m for m in owner if "/kutu/" in m)
 
 
