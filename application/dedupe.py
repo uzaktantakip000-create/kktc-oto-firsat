@@ -2,7 +2,12 @@ from collections import Counter
 from datetime import datetime
 from itertools import groupby
 
-from domain.duplicates import TWIN_WINDOW_HOURS, cross_source_twin, same_car
+from domain.duplicates import (
+    TWIN_WINDOW_HOURS,
+    cross_source_twin,
+    same_car,
+    same_post_text,
+)
 from infrastructure.db.repository import Repository
 
 QUICK_NEW_HOURS = 3  # hızlı tur: son 3 saatte yeni ilan gelen gruplara bakılır (tick 15 dk'da bir; kaçan olursa saatlik tam tur yakalar)
@@ -17,7 +22,9 @@ def mark_duplicates(repo: Repository, quick: bool = False, now: datetime | None 
     ilanın kanoniği olamaz, yalnız onun (ya da başka gölge ilanın) kopyası olabilir. Böylece gölge olmayan ilanların bağları gölge
     ilanlar hiç yokmuş gibi aynıdır.
     `since` (Facebook hızlı şeridi, entrypoints/fb_fast): yalnız bu andan sonra yeni ilan görülen gruplar; kaynaklar arası ikiz taraması
-    (yalnız KKTCarabam ↔ KibrisArabaAl) atlanır, 15 dakikalık turda yapılır. Aynı aracın başka gruptaki paylaşımı böylece hemen kopya olur."""
+    (yalnız KKTCarabam ↔ KibrisArabaAl) atlanır, 15 dakikalık turda yapılır. Aynı aracın başka gruptaki paylaşımı böylece hemen kopya olur.
+    Eşleşme: `same_car` (km/telefon/fiyat) YA DA `same_post_text` (20.10.2026: sosyal medyada aynı gönderi metni + aynı fiyat; km ve telefon
+    gerekmez). İkisi de aynı sıra ve aktiflik kurallarıyla: ilk görülen (gölge olmayan önce) kanonik, aktif ilan yalnız aktif ilanın kopyası."""
     today = now.date() if now else None
     if since is not None:
         rows = repo.dedupe_candidates(new_since=since)
@@ -32,7 +39,8 @@ def mark_duplicates(repo: Repository, quick: bool = False, now: datetime | None 
                 continue
             # Aktif ilan yalnızca AKTİF bir ilanın kopyası olabilir: eski ilan satılıp araç yeniden
             # ilana çıktıysa (belki indirimle) bu yeni bir fırsat sinyalidir, elenmemeli.
-            match = next((c for c in canon if (c["is_active"] or not r["is_active"]) and same_car(c, r, today)), None)
+            match = next((c for c in canon if (c["is_active"] or not r["is_active"])
+                          and (same_car(c, r, today) or same_post_text(c, r, today))), None)
             if match:
                 repo.set_duplicate(r["id"], match["id"])
                 marked += 1

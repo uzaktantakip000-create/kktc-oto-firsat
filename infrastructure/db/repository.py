@@ -7,6 +7,13 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from domain.comparables import KKTCAR_HANDLE_PREFIX
+from domain.duplicates import (
+    POST_TEXT_CHARS,
+    POST_TEXT_FOLD,
+    POST_TEXT_MIN_CHARS,
+    POST_TEXT_PLATFORMS,
+    POST_TEXT_RAW_CHARS,
+)
 from domain.lifecycle import UNKNOWN, inactive_reason
 from domain.normalize import normalize_brand, normalize_model, reclassify_non_car
 
@@ -38,6 +45,13 @@ RESURFACE_RUN_GAP_MINUTES = 10  # "önceki tur" = ilk görülme farkı bundan b�
 _KKA_NUMBER = "substring({a}.source_item_id from '^[0-9]{{1,15}}')::bigint"  # KKTCarabam ilan numarası: baştaki rakamlar (≤15 hane: bigint'e sığar)
 
 UNSAVED_ALERT_PREFIX = "sent:unsaved:"  # 'alert:' öneki sahip-uyarı zaman damgaları için (alert_recent) ayrılmış: karışmasın
+
+# Gönderi metninin normalize öneki (domain/duplicates.py `post_text`) SQL'de: aynı adımlar aynı sırayla (ilk N karakter → NFKC → Türkçe harfler
+# ASCII'ye → küçük harf → [a-z0-9] dışı her dizi tek boşluk → baş/son boşluk → ilk 300 karakter). Küçük harfe çevirmeden ÖNCE Türkçe harfler
+# açıkça çevrilir: lower() yerel ayara bağlıdır (canlı ICU, yerel test C), [a-z0-9] dışı her şey zaten düştüğü için sonuç ikisinde aynıdır.
+# Parametreler (%(pt_raw)s, %(pt_from)s, %(pt_to)s, %(pt_chars)s) domain sabitlerinden gelir; Python ile aynı olduğu DB testiyle kanıtlanır.
+POST_TEXT_SQL = ("left(btrim(regexp_replace(lower(translate(normalize(left(raw_text, %(pt_raw)s), NFKC), %(pt_from)s, %(pt_to)s)),"
+                 " '[^a-z0-9]+', ' ', 'g')), %(pt_chars)s)")
 
 
 def _alerted_sql(lid: str, chat: str | None = None) -> str:
@@ -358,26 +372,49 @@ class Repository:
     def dedupe_candidates(self, days: int = 120, new_hours: int | None = None, new_since: datetime | None = None) -> list[dict]:
         """Mükerrer taraması için ilanlar. `new_hours` verilirse yalnız son 'new_hours' saatte yeni ilan görülen (marka, model, yıl)
         grupları gelir (gruplar tam gelir: eşleştirme sonucu tam taramayla aynıdır); eski gruplardaki değişimler saatlik tam turda yakalanır.
-        `new_since` (Facebook hızlı şeridi): aynısı, yeni ilan bu andan sonra görülmüşse (az önce aktarılan gönderilerin grupları)."""
-        extra, args = "", [days]
+        `new_since` (Facebook hızlı şeridi): aynısı, yeni ilan bu andan sonra görülmüşse (az önce aktarılan gönderilerin grupları).
+        Aynı gönderi metni kuralı (domain/duplicates.py `same_post_text`, 20.10.2026) için `text_fp`, `price_amount`, `currency`: parmak izi
+        veritabanında hesaplanır, ilan metni hiç okunmaz (Supabase çıkış kotası). Yalnız kuralın bağ kurabileceği satırlarda dolu (diğerlerinde
+        üçü de None): kopya olmayan ve aynı (marka, model, yıl, parmak izi, tutar, para birimi) içinde en az İKİ kopya olmayan ilandan biri (bağ
+        yalnız iki kopya olmayan, fiyatı aynı ilan arasında kurulur; gruplar tam geldiği için sayım hızlı/tam turda aynıdır). Üç değer TEK sütunda
+        gelir ("<md5> <tutar> <para birimi>", fiyatsızda boş): sütun başına her satıra 4 bayt uzunluk başlığı eklenir, NULL'da bile.
+        Ölçüm (20.10.2026, canlı tam tur 15.168 satır): eski sorgu ~2,2 MB; ayrı üç sütun +260 kB, tek sütun +146 kB (ilk tur, 2.492 satırda
+        parmak izi); bağlar kurulunca yalnız yeni kopya çiftleri parmak izi taşır, kalan satır başına 4 bayt (tam tur ~+60 kB). `pt` bir kez
+        hesaplansın diye c MATERIALIZED: satır içine açılınca normalize ifadesi satır başına altı kez çalışıyordu (sunucuda 4,7 sn; şimdi ~0,85)."""
+        extra, args = "", {"days": days, "pt_raw": POST_TEXT_RAW_CHARS, "pt_chars": POST_TEXT_CHARS, "pt_min": POST_TEXT_MIN_CHARS,
+                           "pt_from": POST_TEXT_FOLD[0], "pt_to": POST_TEXT_FOLD[1], "pt_platforms": list(POST_TEXT_PLATFORMS)}
         if new_since is not None:
-            extra = """ AND EXISTS (SELECT 1 FROM listings n WHERE n.first_seen_at > %s
+            extra = """ AND EXISTS (SELECT 1 FROM listings n WHERE n.first_seen_at > %(since)s
                                     AND n.brand_norm = listings.brand_norm AND n.model_norm IS NOT DISTINCT FROM listings.model_norm
                                     AND n.year = listings.year)"""
-            args.append(new_since)
+            args["since"] = new_since
         elif new_hours is not None:
-            extra = """ AND EXISTS (SELECT 1 FROM listings n WHERE n.first_seen_at > NOW() - make_interval(hours => %s)
+            extra = """ AND EXISTS (SELECT 1 FROM listings n WHERE n.first_seen_at > NOW() - make_interval(hours => %(new_hours)s)
                                     AND n.brand_norm = listings.brand_norm AND n.model_norm IS NOT DISTINCT FROM listings.model_norm
                                     AND n.year = listings.year)"""
-            args.append(new_hours)
-        return self.conn.execute(
-            """SELECT id, brand_norm, model_norm, year, km, seller_phone, price_gbp::float8 AS price_gbp,
-                      first_seen_at, duplicate_of, is_active,
-                      listings.source_id IN (SELECT id FROM sources WHERE alert_level = 'golge') AS shadow
-               FROM listings WHERE brand_norm IS NOT NULL AND year IS NOT NULL
-                 AND first_seen_at > NOW() - make_interval(days => %s)""" + extra,
+            args["new_hours"] = new_hours
+        rows = self.conn.execute(
+            f"""WITH c AS MATERIALIZED (
+                 SELECT id, brand_norm, model_norm, year, km, seller_phone, price_gbp, price_amount, currency, first_seen_at, duplicate_of,
+                        is_active, listings.source_id IN (SELECT id FROM sources WHERE alert_level = 'golge') AS shadow,
+                        CASE WHEN duplicate_of IS NULL AND model_norm IS NOT NULL
+                                  AND listings.source_id IN (SELECT id FROM sources WHERE platform = ANY(%(pt_platforms)s))
+                             THEN {POST_TEXT_SQL} END AS pt
+                 FROM listings WHERE brand_norm IS NOT NULL AND year IS NOT NULL
+                   AND first_seen_at > NOW() - make_interval(days => %(days)s){extra}),
+               f AS (SELECT c.*, CASE WHEN length(pt) >= %(pt_min)s AND strpos(' ' || pt || ' ', ' ' || year || ' ') > 0
+                                      THEN md5(pt) END AS fp FROM c)
+               SELECT id, brand_norm, model_norm, year, km, seller_phone, price_gbp::float8 AS price_gbp, first_seen_at, duplicate_of,
+                      is_active, shadow,
+                      CASE WHEN fp IS NOT NULL AND count(*) OVER (PARTITION BY brand_norm, model_norm, year, fp, price_amount, currency) > 1
+                           THEN fp || ' ' || COALESCE(price_amount::float8::text, '') || ' ' || COALESCE(currency, '') END AS text_key
+               FROM f""",
             args,
         ).fetchall()
+        for r in rows:
+            fp, amount, currency = (r.pop("text_key") or "  ").split(" ", 2)
+            r["text_fp"], r["price_amount"], r["currency"] = fp or None, float(amount) if amount else None, currency or None
+        return rows
 
     def twin_candidates(self, window_hours: int, days: int = 120, new_hours: int | None = None) -> list[dict]:
         """Kaynaklar arası ikiz taraması (application/dedupe.py) için KKTCarabam ve KibrisArabaAl ilanları: yalnız ÖBÜR sitede aynı

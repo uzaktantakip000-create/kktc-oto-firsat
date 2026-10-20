@@ -1,7 +1,15 @@
 from datetime import date, datetime, timedelta, timezone
 
 from application.dedupe import mark_duplicates
-from domain.duplicates import cross_source_twin, district, same_car
+from domain.duplicates import (
+    POST_TEXT_MIN_CHARS,
+    cross_source_twin,
+    district,
+    post_text,
+    post_text_fp,
+    same_car,
+    same_post_text,
+)
 
 NOW = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
@@ -319,3 +327,128 @@ def test_twin_pass_never_pairs_two_listings_of_the_same_site():
     assert mark_duplicates(repo) == 0
     repo = FakeRepo([], twins=[ad("k1", "kibrisarabaal"), ad("k2", "kibrisarabaal", 10)])
     assert mark_duplicates(repo) == 0
+
+
+# --- aynı gönderi metni (20.10.2026): sosyal medyada aynı metin + aynı fiyat = aynı araç; km ve telefon gerekmez ---
+VITZ_TEXT = ("SATILIK 2015 model Toyota Vitz 1.3 otomatik 🚗 98.000 km, muayeneli, bakımları yeni yapıldı. Takas olmaz!! "
+             "Fiyat: 5.500 STG ☎️ mesaj atın")
+
+
+def post(i, hours_ago=0, text=VITZ_TEXT, platform="facebook", **kw):
+    """dedupe_candidates satırı (Facebook gönderisi): km ve telefon YOK (canlıdaki kopyaların çoğu böyle), parmak izi metinden."""
+    base = dict(id=i, brand_norm="Toyota", model_norm="vitz", year=2015, km=None, seller_phone=None, price_gbp=5500.0,
+                price_amount=5500.0, currency="GBP", is_active=True, first_seen_at=NOW - timedelta(hours=hours_ago), duplicate_of=None)
+    row = base | kw
+    return row | {"text_fp": post_text_fp(text, row["year"], platform)}
+
+
+def test_post_text_normalizes_case_turkish_letters_fancy_letters_punctuation_and_emoji_the_same_way():
+    assert post_text("SATILIK İÇİN: Şık, ÇOK güzel ığdır ÖĞÜ âîû") == "satilik icin sik cok guzel igdir ogu aiu"
+    assert post_text("𝐓𝐎𝐘𝐎𝐓𝐀 ＶＩＴＺ") == "toyota vitz"  # Facebook'un süslü kalın / tam genişlikli harfleri
+    assert post_text("  🚗🚗 Vitz!!!\n\n2015 ---  model  ") == "vitz 2015 model"
+    assert post_text("Ωραίο αυτοκίνητο Vitz Хорошая") == "vitz"  # Yunanca/Kiril düşer (SQL'de de)
+    assert post_text(None) == "" and post_text("") == ""
+    assert post_text("a" * 2000) == "a" * 300  # ilk 300 normalize karakter
+    assert post_text("🚗" * 999 + "x" + "y" * 50) == "x"  # ham metnin yalnız ilk 1000 karakterine bakılır
+
+
+def test_post_text_fp_same_post_reposted_with_other_emoji_and_punctuation_is_the_same_fingerprint():
+    a = post_text_fp(VITZ_TEXT, 2015, "facebook")
+    assert a and len(a) == 32
+    assert post_text_fp("🔥🔥 " + VITZ_TEXT.upper().replace(",", " ;") + " 🔥", 2015, "facebook") == a
+    assert post_text_fp(VITZ_TEXT, 2015, "instagram") == a
+    assert post_text_fp(VITZ_TEXT.replace("98.000", "99.000"), 2015, "facebook") != a  # rakam farkı = farklı metin
+    assert post_text_fp(VITZ_TEXT + " tek sahibinden", 2015, "facebook") != a  # 300 karakterden kısa metinde ek söz de fark
+    long_post = VITZ_TEXT + " Lastikler yeni, klima buz gibi, iç temizliği yapıldı, sigara içilmedi." * 4
+    assert len(post_text(long_post)) == 300
+    long_fp = post_text_fp(long_post, 2015, "facebook")
+    assert post_text_fp(long_post + "\nLefkoşa · £5,500 #satilik #vitz", 2015, "facebook") == long_fp  # 300'den sonrası (satış kutusu, etiketler) sayılmaz
+
+
+def test_post_text_fp_only_for_social_long_texts_that_name_the_year():
+    assert post_text_fp(VITZ_TEXT, 2015, "web") is None  # site metinleri kalıp (KKTCar "… ilan arşivi"): kural yalnız sosyal medyada
+    assert post_text_fp(VITZ_TEXT, 2015, None) is None
+    assert post_text_fp("2015 Vitz 5500£", 2015, "facebook") is None  # genel kısa gönderi asla birleşmez
+    generic = "satilik 2015 model toyota vitz 1 3 otomatik benzin 5500 stg"  # 59 karakter: eşiğin hemen altında
+    assert len(post_text(generic)) == POST_TEXT_MIN_CHARS - 1 and post_text_fp(generic, 2015, "facebook") is None
+    assert post_text_fp(generic + " x", 2015, "facebook") is not None  # 61 karakter
+    assert post_text_fp(VITZ_TEXT, None, "facebook") is None
+    assert post_text_fp(VITZ_TEXT, 2016, "facebook") is None  # yıl önekte yok: parmak izi aracı anlatmıyor olabilir
+    assert post_text_fp(VITZ_TEXT.replace("2015 model", "2015model"), 2015, "facebook") is None  # yıl ayrı sözcük olmalı
+    intro = "Galerimizde kredi ve takas imkanı vardır, adresimiz sanayi bölgesi, her gün açığız, arayın bilgi verelim. " * 3
+    assert post_text_fp(intro + VITZ_TEXT, 2015, "facebook") is None  # ilk 300 karakter yalnız galeri girişi: yıl yok
+
+
+def test_same_post_text_links_reposts_without_km_or_phone():
+    a, b = post(1, 30), post(2, 1)
+    assert not same_car(a, b) and same_post_text(a, b)
+    assert same_post_text(post(1, price_gbp=None, price_amount=None, currency=None), post(2, price_gbp=None, price_amount=None, currency=None))
+    # TL ilan: asıl tutar karşılaştırılır (GBP karşılığı günün kuruyla değişebilir)
+    assert same_post_text(post(1, price_amount=250_000.0, currency="TRY", price_gbp=5600.0),
+                          post(2, price_amount=250_000.0, currency="TRY", price_gbp=5450.0))
+
+
+def test_same_post_text_never_links_short_texts_different_prices_years_or_unknown_models():
+    short = "2015 Vitz 5500£"
+    assert not same_post_text(post(1, text=short), post(2, text=short))
+    assert not same_post_text(post(1), post(2, price_amount=5000.0, price_gbp=5000.0))  # fiyat düşüşü yeni sinyal: kopya değil
+    assert not same_post_text(post(1), post(2, currency="TRY"))
+    assert not same_post_text(post(1), post(2, price_amount=None, currency=None, price_gbp=None))  # biri fiyatsız
+    assert not same_post_text(post(1, price_amount=None, currency=None), post(2))
+    assert not same_post_text(post(1, currency=None), post(2, currency=None))  # para birimi bilinmiyor: "aynı fiyat" denemez
+    assert not same_post_text(post(1), post(2, year=2016, text=VITZ_TEXT.replace("2015", "2016")))
+    assert not same_post_text(post(1), {**post(2), "year": 2016})  # parmak izi aynı olsa da yıl farklı
+    assert not same_post_text({**post(1), "model_norm": None}, {**post(2), "model_norm": None})  # model bilinmiyor
+    assert not same_post_text(post(1), {**post(2), "model_norm": "yaris"})
+    assert not same_post_text(post(1), post(2, text=VITZ_TEXT.replace("muayeneli", "muayenesi var")))  # önekte metin farklı
+    assert not same_post_text(post(1), post(2, platform="web"))  # web ilanının parmak izi yok
+
+
+def test_same_post_text_is_vetoed_by_conflicting_km_or_phone():
+    # aynı kalıpla iki ayrı araç (galeri): metnin 300'den sonrası farklı olabilir; km ya da telefon çelişirse birleşmez
+    assert not same_post_text(post(1, km=98_000), post(2, km=145_000), TODAY)
+    assert same_post_text(post(1, km=98_000), post(2, km=98_000), TODAY)
+    assert same_post_text(post(1, km=98_000), post(2, km=None), TODAY)  # bir tarafta km yok: çelişki değil
+    assert same_post_text(post(1, km=9), post(2, km=98_000), TODAY)  # şüpheli km (9) bilinmiyor sayılır
+    assert not same_post_text(post(1, seller_phone="905330000001"), post(2, seller_phone="905330000002"))
+    assert same_post_text(post(1, seller_phone="905330000001"), post(2, seller_phone="905330000001"))
+    assert same_post_text(post(1, seller_phone="905330000001"), post(2))
+
+
+def test_mark_duplicates_links_facebook_reposts_by_text_to_the_first_seen_post():
+    repo = FakeRepo([post("g1", 50), post("g2", 30), post("g3", 1),
+                     post("pahali", 20, price_amount=6500.0, price_gbp=6500.0, text=VITZ_TEXT.replace("5.500", "6.500")),
+                     post("kisa1", 10, text="2015 Vitz 5500£"), post("kisa2", 5, text="2015 Vitz 5500£")])
+    assert mark_duplicates(repo) == 2
+    assert repo.dups == {"g2": "g1", "g3": "g1"}  # farklı fiyatlı ve kısa metinli gönderiler kendi başına kalır
+
+
+def test_text_rule_keeps_the_shadow_and_active_ordering_rules():
+    # gölge grupta önce görülen gönderi, sonra gölge olmayan grupta: gölge olmayan kanonik, gölge ilanlar onun kopyası
+    repo = FakeRepo([post("golge", 20, shadow=True), post("canli", 1, shadow=False), post("golge2", 10, shadow=True)])
+    assert mark_duplicates(repo) == 2 and repo.dups == {"golge": "canli", "golge2": "canli"}
+    # aktif ilan pasif (kalkmış) ilanın kopyası olmaz: araç yeniden ilana çıkmış olabilir
+    repo = FakeRepo([post("eski", 100, is_active=False), post("yeni", 1)])
+    assert mark_duplicates(repo) == 0
+    repo = FakeRepo([post("eski", 100, is_active=False), post("yeni", 50, is_active=False)])
+    assert mark_duplicates(repo) == 1 and repo.dups == {"yeni": "eski"}
+    repo = FakeRepo([post("eski", 100), post("yeni", 1, is_active=False)])  # pasif ilan aktif ilanın kopyası olabilir
+    assert mark_duplicates(repo) == 1 and repo.dups == {"yeni": "eski"}
+    # zaten kopya olan ilan kanonik olamaz ve yeniden yazılmaz
+    repo = FakeRepo([post("a", 50, duplicate_of="z"), post("b", 1)])
+    assert mark_duplicates(repo) == 0
+
+
+def test_text_rule_gives_the_same_links_in_quick_full_and_fast_lane_rounds():
+    rows = [post("g1", 50), post("g2", 2), post("baska", 1, text=VITZ_TEXT.replace("98.000", "120.000"))]
+
+    class AnyRepo(FakeRepo):
+        def dedupe_candidates(self, days=120, new_hours=None, new_since=None):
+            return [dict(r) for r in self.rows]
+
+    results = []
+    for kw in ({}, {"quick": True}, {"since": NOW - timedelta(hours=3)}):
+        repo = AnyRepo(rows)
+        mark_duplicates(repo, **kw)
+        results.append(repo.dups)
+    assert results == [{"g2": "g1"}] * 3

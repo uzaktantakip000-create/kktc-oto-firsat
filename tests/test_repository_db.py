@@ -245,6 +245,127 @@ def test_release_orphan_duplicates_also_frees_copies_linked_to_a_different_model
     assert rows["real_copy"] == canon and rows["other_year"] == canon and rows["null_copy"] == null_canon
 
 
+# --- aynı gönderi metni (20.10.2026): parmak izi SQL'de, Python'la birebir aynı ---
+# Yerel test veritabanı C yerel ayarında, canlı ICU (en_US): lower() ASCII dışı harflerde farklı davranır. Kural bunu Türkçe harfleri önce açıkça
+# çevirip [a-z0-9] dışını atarak etkisiz kılar; aşağıdaki metinler bu farkın ve sınırların (1000 ham, 300 normalize) sonuca sızmadığını gösterir.
+TRICKY_TEXTS = [
+    "SATILIK İÇİN: Şık, ÇOK güzel ığdır ÖĞÜ âîû ÂÎÛ", "İSTANBUL Iğdır ıI iİ", "i\u0307stanbul",  # birleşik nokta
+    "𝐓𝐎𝐘𝐎𝐓𝐀 𝐕𝐈𝐓𝐙 𝟐𝟎𝟏𝟓", "ＴＯＹＯＴＡ\u3000ＶＩＴＺ ２０１５", "Ⓐⓑ ﬁat ² ½ ™ \u212a \u212b",  # süslü, tam genişlik, daire, bağ harfi, Kelvin
+    "naïve café Ελληνικά Кириллица ß ẞ ٣", "a\u00a0b\u200bc\u034fd\te\r\nf", "5️⃣ 👨‍👩‍👧 🚗🔥 ☎️ 0533 000 00 09",
+    "100% 'tırnak' \"çift\" \\ters\\ _alt_çizgi_ %(x)s", "", "   ", "🚗🚗🚗", "See more Devamını gör",
+    "ç" * 999 + "Ç" + "x" * 50,  # 1000 ham karakter sınırı çok baytlı harfte
+    ("kelime " * 60)[:-1], "a" * 299 + " b",  # 300 kesimi boşluğa / sözcük ortasına denk
+    "Ş" * 2000,
+]
+
+
+def post_text_sql_rows(conn, texts, collation=None):
+    """POST_TEXT_SQL'i verilen metinlerde çalıştırır; `collation` verilirse metin o sıralama/yerel ayarla (lower() buna göre davranır)."""
+    from domain.duplicates import POST_TEXT_CHARS, POST_TEXT_FOLD, POST_TEXT_RAW_CHARS
+    from infrastructure.db.repository import POST_TEXT_SQL
+    coll = f' COLLATE "{collation}"' if collation else ""
+    args = {"pt_raw": POST_TEXT_RAW_CHARS, "pt_chars": POST_TEXT_CHARS, "pt_from": POST_TEXT_FOLD[0], "pt_to": POST_TEXT_FOLD[1], "texts": texts}
+    return conn.execute(f"SELECT i, {POST_TEXT_SQL} AS t, md5({POST_TEXT_SQL}) AS h FROM (SELECT u.t{coll} AS raw_text, u.i"
+                        " FROM unnest(%(texts)s::text[]) WITH ORDINALITY AS u(t, i)) x ORDER BY i", args).fetchall()
+
+
+def icu_collations(conn) -> list[str]:
+    """Sunucuda kullanılabilen ICU yerel ayarları (canlı Supabase ICU en_US; CI'deki postgres:17 imajında var, yerel derlemede olmayabilir).
+    tr-TR en zorlusu: orada lower('I') = 'ı'."""
+    found = []
+    for name in ("tr-TR-x-icu", "en-US-x-icu", "und-x-icu"):
+        try:
+            with conn.transaction():
+                conn.execute(f'SELECT lower(\'I\' COLLATE "{name}")')
+            found.append(name)
+        except psycopg.Error:
+            pass
+    return found
+
+
+def test_post_text_sql_is_identical_to_the_python_normalization(db):
+    import hashlib
+
+    from domain.duplicates import post_text
+    for collation in [None, *icu_collations(db.conn)]:
+        rows = post_text_sql_rows(db.conn, TRICKY_TEXTS, collation)
+        assert len(rows) == len(TRICKY_TEXTS)
+        for r, text in zip(rows, TRICKY_TEXTS):
+            assert r["t"] == post_text(text), (collation, text[:40])
+            assert r["h"] == hashlib.md5(post_text(text).encode()).hexdigest()
+        assert rows[3]["t"] == "toyota vitz 2015" and rows[4]["t"] == "toyota vitz 2015"
+    assert post_text_sql_rows(db.conn, [None])[0]["t"] is None
+
+
+FB_TEXT = ("SATILIK 2015 model Toyota Vitz 1.3 otomatik 🚗 98.000 km, muayeneli, bakımları yeni yapıldı. Takas olmaz!! "
+           "Fiyat: 5.500 STG ☎️ mesaj atın")
+FB_POST = dict(km=None, seller_phone=None, price_gbp=5500, price_amount=5500, currency="GBP", raw_text=FB_TEXT)
+
+
+def test_dedupe_candidates_sends_the_text_fingerprint_only_where_the_rule_can_link(db):
+    """Parmak izi yalnız sosyal, modeli bilinen, kopya olmayan ve aynı (marka, model, yıl, parmak izi) içinde en az iki kopya olmayan ilanda gelir
+    (Supabase çıkış kotası: metin hiç okunmaz, gereksiz satıra 32 karakter bile gitmez); tutar/para birimi de yalnız o satırlarda."""
+    from domain.duplicates import post_text_fp
+    c = db.conn
+    g1, g2 = add_source(c, "Grup1", platform="facebook"), add_source(c, "Grup2", platform="facebook")
+    ig, web = add_source(c, "Hesap", platform="instagram"), add_source(c, "Site")
+    a1 = add_listing(c, g1, "a1", **FB_POST, first_seen_at=ago(days=2))
+    a2 = add_listing(c, g2, "a2", **FB_POST, first_seen_at=ago(hours=1))
+    a3 = add_listing(c, ig, "a3", **FB_POST, first_seen_at=ago(hours=2))  # Instagram da sosyal
+    dup = add_listing(c, g2, "kopya", **FB_POST, duplicate_of=a1)  # zaten kopya: parmak izi gerekmez
+    tek = add_listing(c, g1, "tek", **(FB_POST | {"raw_text": FB_TEXT.replace("98.000", "120.000")}))  # eşi yok
+    short = dict(FB_POST, raw_text="2015 Vitz 5500£")
+    k1, k2 = add_listing(c, g1, "kisa1", **short), add_listing(c, g2, "kisa2", **short)  # kısa metin: asla
+    w1, w2 = add_listing(c, web, "w1", **FB_POST), add_listing(c, web, "w2", **FB_POST)  # site metni: kural dışı
+    m1 = add_listing(c, g1, "m1", **FB_POST, model_norm=None)
+    m2 = add_listing(c, g2, "m2", **FB_POST, model_norm=None)  # model bilinmiyor
+    y1 = add_listing(c, g1, "y1", **FB_POST, year=2016)
+    y2 = add_listing(c, g2, "y2", **FB_POST, year=2016)  # yıl metinde yok (metin 2015 diyor)
+    cheaper = add_listing(c, g2, "indirim", **(FB_POST | {"price_gbp": 5000, "price_amount": 5000}))  # aynı metin, tek başına başka fiyat
+    lira = dict(FB_POST, raw_text=FB_TEXT.replace("98.000", "77.000"), price_gbp=5600, price_amount=250_000, currency="TRY")
+    t1, t2 = add_listing(c, g1, "tl1", **lira), add_listing(c, g2, "tl2", **(lira | {"price_gbp": 5450}))  # TL: asıl tutar aynı
+    free = dict(FB_POST, raw_text=FB_TEXT.replace("98.000", "66.000"), price_gbp=None, price_amount=None, currency=None)
+    f1, f2 = add_listing(c, g1, "fiyatsiz1", **free), add_listing(c, g2, "fiyatsiz2", **free)
+    fp = post_text_fp(FB_TEXT, 2015, "facebook")
+    rows = {r["id"]: r for r in db.dedupe_candidates()}
+    assert {i for i, r in rows.items() if r["text_fp"]} == {a1, a2, a3, t1, t2, f1, f2}
+    assert all(rows[i]["text_fp"] == fp and rows[i]["price_amount"] == 5500.0 and rows[i]["currency"] == "GBP" for i in (a1, a2, a3))
+    assert rows[t1]["price_amount"] == rows[t2]["price_amount"] == 250_000.0 and rows[t1]["currency"] == "TRY" and rows[t1]["price_gbp"] == 5600.0
+    assert rows[f1]["text_fp"] == post_text_fp(free["raw_text"], 2015, "facebook") and rows[f1]["price_amount"] is None and rows[f1]["currency"] is None
+    for i in (dup, tek, k1, k2, w1, w2, m1, m2, y1, y2, cheaper):
+        assert rows[i]["text_fp"] is None and rows[i]["price_amount"] is None and rows[i]["currency"] is None
+        assert rows[i]["price_gbp"] == (5000.0 if i == cheaper else 5500.0)  # same_car'ın okuduğu alanlar aynen gelir
+    # hızlı tur ve hızlı şerit: grup tam geldiği için parmak izi aynı
+    for got in (db.dedupe_candidates(new_hours=3), db.dedupe_candidates(new_since=ago(hours=3))):
+        got = {r["id"]: r["text_fp"] for r in got}
+        assert {i for i, v in got.items() if v} == {a1, a2, a3, t1, t2, f1, f2} and got[a1] == fp
+    c.execute("UPDATE listings SET duplicate_of=%s WHERE id IN (%s, %s)", (a1, a2, a3))  # ikisi de bağlandı: tek kopya olmayan kaldı
+    assert {r["id"] for r in db.dedupe_candidates() if r["text_fp"]} == {t1, t2, f1, f2}
+
+
+def test_mark_duplicates_links_social_reposts_by_text_on_real_db(db):
+    from application.dedupe import mark_duplicates
+    c = db.conn
+    g1, g2, g3 = (add_source(c, f"Grup{i}", platform="facebook") for i in (1, 2, 3))
+    web = add_source(c, "Site")
+    shadow = c.execute("INSERT INTO sources (platform, name, url, status, alert_level) VALUES ('facebook','Golge','https://www.facebook.com/groups/9/',"
+                       "'aktif','golge') RETURNING id").fetchone()["id"]
+    first = add_listing(c, shadow, "golge_ilk", **FB_POST, first_seen_at=ago(days=3))  # önce gölge grupta görüldü
+    canon = add_listing(c, g1, "ilk", **FB_POST, first_seen_at=ago(days=2))
+    again = add_listing(c, g2, "ertesi_gun", **FB_POST, first_seen_at=ago(days=1))
+    twice = add_listing(c, g3, "iki_kimlik", **FB_POST, first_seen_at=ago(minutes=30))
+    drop = add_listing(c, g2, "indirim", **(FB_POST | {"price_gbp": 5000, "price_amount": 5000}), first_seen_at=ago(hours=2))  # fiyat düştü
+    w1 = add_listing(c, web, "site1", **FB_POST, first_seen_at=ago(days=2))
+    w2 = add_listing(c, web, "site2", **FB_POST, first_seen_at=ago(hours=1))  # sitede aynı metin: bağlanmaz
+    assert mark_duplicates(db, quick=True) == 3
+    dup = {r["id"]: r["duplicate_of"] for r in c.execute("SELECT id, duplicate_of FROM listings").fetchall()}
+    assert dup[canon] is None and dup[again] == canon and dup[twice] == canon and dup[first] == canon  # gölge ilk görülse de kopya
+    assert dup[drop] is None and dup[w1] is None and dup[w2] is None
+    assert mark_duplicates(db) == 0  # tam tur aynı sonucu verir
+    assert {r["source_item_id"] for r in db.unevaluated_active()} == {"ilk", "indirim", "site1", "site2"}
+    assert db.release_orphan_duplicates() == 0  # bağlar kararlı
+
+
 def test_pending_strong_skips_a_listing_whose_alert_was_sent_but_not_recorded_for_that_subscriber(db):
     """Gönderilmiş ama `alerts` kaydı yazılamamış 🟢 (bot_state yedek izi) sonraki turlarda aday olmaz; izi olmayan başka abone için aday kalır."""
     from infrastructure.db.repository import unsaved_alert_key
