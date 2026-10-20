@@ -194,7 +194,7 @@ def deal_call(note=SUSPICIOUS, err=None, cost=0.002):
 def test_deal_note_cost_goes_to_the_shared_daily_budget_and_the_note_is_cached():
     repo, call = FakeRepo(), deal_call()
     assert lr.deal_notes(repo, [green()], "k", "m", call=call, now=DAY) == {1: SUSPICIOUS}
-    assert call.seen == [("2015 Toyota Vitz 5.000 STG", "Emsal: 5 ilan, medyan £8000, aralık £7000–£9000")]
+    assert call.seen == [("2015 Toyota Vitz 5.000 STG", "İlanın fiyatı ≈ £5000. Emsal: 5 ilan, medyan £8000, aralık £7000–£9000")]
     assert repo.state[SPEND] == "0.00200" and reader(repo).spent_today() == 0.002  # okuyucu da aynı harcamayı görür
     again = lr.deal_notes(repo, [green()], "k", "m", call=call, now=DAY)  # sonraki tur: aynı ilan, aynı fiyat
     assert again == {1: SUSPICIOUS} and len(call.seen) == 1 and repo.state[SPEND] == "0.00200"  # önbellekten: soru ve ücret yok
@@ -264,3 +264,42 @@ def test_check_deal_caps_tokens_masks_phone_and_returns_cost(monkeypatch):
     assert openrouter.check_deal("k", "m", "x", "y") == (None, "http 429", 0.0)
     reply["status"] = None
     assert openrouter.check_deal("k", "m", "x", "y") == (None, "ConnectError", 0.0)
+
+
+def test_deal_note_summary_carries_the_pound_price_and_the_original_currency():
+    """21.10.2026: yalnız "185.000 TL" görünce model kuru kendi tahmin ediyordu (45–50 TL/£ dedi; gerçek ~66): £ karşılığı ve asıl tutar verilir."""
+    repo, call = FakeRepo(), deal_call()
+    e = green(2845.0)
+    e.listing.update(price_amount=185000, currency="TRY")
+    lr.deal_notes(repo, [e], "k", "m", call=call, now=DAY)
+    assert call.seen[0][1].startswith("İlanın fiyatı ≈ £2845 (ilanda 185000 TRY). Emsal: 5 ilan")
+
+
+def test_one_model_for_everything_and_the_environment_cannot_change_it(monkeypatch):
+    """Sahip 21.10.2026: model minimax/minimax-m3.1-flash:free; sunucu ve GitHub ortam değişkenleri modeli değiştirmez."""
+    assert openrouter.MODEL == openrouter.READ_MODEL == "minimax/minimax-m3.1-flash:free"
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("OPENROUTER_READ_MODEL", "baska/model")
+    monkeypatch.setenv("OPENROUTER_MODEL", "baska/model")
+    assert lr.from_env(FakeRepo()).model == openrouter.MODEL
+
+
+def test_every_request_keeps_reasoning_low_and_a_cut_off_answer_is_an_error(monkeypatch):
+    """Model düşünmeden cevap veremez; düşünme düşük tutulmazsa max_tokens'in tamamı düşünmeye gider (21.10: içerik boş, finish=length)."""
+    sent = []
+
+    class R:
+        status_code = 200
+
+        def __init__(self, body):
+            self.body = body
+
+        def json(self):
+            return self.body
+
+    cut = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}], "usage": {"cost": 0}}
+    monkeypatch.setattr(openrouter.httpx, "post", lambda url, **kw: sent.append(kw["json"]) or R(cut))
+    assert openrouter.read_listing("k", openrouter.MODEL, "x")[:2] == (None, "yanıt kesildi")
+    assert openrouter.check_deal("k", openrouter.MODEL, "x", "y")[:2] == (None, "yanıt kesildi")
+    openrouter.read_image_text("k", openrouter.MODEL, b"jpg")
+    assert [j["reasoning"] for j in sent] == [{"effort": "low"}] * 3 and all(j.get("max_tokens") for j in sent)

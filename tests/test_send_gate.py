@@ -136,12 +136,10 @@ def wire(monkeypatch, w, *, llm_configured=True, orange_floor_open=False):
     verify_candidates) gerçek koddur; yalnız onların dışarıya açılan uçları sahte."""
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
-    if llm_configured:  # fırsat notu (check_deal) için anahtar + model; okuyucu ayrıca sahte
+    if llm_configured:  # fırsat notu (check_deal) için anahtar; model tek (openrouter.MODEL, 21.10.2026); okuyucu ayrıca sahte
         monkeypatch.setenv("OPENROUTER_API_KEY", "k")
-        monkeypatch.setenv("OPENROUTER_MODEL", "m")
     else:
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-        monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
     nop = lambda *a, **k: None  # noqa: E731
     for name in ("apply_rules_version", "poll_bot", "ensure_menu", "mark_duplicates", "run_maintenance",
                  "demote_failing_sources", "guard_estimates", "send_daily_digest", "send_morning_status", "send_discovery",
@@ -242,7 +240,7 @@ def note_trace(i, n, spent_after):
     """Fırsat notu (05.10.2026'dan beri: okuyucuyla aynı günlük bütçe + (ilan, fiyat) önbelleği): önbellek bakılır, bütçe okunur, sorulur,
     harcama ve sonuç yazılır."""
     return [("repo.get_state", f"deal_note:{i}:t5000.0"), ("repo.get_state", SPEND),
-            ("check_deal", f"ilan {i}", f"Emsal: {n} ilan, medyan £8000, aralık £7000–£9000"),
+            ("check_deal", f"ilan {i}", f"İlanın fiyatı ≈ £5000. Emsal: {n} ilan, medyan £8000, aralık £7000–£9000"),
             ("repo.set_state", SPEND, spent_after), ("repo.set_state", f"deal_note:{i}:t5000.0", '{"gercek_firsat_mi": true}')]
 
 

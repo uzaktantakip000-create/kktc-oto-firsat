@@ -2,7 +2,7 @@
 1) Kural ayrıştırıcının okuyamadığı Instagram/Facebook gönderisini okur (sonuç en fazla 🟡, emsale girmez).
 2) Sosyal medyadan gelen 🟢 adayını göndermeden önce bağımsız okur; uyuşmazsa 🟡'ye düşürür.
 Yapay zekâ asla tek başına 🟢 üretmez; yalnızca düşürebilir. Hata/bütçe aşımında ilan "kontrol edilmedi" notuyla gider.
-Ayrıca 🟢 mesajının kısa "fırsat notu" (deal_notes, OPENROUTER_MODEL) aynı günlük bütçeden düşer."""
+Ayrıca 🟢 mesajının kısa "fırsat notu" (deal_notes) aynı günlük bütçeden düşer. Model tek: infrastructure/llm/openrouter.MODEL (21.10.2026)."""
 import json
 import os
 from datetime import datetime, timezone
@@ -98,8 +98,8 @@ class LlmReader:
 
 def from_env(repo: Repository) -> LlmReader | None:
     key = os.environ.get("OPENROUTER_API_KEY")
-    model = os.environ.get("OPENROUTER_READ_MODEL") or openrouter.READ_MODEL  # "fırsat notu" modelinden (OPENROUTER_MODEL) bağımsız
-    return LlmReader(repo, key, model) if key else None
+    # tek model (sahip 21.10.2026, infrastructure/llm/openrouter.MODEL): ortam değişkeni modeli değiştirmez
+    return LlmReader(repo, key, openrouter.MODEL) if key else None
 
 
 def listing_fields(read: LlmRead | None) -> dict | None:
@@ -204,7 +204,7 @@ def _cached_note(raw: str) -> dict | None:
 
 
 def deal_notes(repo: Repository, evs: list[Evaluated], api_key: str, model: str, call=openrouter.check_deal, now=None) -> dict:
-    """🟢 mesajına eklenen kısa "fırsat notu" (OPENROUTER_MODEL; mesaja yalnız ⚠️ ekler, 🟢'yi düşürmez). Dönen: {ilan_id: not}.
+    """🟢 mesajına eklenen kısa "fırsat notu" (openrouter.MODEL; mesaja yalnız ⚠️ ekler, 🟢'yi düşürmez). Dönen: {ilan_id: not}.
     - Okuyucuyla AYNI günlük bütçeden düşer (DAILY_BUDGET_USD, `llm_spend:<gün>`); bütçe doluysa soru sorulmaz.
     - Her (ilan, fiyat) için en çok BİR kez sorulur: sonuç (not ya da hata/boş = 'null') bot_state'e yazılır. Gönderilemeyen 🟢 36 saat
       bekleyebilir; eskiden her 15 dakikalık turda yeniden soruluyordu.
@@ -229,7 +229,10 @@ def deal_notes(repo: Repository, evs: list[Evaluated], api_key: str, model: str,
                     print("fırsat notu alınmadı: günlük yapay zekâ bütçesi doldu (bildirim notsuz gider)")
                     budget_logged = True
                 continue
-            summary = f"Emsal: {m.n} ilan, medyan £{m.median_gbp:.0f}, aralık £{m.low_gbp:.0f}–£{m.high_gbp:.0f}"
+            # ilanın £ karşılığı da verilir (21.10.2026): yalnız "185.000 TL" görünce model kuru kendi tahmin ediyordu (45–50 TL/£ dedi; gerçek ~66)
+            here = f"İlanın fiyatı ≈ £{float(l['price_gbp']):.0f}" + (
+                f" (ilanda {float(l['price_amount']):.0f} {l['currency']})" if l.get("currency") not in (None, "GBP") and l.get("price_amount") else "")
+            summary = f"{here}. Emsal: {m.n} ilan, medyan £{m.median_gbp:.0f}, aralık £{m.low_gbp:.0f}–£{m.high_gbp:.0f}"
             data, err, cost = call(api_key, model, (l["raw_text"] or "")[:1500], summary)
             note = data if isinstance(data, dict) else None
             if note is not None:  # önce nota koy: aşağıdaki kayıt yazılamasa da bu turun mesajı notu taşısın

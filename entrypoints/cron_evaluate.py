@@ -29,7 +29,7 @@ from domain.settings import RULES_VERSION, Settings
 from infrastructure.config import load_env, redact, require
 from infrastructure.db.repository import DatabaseDown, Repository
 from infrastructure.fx import frankfurter
-from infrastructure.llm.openrouter import check_deal
+from infrastructure.llm.openrouter import MODEL as OPENROUTER_MODEL, check_deal
 
 LOCK = "evaluate"
 # Facebook hızlı şeridi (entrypoints/fb_fast, 11.10.2026) aynı kilidi birkaç saniye tutar: tur değerlendirmesi bu yüzden atlanmasın, beklesin
@@ -226,10 +226,10 @@ def deliver(repo: Repository, token: str, owner: str, settings: Settings, evalua
     strong, _ = gonderim_kontrol(repo, pending_alerts(repo, book=book, platform=platform), "🟢")
 
     notes = {}
-    key, model = os.environ.get("OPENROUTER_API_KEY"), os.environ.get("OPENROUTER_MODEL")
-    if key and model:  # fırsat notu: okuyucuyla aynı günlük bütçe, (ilan, fiyat) başına tek soru (application/llm_reader.deal_notes)
+    key = os.environ.get("OPENROUTER_API_KEY")
+    if key:  # fırsat notu: okuyucuyla aynı günlük bütçe, (ilan, fiyat) başına tek soru (application/llm_reader.deal_notes); tek model (21.10.2026)
         try:
-            notes = deal_notes(repo, strong, key, model, call=check_deal)
+            notes = deal_notes(repo, strong, key, OPENROUTER_MODEL, call=check_deal)
         except Exception as e:  # not alınamazsa bildirim notsuz gider: gönderim bu nota hiçbir durumda bağlı değil
             print("LLM notu alınamadı:", type(e).__name__)
     sent = send_alerts(repo, token, strong, notes)

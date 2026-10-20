@@ -15,7 +15,7 @@ GitHub'da bu isimlerle **Secret** olarak durur (repo → Settings → Secrets an
 | `TELEGRAM_BOT_TOKEN` | Telegram botu | Evet |
 | `TELEGRAM_CHAT_ID` | Senin Telegram numaran (bildirimler buraya) | Evet |
 | `OPENROUTER_API_KEY` | Yapay zekâ (ilan okuma, fırsat notu) | Önerilir. Yoksa yapay zekâ kısmı çalışmaz |
-| `OPENROUTER_MODEL` | 🟢 mesajına eklenen kısa "fırsat notu" modeli | İsteğe bağlı. Boşsa not eklenmez |
+| `OPENROUTER_MODEL` | (eski) model adı | 21.10.2026'dan beri KULLANILMIYOR: model kodda sabit (`minimax/minimax-m3.1-flash:free`) |
 | `APIFY_TOKEN` | Instagram/Facebook okuma | **Şimdilik gerekmez.** Yalnız sosyal medya okuma yeniden açılırsa |
 
 **Kullanılmayanlar:** `SUPABASE_URL` ve `SUPABASE_SERVICE_KEY` kodda hiçbir yerde kullanılmıyor. GitHub Secrets'ta varsa silebilirsin (zararı yok ama gereksiz anahtar bırakmamak daha güvenli). `.env.example` dosyasında da yazıyorlar; boş kalabilir. `ANTHROPIC_API_KEY` yok ve gerekmez.
@@ -53,11 +53,11 @@ Başka kişi de bildirim almak isterse bota `/start` yazar; sana "Onayla / Redde
 Not: Claude sohbet aboneliğinden AYRIDIR; kullandıkça ödenir. Sistem Anthropic'e doğrudan bağlanmaz; her şey OpenRouter üzerinden gider.
 1. openrouter.ai → hesap aç / giriş → küçük bir kredi yükle (başlangıç için birkaç dolar yeter).
 2. **API Keys → Create Key** → anahtarı nota kaydet (bir daha gösterilmez) → `OPENROUTER_API_KEY`. Anahtara harcama limiti koyabiliyorsan koy.
-3. İsteğe bağlı `OPENROUTER_MODEL`: 🟢 fırsat mesajına kısa bir "yapay zekâ notu" ekleyen modelin adı. Boş bırakırsan not eklenmez, sistem yine çalışır.
-4. İlan okuyucu modeli (GLM `z-ai/glm-5.3-flash`) kodda sabit; ayrıca bir şey girmen gerekmez.
+3. Model kodda sabit (sahip kararı 21.10.2026): `minimax/minimax-m3.1-flash:free` (ücretsiz). Okuyucu, 🟢 doğrulaması ve fırsat notu bunu kullanır; ayrıca bir şey girmen gerekmez. `OPENROUTER_MODEL` artık kullanılmıyor.
+4. Ücretsiz modelin günlük istek sınırı OpenRouter hesabına bağlıdır (hesaba hiç ≥10 $ kredi yüklenmediyse düşüktür); sınıra takılırsa okuma o gün beklenir, bildirim yine gider.
 
 Güvenlik: sistem günlük yapay zekâ harcamasına kendisi $0,40 tavan koyar (`application/llm_reader.py`). Satıcı telefonları ve e-postalar yapay zekâya gönderilmeden önce gizlenir.
-✅ Elde edilen: `OPENROUTER_API_KEY` (+ isteğe bağlı `OPENROUTER_MODEL`).
+✅ Elde edilen: `OPENROUTER_API_KEY`.
 
 ## 5. Apify (Instagram + Facebook) — ŞİMDİLİK GEREKMEZ
 Instagram ve Facebook okuma **KAPALI** (sahibin kararı, 02.10.2026). Yeniden açılırsa:
@@ -89,7 +89,7 @@ Kod `main` dalına gelince testler çalışır. Testler geçerse `live` dalı o 
 
 ### Kontrol listesi (oturum başında)
 - [ ] GitHub repo `uzaktantakip000-create/kktc-oto-firsat` (herkese açık; içinde sır yok)
-- [ ] GitHub Secrets: `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` (isteğe bağlı), `APIFY_TOKEN` (yalnız sosyal açılırsa)
+- [ ] GitHub Secrets: `DATABASE_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `OPENROUTER_API_KEY`, `APIFY_TOKEN` (yalnız sosyal açılırsa)
 - [ ] Bota Start basıldı
 - [ ] cron-job.org: `tick.yml` 15 dk, `collect-browser.yml` 2 saat
 - [ ] (İsteğe bağlı temizlik) GitHub Secrets'tan `SUPABASE_URL` ve `SUPABASE_SERVICE_KEY` silindi
