@@ -24,6 +24,28 @@ SOFT_MISMATCH = {"okuma_km"}  # km farkı 🟢'yi tek başına düşürmez, uyar
 KM_READ_WARNING = MISMATCH_LABELS["okuma_km"] + ": km'yi kontrol et"
 OK_CHECK = "✅ Yapay zekâ ilanı bağımsız okudu, fiyat uyuşuyor"
 OK_CHECK_EST = "✅ Yapay zekâ ilanı bağımsız okudu: fiyat uyuşuyor, ucuzluk için gizli sorun görmedi"
+# Hesap hatası (20.10.2026): OpenRouter "http 402" (kredi bitti) 19.10'dan beri HER çağrıyı reddediyordu ve kimse bilmiyordu. Bot çalışmaya devam
+# ediyordu (🟢 "kontrol edilmedi" notuyla gider, fırsat notu eklenmez), ama Mezunum'da kuralla okunamayan ilanlar her turda yeniden
+# çekiliyordu ve sosyal/serbest metin 🟢'lerinin bağımsız ikinci okuması yapılmıyordu. Hesap hatası geçici değildir: sahibe 24 saatte bir
+# uyarı gider (para işini yalnız sahip yapar). Ağ hatası, zaman aşımı, 429 ve 5xx geçicidir: uyarı yok.
+ACCOUNT_ERRORS = {"http 402": "kredisi bitti", "http 401": "anahtarı geçersiz", "http 403": "anahtarı reddediliyor"}
+ACCOUNT_ALERT = ("⚠️ Yapay zekâ servisi (OpenRouter) {why} ({err}): okuma yapılamıyor. Etkisi: Facebook ve serbest metin 🟢'leri yapay zekâ "
+                 "kontrolü olmadan \"kontrol edilmedi\" notuyla gider, fırsat notu eklenmez, Mezunum'da kuralla okunamayan ilanlar bekler. "
+                 "{fix}")
+ACCOUNT_FIX = {"http 402": "Çözüm: openrouter.ai → Credits sayfasından kredi yükle (bunu yalnız sen yapabilirsin).",
+               "http 401": "Çözüm: OpenRouter'da yeni anahtar oluşturulup sunucuya yazılmalı.",
+               "http 403": "Çözüm: OpenRouter hesabının ve anahtarın durumuna bakılmalı."}
+
+
+def account_alarm(repo, err: str | None) -> None:
+    """Yapay zekâ çağrısının hatası hesap sorunuysa (ACCOUNT_ERRORS) sahibe 24 saatte bir uyarı. Hiçbir hata yukarı fırlamaz."""
+    if err not in ACCOUNT_ERRORS:
+        return
+    try:
+        from application.health import notify_owner  # tembel: health → notify → ... döngüsü olmasın
+        notify_owner(repo, "llm_hesap", ACCOUNT_ALERT.format(why=ACCOUNT_ERRORS[err], err=err, fix=ACCOUNT_FIX[err]), repeat_hours=24)
+    except Exception as e:
+        print("yapay zekâ hesap uyarısı yazılamadı:", type(e).__name__)
 
 
 class LlmReader:
@@ -54,6 +76,7 @@ class LlmReader:
         self.calls += 1
         if err:
             self.last_error = err
+            account_alarm(self.repo, err)
             return None
         read = parse_llm_read(data, text)
         self.last_error = None if read else "çıktı geçersiz"
@@ -69,6 +92,7 @@ class LlmReader:
         text, err, cost = self._image_call(self.api_key, self.model, image, mime)
         self.repo.set_state(self._spend_key(), f"{spent + cost:.5f}")
         self.last_error = err or (None if text else "görselde okunur yazı yok")
+        account_alarm(self.repo, err)
         return text or None
 
 
@@ -212,6 +236,7 @@ def deal_notes(repo: Repository, evs: list[Evaluated], api_key: str, model: str,
                 notes[l["id"]] = note
             if err:
                 print("LLM notu alınamadı:", err)
+                account_alarm(repo, err)
             repo.set_state(ledger._spend_key(), f"{spent + cost:.5f}")
             repo.set_state(key, json.dumps(note, ensure_ascii=False))
         except Exception as e:  # yapay zekâ ya da veritabanı hatası bildirimi engellemesin
