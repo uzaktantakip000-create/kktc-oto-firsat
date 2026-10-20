@@ -9,13 +9,19 @@ from domain.settings import Settings
 
 LOW_KM_OLD_AGE = 10  # bu yaştan eski araçta...
 LOW_KM_OLD_LIMIT = 15_000  # ...bu kadar kmden azı (ör. 2013 model 11.500 km = 115.000 yazılmış olabilir) şüpheli: bilinmiyor sayılır
+# Yer tutucu km (20.10.2026): "123.456", "111.111", "555.555" gibi değerler sayaçtan okunmuş km değil, "km yazmak istemiyorum" doldurmasıdır.
+# Ölçüm (20.10.2026, tüm ilanlar): km = 123.456 olan 14 ilan, biri 🟢 olmuş (2012 Swift £4.200, 15.10; km gerçek sanılıp emsal km'siyle
+# kıyaslanmıştı); 111.111 ×2, 555.555 ×1. Bilinmiyor sayılır: km'siz ilanın temkinli kuralları işler (km_temkinli), hiçbir zaman daha ucuz göstermez.
+PLACEHOLDER_KM = frozenset({123_456, 1_234_567, 654_321, 12_345_678} | {int(str(d) * n) for d in range(1, 10) for n in (6, 7)})
 
 
 def effective_km(row: dict, today: date | None = None) -> int | None:
     """İlandaki km makul mü? Eski araçta 1.000 km altı çoğunlukla 'bin' yazılmış/eksik rakam (370 = 370.000): bilinmiyor say.
     10+ yaşındaki araçta 15.000 km altı da şüpheli (düşük-km emsallerle kıyaslanıp sahte ucuz görünmesin; sahip kararı: km yanlışı fırsatı
-    ENGELLEMEZ, yalnız uyarı olur). `today` verilirse (karar `now`'ı) sonuç saatten bağımsızdır; yıl dönümünde altın dosya/testler kaymasın."""
+    ENGELLEMEZ, yalnız uyarı olur). Yer tutucu km (PLACEHOLDER_KM: 123.456, 111.111…) her yaşta bilinmiyor. `today` verilirse (karar `now`'ı) sonuç saatten bağımsızdır; yıl dönümünde altın dosya/testler kaymasın."""
     km, year = row.get("km"), row.get("year")
+    if km in PLACEHOLDER_KM:
+        return None
     if km is not None and year is not None:
         age = (today or date.today()).year - year
         if (km < 1000 and age >= 2) or (km < LOW_KM_OLD_LIMIT and age >= LOW_KM_OLD_AGE):

@@ -362,3 +362,16 @@ def test_old_low_km_listing_is_compared_without_a_km_band():
     target = row("t", 4800, year=2013, km=11_500)  # 115.000 yazılacakken 11.500: band 0'a düşüp emsalsiz kalmasın
     m = find_market(target, pool, now=NOW)
     assert m is not None and m.n == 8
+
+
+def test_placeholder_km_is_unknown_at_any_age():
+    """20.10.2026: "123.456 km" yazan 2012 Swift 🟢 olmuştu (km gerçek sanıldı). Yer tutucu km bilinmiyor sayılır; gerçek km dokunulmaz."""
+    from datetime import date
+    from domain.comparables import effective_km
+    day = date(2026, 10, 20)
+    for km in (123_456, 111_111, 555_555, 999_999, 1_234_567, 7_777_777):
+        assert effective_km({"km": km, "year": 2012}, day) is None
+        assert effective_km({"km": km, "year": 2025}, day) is None
+    for km in (123_000, 111_000, 145_000, 99_999):
+        assert effective_km({"km": km, "year": 2012}, day) == km
+    assert effective_km({"km": 12_345, "year": 2020}, day) == 12_345  # yalnız tam yer tutucu kalıplar; genç araçta 12.345 gerçek olabilir
