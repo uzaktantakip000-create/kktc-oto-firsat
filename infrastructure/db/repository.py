@@ -994,6 +994,39 @@ class Repository:
                ORDER BY x.sent_at DESC""",
             {"tiers": VOTED_TIERS, "days": days, "chat": str(chat_id) if chat_id else None, "retracted": RETRACTED}).fetchall()
 
+    def owner_vote_queue(self, owner_chat: str, urgent_ids) -> list[dict]:
+        """/oyla (application/vote_queue, 20.10.2026): SAHİBE gitmiş 🟢/🟠/⚡ (alerts, geri çekilen hariç) + alerts'e yazılmadan önceki ⚡'ler
+        (`urgent_ids`: bot_state 'acil:islenen'; gönderim anı yerine ilk görülme) içinden, ilanı hâlâ aktif ve ne kendisine ne kanoniğine
+        SAHİBİN oyu olmayanlar (abonenin oyu sayılmaz). Satır başına: seviye (🟢 > 🟠 > ⚡), ilk gönderim, gönderimdeki fiyat ve piyasa ortası
+        (bildirimin değerlendirme satırı; ⚡ öncesi için gönderimden önceki son değerlendirme), durum satırı için kaynak/son görülme."""
+        ids = []
+        for x in urgent_ids or []:
+            try:
+                ids.append(str(uuid.UUID(str(x))))
+            except ValueError:
+                continue
+        return self.conn.execute(
+            f"""WITH sent AS (
+                    SELECT listing_id, (array_agg(tier ORDER BY array_position(%(tiers)s::text[], tier)))[1] AS tier, MIN(sent_at) AS sent_at,
+                           (array_agg(fiyat_gonderimde ORDER BY sent_at))[1] AS price_sent, (array_agg(evaluation_id ORDER BY sent_at))[1] AS ev_id
+                    FROM alerts WHERE tier = ANY(%(tiers)s) AND chat_id = %(chat)s AND kind IS DISTINCT FROM %(retracted)s GROUP BY listing_id
+                    UNION ALL
+                    SELECT l.id, %(urgent)s, l.first_seen_at, NULL, NULL FROM listings l
+                    WHERE l.id = ANY(%(ids)s::uuid[])
+                      AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.tier = ANY(%(tiers)s) AND a.chat_id = %(chat)s))
+                SELECT l.id, COALESCE(l.duplicate_of, l.id) AS canon, x.tier, x.sent_at, x.price_sent::float8 AS price_sent,
+                       l.year, l.brand, l.model, l.brand_norm, l.model_norm, l.km, l.price_gbp::float8 AS price_gbp,
+                       l.price_amount::float8 AS price_amount, l.currency, l.url, l.seller_phone, l.last_seen_at, l.posted_at, l.first_seen_at,
+                       s.name AS source_name, s.url AS source_url, s.platform,
+                       COALESCE((SELECT e.market_median_gbp FROM evaluations e WHERE e.id = x.ev_id),
+                                (SELECT e.market_median_gbp FROM evaluations e WHERE e.listing_id = l.id AND e.evaluated_at <= x.sent_at + interval '1 hour'
+                                 ORDER BY e.evaluated_at DESC LIMIT 1))::float8 AS median_gbp
+                FROM sent x JOIN listings l ON l.id = x.listing_id JOIN sources s ON s.id = l.source_id
+                WHERE l.is_active AND l.price_gbp IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id IN (l.id, COALESCE(l.duplicate_of, l.id))
+                                  AND f.action NOT LIKE 'audit_%%' AND {OWNER_VOTE_SQL})""",
+            {"tiers": VOTED_TIERS, "chat": str(owner_chat), "retracted": RETRACTED, "urgent": URGENT_TIER, "ids": ids}).fetchall()
+
     def unnotified_strong(self, rules_version: str, days: int = 14, limit: int = 50) -> list[dict]:
         """Bildirilmemiş 🟢'ler: EN SON değerlendirmesi bu kural sürümüyle 🟢 ve son 'days' günde yapılmış, ilan aktif, kopya/karantina değil,
         kaynağı anlık bildirim veren ('yesil'), hiçbir sohbete 🟢/🟠 gitmemiş (yazılamamış gönderimin yedek izi de sayılır). En iyi kâr önce.

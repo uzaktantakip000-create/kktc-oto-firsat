@@ -48,6 +48,9 @@ class Repo:
     def get_state(self, k, default=None):
         return self.state.get(k, default)
 
+    def owner_vote_queue(self, owner_chat, urgent_ids):  # /oyla (application/vote_queue): oy bekleyen yok
+        return []
+
     def set_state(self, k, v):
         self.state[k] = v
 

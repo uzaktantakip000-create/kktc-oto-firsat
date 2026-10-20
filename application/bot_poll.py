@@ -17,6 +17,7 @@ from application import (
     settings_store,
     sources_cmd,
     status,
+    vote_queue,
 )
 from application.learning import learning_open
 from application.notify import TelegramError, api
@@ -39,6 +40,7 @@ HELP_OWNER = ("📖 Komutlar (cevap en geç ~15 dk içinde gelir)\n\n"
               "Menüde görünenler:\n"
               "/durum — sistem çalışıyor mu, son kontrol, kaynaklar\n"
               "/son — son gönderilen 10 fırsat\n"
+              "/oyla — oylamadığın ve hâlâ ilanda görünen bildirimleri 👍/👎 düğmeleriyle yeniden gönderir\n"
               "/bul fit 2015-2018 7000 — bütün sitelerde ara, piyasaya göre en ucuzdan sırala (km, otomatik da yazılabilir)\n"
               "/avla vitz 2016 sonrası 7000 — 🎯 av kur: uyan yeni ilan sitelere düştüğü turda yazarım (/avla liste, /avla sil 2)\n"
               "/fiyat corolla 2014 — bir aracın piyasa değeri\n"
@@ -86,7 +88,7 @@ LINK_REPLY = ("Bu linki tanımıyorum: yalnız taradığım sitelerin (KKTCar, K
               "çıkarabilirim, başka linkleri açmam. O ilanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü gönder.")
 ERROR_REPLY = "⚠️ Komutun işlenirken bir hata oldu; birazdan tekrar dene. (Hata kaydedildi.)"
 OWNER_COMMANDS = {"/durum", "/son", "/ayarlar", "/esik", "/butce", "/fiyat", "/satti", "/tahmini", "/istemiyorum", "/istiyorum", "/avla",
-                  "/kaynaklar", "/kaynak_ekle", "/kaynak_seviye", "/kaynak_ac", "/kaynak_kapat"}
+                  "/kaynaklar", "/kaynak_ekle", "/kaynak_seviye", "/kaynak_ac", "/kaynak_kapat", "/oyla"}
 SHARED_COMMANDS = {"/start", "/yardim", "/dur", "/basla", "/bul"}
 MIN_AD_DIGITS = 6  # gerçek bir ilanda en az yıl (4) + fiyat (3+) rakamı olur; "tamam", "teşekkürler" ilan kontrolüne (kota + yapay zekâ) girmez
 
@@ -232,6 +234,8 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
         api(token, "sendMessage", chat_id=chat_id, text=reply, disable_web_page_preview=True)
     elif chat_id == owner and text.startswith("/durum"):
         api(token, "sendMessage", chat_id=chat_id, text=status.build_status(repo), disable_web_page_preview=True)
+    elif chat_id == owner and text.split()[:1] == ["/oyla"]:  # oy bekleyen bildirimler, tek tek düğmeli (application/vote_queue, 20.10.2026)
+        vote_queue.send(repo, token, chat_id, api_call=api)
     elif chat_id == owner and text.split()[:1] == ["/son"]:
         api(token, "sendMessage", chat_id=chat_id, text=history_cmd.last_opportunities(repo)[:3900], disable_web_page_preview=True)
     elif chat_id == owner and text.split()[:1] == ["/ayarlar"]:

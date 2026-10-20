@@ -50,6 +50,12 @@ def weekly_report() -> None:
     print(weekly_report_text(Repository(require("DATABASE_URL"))))
 
 
+def vote_queue() -> None:
+    """Oy bekleyen bildirimleri sahibe düğmeli gönderir (/oyla ile aynı): admin_cli oyla"""
+    from application import vote_queue as vq
+    print(f"oy listesi: {vq.send(Repository(require('DATABASE_URL')), require('TELEGRAM_BOT_TOKEN'), require('TELEGRAM_CHAT_ID'))} araç gönderildi")
+
+
 def fill_steering() -> None:
     """Direksiyon yönü boş olan ilanlarda, ilan metninde açıkça yazıyorsa doldurur (tahmin yok)."""
     repo = Repository(require("DATABASE_URL"))
@@ -134,5 +140,6 @@ if __name__ == "__main__":
         "kaa": backfill_kaa,
         "backtest": backtest,
         "report": weekly_report,
+        "oyla": vote_queue,
         "shadow-tahmini": shadow_tahmini,
     }[sys.argv[1]]()
