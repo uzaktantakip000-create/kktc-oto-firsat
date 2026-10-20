@@ -27,6 +27,7 @@ BLOCKED = "erisim_reddediyor"
 CALLBACK_MAX = 64  # Telegram düğme verisi sınırı (bayt)
 RESERVED = {"p", "reel", "reels", "explore", "accounts", "stories", "tv", "direct"}  # discovery bunu kullanır (eski ad)
 
+# strong_30d yalnız 🟢 ('guclu'): ⚡ ACİL SATICI ('acil', 20.10.2026'dan beri alerts'te) kaynağın 30 günlük 🟢 sayısını şişirmez
 ROWS_SQL = """SELECT s.id::text AS id, s.platform, s.name, s.url, s.status, s.priority, s.alert_level, s.last_checked_at, s.listings_7d,
                      (SELECT count(DISTINCT a.listing_id) FROM alerts a JOIN listings l ON l.id = a.listing_id
                        WHERE l.source_id = s.id AND a.tier = 'guclu' AND a.sent_at > NOW() - interval '30 days') AS strong_30d,

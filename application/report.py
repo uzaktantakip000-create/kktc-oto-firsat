@@ -1,6 +1,6 @@
 """Haftalık rapor (Telegram, haftada bir). Sahibin kararı (05.10.2026, plan v4 madde 2.2) — dört bölüm, önem sırasıyla:
-  1. Oy bekleyenler: son 30 günde O KİŞİYE giden 🟢/🟠'lerden onun hiç düğme cevabı vermediği olanlar (bağlantıyla; rapordaki numaralı
-     düğmelerle de oylanır). Sistem sahibin oylarıyla ölçülür (spec §24.5 "oy kapsamı").
+  1. Oy bekleyenler: son 30 günde O KİŞİYE giden 🟢/🟠/⚡'lerden (⚡ 20.10.2026'dan beri; listede 🟢/🟠'den sonra) onun hiç düğme
+     cevabı vermediği olanlar (bağlantıyla; rapordaki numaralı düğmelerle de oylanır). Sistem sahibin oylarıyla ölçülür (spec §24.5 "oy kapsamı").
   2. Bildirilmemiş fırsatlar: kurala göre 🟢 ama tazelik süzgecine (ilk görülme 36 saat / ilan tarihi 4 gün) takıldığı için anlık gitmemiş
      ilanlar; son 14 gün, en çok 5, en iyi önce. Göstermeden önce canlılık kontrolü (application/liveness.py): satılmış, kalkmış ya da fiyatı
      değişmiş ilan gösterilmez. Sitenin eski ilanı "en yeni" listesine geri itmesiyle yeniden çıkmış KKTCarabam ilanı (tarihsiz, numarası daha
@@ -32,7 +32,7 @@ from domain.lifecycle import SOLD
 from domain.profit import Tier, buy_ceiling
 from domain.settings import RULES_VERSION, Settings
 from infrastructure.config import mask_chat, redact
-from infrastructure.db.repository import DatabaseDown, Repository
+from infrastructure.db.repository import URGENT_TIER, DatabaseDown, Repository
 
 REPORT_KEY = "weekly_report"
 REPEAT_HOURS = 24 * 7 - 2
@@ -50,6 +50,8 @@ SHORT_REASON = {"km_yuksek": "km yüksek", "tl_fiyat": "fiyat TL (TL ilanlar ucu
                 "deger_supheli": "değer tablosu yeni değişti", "llm_okudu": "yapay zekâ okudu",
                 "fiyat_alani": "fiyat yalnız FB satış kutusunda"}
 PLATFORM_NAMES = {"instagram": "Instagram", "facebook": "Facebook"}
+# Oy satırının işareti. ⚡ ACİL SATICI (alerts.tier 'acil') 20.10.2026'dan beri oy listesinde: o mesaj da 👍/👎 düğmeli; 🟢/🟠'den ayrı görünsün
+VOTE_ICON = {Tier.STRONG.value: "🟢", Tier.ESTIMATED.value: "🟠", URGENT_TIER: "⚡"}
 VOTE_ASK_OWNER = "Sistemi senin oylarınla ölçüyorum: her birine 👍 (işe yarar) ya da 👎 (yanlış) bas; aşağıdaki numaralı düğmeler de olur."
 VOTE_ASK_SUBSCRIBER = "Her birine 👍 (işe yarar) ya da 👎 (yanlış) bas; oyun kaydedilir. Aşağıdaki numaralı düğmeler de olur."
 
@@ -127,18 +129,26 @@ def _reason(code: str) -> str:
 
 
 # --- 1. oy bekleyenler ---
+def _urgent_part(rows: list[dict]) -> str:
+    """Sayımda ⚡ payı (20.10.2026): oy listesine ⚡ de girdi; "N fırsat bildirimi" 🟢 sayısı sanılmasın. ⚡ yoksa metin eskisiyle aynı."""
+    n = sum(1 for r in rows if r["tier"] == URGENT_TIER)
+    return f" ({n} tanesi ⚡ acil satıcı)" if n else ""
+
+
 def _votes_section(repo: Repository, chat_id: str | None = None, owner: bool = True) -> tuple[_Section, list[dict]]:
     rows = repo.alerted_votes(VOTE_DAYS, chat_id=chat_id, owner=owner)  # yalnız bu kişiye gidenler ve yalnız onun oyu
-    todo = [r for r in rows if not r["voted"]]
+    # 🟢/🟠 önce, ⚡ sonra (her grup kendi içinde en yeni önce; 20.10.2026): ⚡ günde 8'e dek çıkabilir, 🟢 ise seyrek. Yalnız ilk VOTE_SHOW
+    # satır listelenir; ⚡ öne geçseydi 🟢'ler "… ve N eski bildirim daha"ya düşer, 30 günlük 🟢 oy kapsamı ölçütü (spec §24.5) zarar görürdü
+    todo = sorted((r for r in rows if not r["voted"]), key=lambda r: r["tier"] == URGENT_TIER)
     if not rows:
         return _Section("oy bekleyen", [f"🗳 Son {VOTE_DAYS} günde fırsat bildirimi gitmedi; oylanacak bir şey yok."]), []
     head = [f"🗳 OY BEKLEYENLER ({len(todo)})",
-            f"Son {VOTE_DAYS} günde {len(rows)} fırsat bildirimi gitti, {len(rows) - len(todo)} tanesine oy verdin."]
+            f"Son {VOTE_DAYS} günde {len(rows)} fırsat bildirimi gitti{_urgent_part(rows)}, {len(rows) - len(todo)} tanesine oy verdin."]
     if not todo:
         return _Section("oy bekleyen", head + ["Hepsini oyladın, teşekkürler."]), []
     head.append(VOTE_ASK_OWNER if owner else VOTE_ASK_SUBSCRIBER)
     shown = todo[:VOTE_SHOW]
-    items = [f"{i}) {'🟢' if r['tier'] == Tier.STRONG.value else '🟠'} {_car(r)}{_km(r)} · {_price(r)}{_median(r)} · {_day(r['sent_at'])}"
+    items = [f"{i}) {VOTE_ICON.get(r['tier'], '🟠')} {_car(r)}{_km(r)} · {_price(r)}{_median(r)} · {_day(r['sent_at'])}"
              + ("" if r["is_active"] else " · artık yayında değil") + (f"\n{r['url']}" if r.get("url") else "")
              for i, r in enumerate(shown, 1)]
     tail = [f"… ve {len(todo) - len(shown)} eski bildirim daha (kendi mesajlarındaki düğmelerle oylanır)."] if len(todo) > len(shown) else []

@@ -63,6 +63,7 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
     quiet = feed_switch.quiet_platforms(repo, now)
     late = [r for r in scanned if _is_late(r, quiet)]
 
+    # yalnız 🟢 sayılır: ⚡ ("acil", 20.10.2026) satırları seviye süzgeciyle bilerek dışarıda (repository.URGENT_TIER)
     sent24 = repo.conn.execute(
         "SELECT count(DISTINCT listing_id) FILTER (WHERE tier='guclu') AS strong FROM alerts "
         "WHERE sent_at > NOW() - interval '24 hours'").fetchone()
@@ -191,6 +192,7 @@ def build_heartbeat(repo: Repository, now: datetime | None = None) -> str:
     (check_sources, kaynak alarmı); burada yalnız gecikme sayısı + son 24 saat sayıları + öz-izleme satırları (application/selfwatch)."""
     now = now or datetime.now(timezone.utc)
     new_n = repo.conn.execute("SELECT count(*) AS n FROM listings WHERE first_seen_at > NOW() - interval '24 hours'").fetchone()["n"]
+    # 🟢 ve 🟠 ayrı sayılır; ⚡ ("acil", 20.10.2026) satırları FILTER ile bilerek dışarıda: nabızdaki sayılar 🟢/🟠 ölçüsüdür
     sent = repo.conn.execute(
         "SELECT count(DISTINCT listing_id) FILTER (WHERE tier='guclu') AS strong, count(DISTINCT listing_id) FILTER (WHERE tier='tahmini') AS est "
         "FROM alerts WHERE sent_at > NOW() - interval '24 hours'").fetchone()

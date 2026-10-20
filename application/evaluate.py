@@ -98,7 +98,8 @@ def _evaluate_one(repo: Repository, listing: dict, pool: list[dict], s: Settings
     except Exception as e:  # karar kaydı eksik kalabilir; değerlendirme ve bildirim ASLA buna bağlı olmasın
         print("karar kaydı kurulamadı:", type(e).__name__, redact(str(e))[:120])
         record = {"rules_version": RULES_VERSION}
-    repo.save_evaluation(
+    # yeni satırın kimliği ilanda taşınır (20.10.2026): ⚡ ACİL SATICI bu turun değerlendirmesinden gider ve alerts.evaluation_id'ye bunu yazar
+    listing["evaluation_id"] = repo.save_evaluation(
         listing["id"],
         {
             "comparables_n": market.n,
