@@ -420,6 +420,30 @@ class Repository:
     def set_duplicate(self, listing_id, canonical_id) -> None:
         self.conn.execute("UPDATE listings SET duplicate_of=%s WHERE id=%s", (canonical_id, listing_id))
 
+    def link_first_post(self, source_id, item_id: str, first_item_id: str) -> bool:
+        """Facebook devir "ilk_gonderi" (20.10.2026): (source_id, item_id) ilanını, okuyucunun aynı metinle gördüğü ilk gönderinin (herhangi bir
+        Facebook grubunda `first_item_id`) ilanının kanoniğine kopya olarak bağlar; bağlandıysa True. application/dedupe ile aynı temkin:
+        - yeni ilan henüz kopya değil; kanonik kendisi kopya değil ve aynı ilan değil;
+        - aynı marka/model/yıl, model BİLİNİYOR (okuyucu yalnız metne bakar; ek_metin farkı başka araç okutmuş olabilir);
+        - aynı tutar ve para birimi ya da ikisi de fiyatsız (fiyat değiştiyse yeni bir sinyaldir, ayrı değerlendirilir);
+        - aktif ilan yalnız AKTİF kanoniğin kopyası olur; gölge kaynağın ilanı gölge olmayan ilanın kanoniği olamaz (mark_duplicates kuralları)."""
+        row = self.conn.execute(
+            """WITH f AS (SELECT COALESCE(l.duplicate_of, l.id) AS id FROM listings l JOIN sources s ON s.id = l.source_id
+                          WHERE s.platform = 'facebook' AND l.source_item_id = %(first)s ORDER BY l.first_seen_at LIMIT 1),
+                    c AS (SELECT l.*, s.alert_level = 'golge' AS shadow FROM listings l JOIN sources s ON s.id = l.source_id
+                          WHERE l.id = (SELECT id FROM f) AND l.duplicate_of IS NULL),
+                    n AS (SELECT l.*, s.alert_level = 'golge' AS shadow FROM listings l JOIN sources s ON s.id = l.source_id
+                          WHERE l.source_id = %(src)s AND l.source_item_id = %(item)s AND l.duplicate_of IS NULL)
+               UPDATE listings SET duplicate_of = c.id FROM n, c
+               WHERE listings.id = n.id AND c.id <> n.id
+                 AND c.brand_norm = n.brand_norm AND c.model_norm = n.model_norm AND c.year = n.year
+                 AND c.price_amount IS NOT DISTINCT FROM n.price_amount AND c.currency IS NOT DISTINCT FROM n.currency
+                 AND (c.is_active OR NOT n.is_active) AND (NOT c.shadow OR n.shadow)
+               RETURNING listings.id""",
+            {"first": first_item_id, "src": source_id, "item": item_id},
+        ).fetchone()
+        return row is not None
+
     def stale_active(self, source_id, hours: int, limit: int) -> list[dict]:
         """Uzun süredir yeniden kontrol edilmemiş aktif ilanlar (fiyat değişimi / satıldı tespiti için)."""
         return self.conn.execute(

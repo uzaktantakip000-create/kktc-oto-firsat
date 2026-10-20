@@ -7,6 +7,9 @@ collect_facebook.listing_data -> parse_freetext; ikinci bir ayrıştırma yok) v
 Satır (surum 1): {"surum", "platform", "anahtar": "fb:<grup>", "gonderi", "url", "metin", "paylasim_utc", "goruldu_utc", "foto_url"}; isteğe bağlı
 (satıcı radarı, 10.10.2026; eski satırlarda yok): "satici_gonderi_14g" (telefonun 14 günde geçtiği FARKLI gönderi sayısı) ve "satici_grup_14g".
 Radar sayısı ilanın seller_type'ına çevrilir (social_ingest.seller_kind); telefon satırda yoktur.
+İsteğe bağlı "ilk_gonderi" (20.10.2026): aynı metnin okuyucunun gördüğü ilk gönderisi; aktarımdan sonra bu ilan o gönderinin ilanının kopyası
+olur (Repository.link_first_post: aynı marka/model/yıl, aynı tutar, gölge/aktiflik sırası). Bulunamazsa ya da koşul tutmazsa yok sayılır;
+saatlik kopya taraması (application/dedupe) yine çalışır.
 Dosyadaki adres KULLANILMAZ: bağlantı anahtar + gönderi kimliğinden kurulur (okuyucu tarafı ne yazarsa yazsın mesaja yalnız Facebook grup
 gönderisi bağlantısı gider). Görsel adresi yalnız Facebook CDN'i ise alınır. Paylaşım zamanı okunamamışsa ilk görülme zamanı yazılır
 (yoksa birikmiş eski satırlar aktarıldığı an "yeni" sayılırdı).
@@ -67,6 +70,7 @@ class ImportReport:
     skipped: dict[str, int] = field(default_factory=dict)  # bozuk_satir / surum / platform / alan / bilinmeyen_anahtar / kaynak_kapali
     sources: int = 0  # satırı olan kaynak
     pending: bool = False  # sınır yüzünden kalan satır var (sonraki turda)
+    linked: int = 0  # "ilk_gonderi" ile ilk gönderinin ilanına kopya olarak bağlanan ilan
 
     def summary(self) -> list[str]:
         if not self.lines:
@@ -74,6 +78,7 @@ class ImportReport:
         out = [f"sosyal devir: {self.lines} satır, {self.posts} gönderi, {self.sources} kaynak, {self.new_listings} yeni ilan"
                + (f" ({self.priceless} fiyatsız)" if self.priceless else "")
                + (f" ({self.field_price} fiyatı satış kutusundan)" if self.field_price else "")
+               + (f" ({self.linked} ilk gönderiye bağlandı)" if self.linked else "")
                + (" (kalan var, sonraki turda)" if self.pending else "")]
         if self.not_listing:
             out.append("  ilan değil: " + ", ".join(f"{k}={v}" for k, v in sorted(self.not_listing.items())))
@@ -165,8 +170,14 @@ def parse_line(line: str) -> tuple[str, SocialPost] | str:
                       posted_at=posted or seen, text=text[:MAX_TEXT], image_url=image, dated=posted is not None,
                       seller_posts_14d=radar if type(radar) is int and 1 <= radar <= MAX_RADAR else None,
                       extra_text=_extra_text(doc.get("ek_metin")),
-                      freshness=doc.get("tazelik") if doc.get("tazelik") in FRESHNESS else None)
+                      freshness=doc.get("tazelik") if doc.get("tazelik") in FRESHNESS else None,
+                      first_post=_first_post(doc.get("ilk_gonderi"), pid))
     return key, post
+
+
+def _first_post(value, pid: str) -> str | None:
+    """Devir "ilk_gonderi": gönderi kimliği biçiminde ve satırın kendi kimliğinden farklıysa; değilse None (alan isteğe bağlı, bozuk değer yok sayılır)."""
+    return value if isinstance(value, str) and _POST_ID.match(value) and value != pid else None
 
 
 def read_photo(devir_dir: Path | str, image_url: str | None) -> tuple[bytes, str] | None:
@@ -245,11 +256,27 @@ def import_facebook(repo, devir_dir: Path | str, *, limit: int = MAX_LINES, log:
             _count(rep.not_listing, why, n)
         latest = max((p.posted_at for p in posts if p.posted_at), default=None)
         repo.mark_checked(row["id"], cursor=None, last_post_at=latest, listings_7d=repo.count_recent(row["id"]))
+        rep.linked += _link_first_posts(repo, row["id"], posts, log)
     rep.sources = len(by_key)
     repo.set_state(STATE_KEY, json.dumps({"dosya": new_cursor[0], "satir": new_cursor[1]}))
     for line in rep.summary():
         log(line)
     return rep
+
+
+def _link_first_posts(repo, source_id, posts: list[SocialPost], log) -> int:
+    """"ilk_gonderi"li gönderilerin ilanını ilk gönderinin ilanına kopya olarak bağlar; bağlanan sayısı. Kopya bağı bir iyileştirmedir: hata
+    aktarımı durdurmaz (yalnız hata türü yazılır; saatlik kopya taraması yine çalışır)."""
+    n = 0
+    for p in posts:
+        if not p.first_post:
+            continue
+        try:
+            n += repo.link_first_post(source_id, p.post_id, p.first_post)
+        except Exception as e:
+            log(f"sosyal devir: ilk gönderi bağı kurulamadı: {type(e).__name__}")
+            return n
+    return n
 
 
 def import_facebook_locked(repo, devir_dir: Path | str, **kw) -> ImportReport | None:

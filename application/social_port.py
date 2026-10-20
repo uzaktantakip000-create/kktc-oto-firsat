@@ -63,6 +63,10 @@ class SocialPost:
     freshness: str | None = None
     # yalnız Facebook devir satırı: paylaşım saati okundu mu (False: posted_at okuyucunun gördüğü an; mesaj "paylaşıldı" demez). Eski satırda True.
     dated: bool = True
+    # yalnız Facebook devir satırı "ilk_gonderi" (sosyal oturum 8407886, 20.10.2026): okuyucunun son 14 günde AYNI METİNLE (büyük/küçük harf,
+    # boşluk, noktalama, emoji farkı yok; en az 20 karakter; aynı ya da başka grup) gördüğü İLK gönderinin kimliği. Satır o ilk gönderinin
+    # kendisiyse yok. Aktarıcı bu ilanı o gönderinin ilanının kopyası yapar (koşullar: Repository.link_first_post).
+    first_post: str | None = None
 
 
 @dataclass
