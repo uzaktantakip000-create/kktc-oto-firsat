@@ -1025,6 +1025,10 @@ class Repository:
     def mark_alerted(self, key: str) -> None:
         self.set_state(f"alert:{key}", self.conn.execute("SELECT NOW()::text AS t").fetchone()["t"])
 
+    def forget_alert(self, key: str) -> None:
+        """Uyarının tekrar sınırını sıfırlar: aynı uyarı bir sonraki durumda hemen yeniden gidebilir (sosyal okuyucu arızası düzelince)."""
+        self.set_state(f"alert:{key}", "")
+
     # --- aboneler ve bildirimler ---
     def approved_subscribers(self) -> list[dict]:
         return self.conn.execute("SELECT * FROM subscribers WHERE status='onayli'").fetchall()

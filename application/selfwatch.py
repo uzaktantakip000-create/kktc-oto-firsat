@@ -13,8 +13,10 @@ bot_state anahtarları (hepsi UTC ISO zaman; yazılmamış ya da "" = yok):
   ls_down                          açık "anında cevap durdu" olayı (uyarı gittiyse; başı = kesintinin ilk görüldüğü an)
   bot_listen_seen                  dinleyici kalp atışı (bot_poll.LISTENER_STATE_KEY; dinleyici yazar, temiz çıkışta siler)
   backup_last_ok                   son BAŞARILI veritabanı yedeği (haftalık yedek işi yazar; burada yalnız okunur, sabah satırı)
+  social_acik:<platform|okuyucu>   uyarısı GİTMİŞ sosyal okuyucu arızası (durum adı); düzelince "düzeldi" gider ve boşaltılır (20.10.2026)
+  social_hata_ilk:<platform>       "hata"nın ilk görüldüğü an | o andaki son_tur_utc (teyit: ikinci hatalı tur ya da 3,5 gündüz saati)
 Uyarı tekrar sınırı health.notify_owner'ın kendi `alert:<ad>` kayıtlarıdır; adlar: vps_failover, vps_recovered, vps_browser_failover, vps_browser_recovered,
-listener_down, listener_up, vps_resources, social_<platform>_<fren|hata|susuyor>, social_okuyucu_durmus.
+listener_down, listener_up, vps_resources, social_<platform>_<fren|hata|susuyor|duzeldi>, social_okuyucu_<durmus|duzeldi>.
 Sosyal medya okuyucusu (Instagram/Facebook; ayrı program, veritabanımızda değil) aynı VPS'te kendi durum dosyasını yazar (SOCIAL_STATUS_PATH, JSON);
 burada yalnız OKUNUR: sabah satırı + anında uyarı. Dosya yoksa (sosyal taraf kurulu değil) hiçbir şey yazılmaz/uyarılmaz.
 """
@@ -63,6 +65,16 @@ SOCIAL_RUN_MAX = timedelta(minutes=115)
 SOCIAL_FILE_STALE = timedelta(hours=1)  # durum dosyası gündüz saatiyle bundan uzun süredir yazılmadıysa okuyucunun kendisi durmuş (~20 dk'da bir yazar)
 SOCIAL_REASON_MAX = 60  # fren nedeninin mesajdaki en çok uzunluğu
 SOCIAL_REPEAT_H = 24  # aynı sosyal uyarı en erken bu kadar saat sonra tekrar yazılır
+# Arıza → düzelme (20.10.2026; sahip: "Facebook okuyucusu çalışmıyormuş" — 04:23 UTC'deki tek turluk proxy hıçkırığı uyarı doğurdu, 06:22 turu
+# temizdi ama "düzeldi" mesajı olmadığı için sahip okuyucuyu hâlâ bozuk sandı). Uyarısı GİTMİŞ arıza `SOCIAL_OPEN_KEY`'de açık tutulur; platform
+# yeniden "tamam" (okuyucu yeniden yazıyor) olunca sahibe bir kez "düzeldi" gider, kayıt kapanır ve aynı arızanın 24 saatlik tekrar sınırı sıfırlanır
+# (düzeldikten sonraki yeni arıza hemen yazılsın; okuyucu ~2 saatte bir tur attığı için gidip gelen arıza en çok tur başına bir çift mesaj olur).
+SOCIAL_OPEN_KEY = "social_acik:{}"  # bot_state: platform anahtarı ya da "okuyucu" → uyarısı giden durum ("hata", "fren", "susuyor", "durmus")
+# "hata" teyidi (sosyal oturumun ölçümü 20.10.2026: 7 günde 64 turun 5'i "ulaşılamadı"; 13.10 ve 20.10 tek tur, 17.10 art arda 3 tur; okuyucu artık
+# proxy IP denetimini 30 sn sonra bir kez daha deniyor): "hata" anında yazılmaz. Uyarı ya ikinci hatalı turda (ilk görüldüğündeki son_tur_utc'den
+# farklı bir son_tur_utc hâlâ "hata" diyorsa) ya da hata gündüz saatiyle SOCIAL_SILENT_AFTER sürdüyse gider (son_tur_utc hatalı turda ilerlemiyorsa
+# yalnız süre kuralı çalışır; susan okuyucu kuralıyla aynı sınır). "fren" (sahibin girişi gerekebilir) ve okuyucunun durması eskisi gibi anında.
+SOCIAL_ERROR_KEY = "social_hata_ilk:{}"  # bot_state: "hata"nın ilk görüldüğü an | o andaki son_tur_utc
 SOCIAL_NAMES = {"instagram": "Instagram", "facebook": "Facebook"}  # satırda önce bunlar (bu sırayla), sonra öbürleri alfabetik; bilinmeyen adın baş harfi büyütülür
 SOCIAL_KEY_OK = re.compile(r"[a-z0-9_]{1,24}")  # platform anahtarı uyarı anahtarına ve mesaja girer: başka bir şey taşıyan platform atlanır
 BROWSER_ALERT_AFTER = timedelta(hours=6)  # KKTCarabam: GitHub 150 dk'da devralır ama tek aksayan tur (Cloudflare, site) uyarı sebebi değil: 3 tur üst üste
@@ -236,6 +248,8 @@ class SocialPlatform:
     state: str  # "tamam" | "susuyor" | "fren" | "hata" | "belirsiz"
     part: str  # sabah satırındaki parça: "Instagram ✅ (son tur 2 saat önce, 3 yeni)"
     alert: str | None  # anında uyarı metni: yalnız susuyor/fren/hata durumlarında
+    note: str = ""  # "tamam" durumunun ayrıntısı ("son tur 12 dk önce, 33 yeni"): "düzeldi" mesajında
+    tur: str | None = None  # dosyadaki son_tur_utc (ham): iki ayrı hatalı turu ayırt etmek için
 
 
 @dataclass(frozen=True)
@@ -298,19 +312,22 @@ def _social_platform(key: str, p: dict, now: datetime) -> SocialPlatform:
             day_age = _day_elapsed(now - running, now)
         if day_age > SOCIAL_SILENT_AFTER:
             return SocialPlatform(key, "susuyor", f"{name} ⚠️ susuyor (son tur {_span(age)} önce)",
-                                  f"⚠️ {name} okuyucusu sustu: son tur {_span(age)} önce. Sunucuda sosyal okuyucunun çalışıp çalışmadığına bakılmalı.")
+                                  f"⚠️ {name} okuyucusu sustu: son tur {_span(age)} önce. Sunucuda sosyal okuyucunun çalışıp çalışmadığına bakılmalı. "
+                                  "Düzelince ayrıca yazacağım.")
         new = _count(p.get("yeni_ilan"))
         notes = ([f"son tur {_span(age)} önce"] + (["tur sürüyor"] if running is not None else []) + ([f"{new} yeni"] if new is not None else [])
                  + ([f"{errors} kaynak hatası"] if errors else []))
-        return SocialPlatform(key, "tamam", f"{name} ✅ ({', '.join(notes)})", None)
+        return SocialPlatform(key, "tamam", f"{name} ✅ ({', '.join(notes)})", None, ", ".join(notes))
     if result == "fren":
         reason = _reason(p.get("fren_nedeni"))
         why = f": {reason.rstrip('.')}" if reason else " (fren)"
         return SocialPlatform(key, "fren", f"{name} ⚠️ fren" + (f" ({reason})" if reason else ""),
-                              f"⚠️ {name} okuyucusu durdu{why}. Uzak masaüstünden giriş gerekebilir.")
+                              f"⚠️ {name} okuyucusu durdu{why}. Uzak masaüstünden giriş gerekebilir. Düzelince ayrıca yazacağım.")
     if result == "hata":
+        tur = p.get("son_tur_utc")
         return SocialPlatform(key, "hata", f"{name} ⚠️ hata" + (f" ({errors} kaynak hatası)" if errors else ""),
-                              f"⚠️ {name} okuyucusu hata veriyor (proxy'ye ulaşılamıyor ya da kaynaklar sürekli hata veriyor). Sunucudaki kaydına bakılmalı.")
+                              f"⚠️ {name} okuyucusu art arda hata veriyor (proxy'ye ulaşılamıyor ya da kaynaklar sürekli hata veriyor). Sunucudaki "
+                              "kaydına bakılmalı. Düzelince ayrıca yazacağım.", tur=tur if isinstance(tur, str) else None)
     return SocialPlatform(key, "belirsiz", f"{name} ⚠️ durum belirsiz", None)
 
 
@@ -343,7 +360,8 @@ def judge_social(data: dict, now: datetime) -> SocialView | None:
 def social_watch(repo, now: datetime, path: str | None = None) -> None:
     """VPS tick'inde (yalnız KKTC gündüzü 07–24): durum dosyası bir platform için fren/hata/susma ya da okuyucunun kendisi için "durmuş" diyorsa sahibe
     BİR uyarı (`social_<platform>_<durum>` / `social_okuyucu_durmus`, 24 saatte bir tekrar). Okuyucu durmuşsa yalnız o uyarı gider: dosyadaki platform
-    bilgisi bayattır, ayrıca "susuyor" demek aynı arızanın kopyası olur. Dosya yoksa/okunamıyorsa/biçim yanlışsa hiçbir şey yapılmaz; düzelince mesaj yok."""
+    bilgisi bayattır, ayrıca "susuyor" demek aynı arızanın kopyası olur. "hata" teyit ister (SOCIAL_ERROR_KEY yorumu). Uyarısı gitmiş arıza düzelince
+    sahibe bir kez "düzeldi" (SOCIAL_OPEN_KEY yorumu). Dosya yoksa/okunamıyorsa/biçim yanlışsa hiçbir şey yapılmaz."""
     if not SOCIAL_DAY[0] <= kktc_hour(now) < SOCIAL_DAY[1]:
         return
     data = read_social(path)
@@ -351,12 +369,51 @@ def social_watch(repo, now: datetime, path: str | None = None) -> None:
     if view is None:
         return
     if view.stale is not None:
-        notify_owner(repo, "social_okuyucu_durmus", f"⚠️ Sosyal okuyucu durmuş görünüyor (son yazım {_span(view.stale)} önce). Sunucuda çalışıp çalışmadığına bakılmalı.",
-                     repeat_hours=SOCIAL_REPEAT_H)
+        _alert(repo, "okuyucu", "durmus", f"⚠️ Sosyal okuyucu durmuş görünüyor (son yazım {_span(view.stale)} önce). Sunucuda çalışıp çalışmadığına "
+               "bakılmalı. Düzelince ayrıca yazacağım.")
         return
+    _recover(repo, "okuyucu", "✅ Düzeldi: sosyal okuyucu yeniden çalışıyor.")
     for p in view.platforms:
+        if p.state != "hata" and repo.get_state(SOCIAL_ERROR_KEY.format(p.key)):
+            repo.set_state(SOCIAL_ERROR_KEY.format(p.key), "")  # hata bitti: sonraki hata yeniden teyit ister
+        if p.state == "hata" and not _error_confirmed(repo, p, now):
+            continue
         if p.alert:
-            notify_owner(repo, f"social_{p.key}_{p.state}", p.alert, repeat_hours=SOCIAL_REPEAT_H)
+            _alert(repo, p.key, p.state, p.alert)
+        elif p.state == "tamam":
+            name = SOCIAL_NAMES.get(p.key, p.key.capitalize())
+            _recover(repo, p.key, f"✅ Düzeldi: {name} okuyucusu yeniden çalışıyor ({p.note}).")
+
+
+def _alert(repo, who: str, state: str, text: str) -> None:
+    if notify_owner(repo, f"social_{who}_{state}", text, repeat_hours=SOCIAL_REPEAT_H):
+        repo.set_state(SOCIAL_OPEN_KEY.format(who), state)
+
+
+def _recover(repo, who: str, text: str) -> None:
+    """Uyarısı gitmiş arıza açıksa sahibe bir kez "düzeldi" yazar, kaydı kapatır ve o arızanın tekrar sınırını sıfırlar. Mesaj gidemezse kayıt
+    açık kalır (sonraki turda yeniden denenir)."""
+    key = SOCIAL_OPEN_KEY.format(who)
+    old = repo.get_state(key)
+    if not old or not notify_owner(repo, f"social_{who}_duzeldi", text, repeat_hours=0):
+        return
+    repo.set_state(key, "")
+    repo.forget_alert(f"social_{who}_{old}")
+
+
+def _error_confirmed(repo, p: SocialPlatform, now: datetime) -> bool:
+    """"hata" teyitli mi: ikinci ayrı hatalı tur ya da gündüz saatiyle SOCIAL_SILENT_AFTER süren hata. İlk görülüş `SOCIAL_ERROR_KEY`'e yazılır."""
+    key = SOCIAL_ERROR_KEY.format(p.key)
+    first, _, tur = (repo.get_state(key) or "").partition("|")
+    try:
+        since = datetime.fromisoformat(first)
+    except ValueError:
+        repo.set_state(key, f"{now.isoformat()}|{p.tur or ''}")
+        return False
+    if since.tzinfo is None or since > now:  # bozuk/ileri tarihli kayıt: bugünden yeniden say
+        repo.set_state(key, f"{now.isoformat()}|{p.tur or ''}")
+        return False
+    return bool(p.tur and tur and p.tur != tur) or _day_elapsed(since, now) >= SOCIAL_SILENT_AFTER
 
 
 def handoff_check(repo, now: datetime, path: str | None = None) -> None:

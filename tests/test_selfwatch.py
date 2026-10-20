@@ -32,6 +32,9 @@ class Repo(GateRepo):
     def mark_alerted(self, key):
         self.alerted[key] = self.now
 
+    def forget_alert(self, key):
+        self.alerted.pop(key, None)
+
 
 @pytest.fixture
 def tg(monkeypatch):

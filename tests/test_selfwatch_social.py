@@ -391,7 +391,7 @@ def test_a_brake_alerts_once_with_the_reason_and_a_stable_key(social, tg):
     now, repo = kk(7, 14, 0), Repo()
     put(social, now, {"facebook": plat("fren", None, reason="doğrulama isteniyor (checkpoint)")})
     watch(repo, now)
-    assert tg == ["⚠️ Facebook okuyucusu durdu: doğrulama isteniyor (checkpoint). Uzak masaüstünden giriş gerekebilir."]
+    assert tg == ["⚠️ Facebook okuyucusu durdu: doğrulama isteniyor (checkpoint). Uzak masaüstünden giriş gerekebilir. Düzelince ayrıca yazacağım."]
     assert list(repo.alerted) == ["social_facebook_fren"]
 
 
@@ -399,29 +399,62 @@ def test_a_brake_without_a_reason_still_alerts(social, tg):
     now, repo = kk(7, 14, 0), Repo()
     put(social, now, {"facebook": plat("fren", None)})
     watch(repo, now)
-    assert tg == ["⚠️ Facebook okuyucusu durdu (fren). Uzak masaüstünden giriş gerekebilir."]
+    assert tg == ["⚠️ Facebook okuyucusu durdu (fren). Uzak masaüstünden giriş gerekebilir. Düzelince ayrıca yazacağım."]
 
 
 def test_a_reason_that_ends_with_a_full_stop_does_not_double_it(social, tg):
     now = kk(7, 14, 0)
     put(social, now, {"instagram": plat("fren", None, reason="48 saat bekleme.")})
     watch(Repo(), now)
-    assert tg == ["⚠️ Instagram okuyucusu durdu: 48 saat bekleme. Uzak masaüstünden giriş gerekebilir."]
+    assert tg == ["⚠️ Instagram okuyucusu durdu: 48 saat bekleme. Uzak masaüstünden giriş gerekebilir. Düzelince ayrıca yazacağım."]
 
 
-def test_an_error_state_alerts_with_its_own_key(social, tg):
+ERROR_TEXT = ("⚠️ Instagram okuyucusu art arda hata veriyor (proxy'ye ulaşılamıyor ya da kaynaklar sürekli hata veriyor). Sunucudaki kaydına "
+              "bakılmalı. Düzelince ayrıca yazacağım.")
+
+
+def test_a_single_failed_run_does_not_alert_but_a_second_failed_run_does(social, tg):
+    """20.10.2026: 04:23 UTC'deki tek turluk "ulaşılamadı" sahibe "hata veriyor" yazdırdı, 06:22 turu temizdi. Artık ilk hatalı tur yazılmaz;
+    ikinci AYRI hatalı tur (son_tur_utc ilerlemiş, hâlâ hata) yazılır."""
     now, repo = kk(7, 14, 0), Repo()
-    put(social, now, {"instagram": plat("hata", None, errors=2)})
+    put(social, now, {"instagram": plat("hata", kk(7, 13, 50), errors=2)})
     watch(repo, now)
-    assert tg == ["⚠️ Instagram okuyucusu hata veriyor (proxy'ye ulaşılamıyor ya da kaynaklar sürekli hata veriyor). Sunucudaki kaydına bakılmalı."]
-    assert list(repo.alerted) == ["social_instagram_hata"]
+    put(social, now + 15 * M, {"instagram": plat("hata", kk(7, 13, 50), errors=2)})  # aynı tur: hâlâ teyit yok
+    watch(repo, now + 15 * M)
+    assert tg == []
+    put(social, now + 2 * H, {"instagram": plat("hata", kk(7, 15, 50), errors=2)})  # sonraki tur da hatalı
+    watch(repo, now + 2 * H)
+    assert tg == [ERROR_TEXT] and list(repo.alerted) == ["social_instagram_hata"]
+
+
+def test_an_error_without_a_moving_run_time_alerts_after_the_silence_limit(social, tg):
+    """son_tur_utc hatalı turda ilerlemiyorsa (ya da yoksa) yalnız süre kuralı: gündüz saatiyle 3,5 saat süren hata."""
+    start, repo = kk(7, 10, 0), Repo()
+    for minutes in (0, 60, 120, 209):
+        put(social, start + minutes * M, {"instagram": plat("hata", None)})
+        watch(repo, start + minutes * M)
+    assert tg == []
+    put(social, start + 210 * M, {"instagram": plat("hata", None)})
+    watch(repo, start + 210 * M)
+    assert tg == [ERROR_TEXT]
+
+
+def test_an_error_that_clears_before_confirmation_never_alerts_and_the_next_error_starts_a_new_count(social, tg):
+    start, repo = kk(7, 10, 0), Repo()
+    put(social, start, {"instagram": plat("hata", kk(7, 9, 50))})
+    watch(repo, start)
+    put(social, start + 2 * H, {"instagram": plat(last=kk(7, 11, 50))})  # sonraki tur temiz
+    watch(repo, start + 2 * H)
+    put(social, start + 4 * H, {"instagram": plat("hata", kk(7, 13, 50))})  # yeni hata: ilk tur, yeniden sayılır
+    watch(repo, start + 4 * H)
+    assert tg == [] and repo.state.get("social_acik:instagram") in (None, "")
 
 
 def test_a_silent_platform_alerts_with_the_real_age_and_its_own_key(social, tg):
     now, repo = kk(7, 15, 0), Repo()
     put(social, now, {"instagram": plat(last=kk(7, 8, 10))})
     watch(repo, now)
-    assert tg == ["⚠️ Instagram okuyucusu sustu: son tur 6 saat önce. Sunucuda sosyal okuyucunun çalışıp çalışmadığına bakılmalı."]
+    assert tg == ["⚠️ Instagram okuyucusu sustu: son tur 6 saat önce. Sunucuda sosyal okuyucunun çalışıp çalışmadığına bakılmalı. Düzelince ayrıca yazacağım."]
     assert list(repo.alerted) == ["social_instagram_susuyor"]
 
 
@@ -429,15 +462,19 @@ def test_a_stopped_reader_alerts_once_and_suppresses_the_stale_platform_alerts(s
     now, repo = kk(7, 15, 0), Repo()
     put(social, now, {"instagram": plat(last=kk(7, 8, 10)), "facebook": plat("fren", None, reason="x")}, written=kk(7, 11, 30))
     watch(repo, now)
-    assert tg == ["⚠️ Sosyal okuyucu durmuş görünüyor (son yazım 3 saat önce). Sunucuda çalışıp çalışmadığına bakılmalı."]
+    assert tg == ["⚠️ Sosyal okuyucu durmuş görünüyor (son yazım 3 saat önce). Sunucuda çalışıp çalışmadığına bakılmalı. Düzelince ayrıca yazacağım."]
     assert list(repo.alerted) == ["social_okuyucu_durmus"]
 
 
 def test_each_bad_platform_gets_its_own_alert_and_healthy_or_unclear_ones_get_none(social, tg):
     now, repo = kk(7, 14, 0), Repo()
-    put(social, now, {"instagram": plat(last=now - 5 * M), "facebook": plat("fren", None, reason="x"), "tiktok": plat("hata", None),
+    put(social, now, {"instagram": plat(last=now - 5 * M), "facebook": plat("fren", None, reason="x"), "tiktok": plat("hata", kk(7, 13, 0)),
                       "alfa": plat(None, None), "beta": plat(last=None)})
     watch(repo, now)
+    assert sorted(repo.alerted) == ["social_facebook_fren"] and len(tg) == 1  # hata ilk turda teyit bekler
+    put(social, now + 2 * H, {"instagram": plat(last=now + H), "facebook": plat("fren", None, reason="x"), "tiktok": plat("hata", kk(7, 15, 0)),
+                              "alfa": plat(None, None), "beta": plat(last=None)})
+    watch(repo, now + 2 * H)
     assert sorted(repo.alerted) == ["social_facebook_fren", "social_tiktok_hata"] and len(tg) == 2
 
 
@@ -459,20 +496,58 @@ def test_a_different_state_is_a_different_alert(social, tg):
     put(social, now, {"facebook": plat("fren", None, reason="x")})
     watch(repo, now)
     now += 15 * M
-    put(social, now, {"facebook": plat("hata", None)})
+    put(social, now, {"facebook": plat("hata", kk(7, 14, 10))})
+    watch(repo, now)
+    now += 2 * H
+    put(social, now, {"facebook": plat("hata", kk(7, 16, 10))})  # ikinci hatalı tur: teyitli
     watch(repo, now)
     assert sorted(repo.alerted) == ["social_facebook_fren", "social_facebook_hata"] and len(tg) == 2
 
 
-def test_healthy_state_sends_nothing_and_recovery_sends_no_message(social, tg):
+def test_healthy_state_sends_nothing_and_recovery_sends_one_message(social, tg):
+    """20.10.2026: düzelme de yazılır (önceden yazılmıyordu; sahip okuyucuyu bozuk sandı). Bir kez; sonraki sağlıklı turlar sessiz."""
     now, repo = kk(7, 14, 0), Repo()
     put(social, now, {"instagram": plat(last=now - 5 * M), "facebook": plat(last=now - 9 * M, new=1)})
     watch(repo, now)
+    assert tg == []
     put(social, now + 15 * M, {"facebook": plat("fren", None, reason="x")})
     watch(repo, now + 15 * M)
-    put(social, now + 30 * M, {"facebook": plat(last=now + 29 * M)})  # düzeldi
+    for minutes in (30, 45):
+        put(social, now + minutes * M, {"facebook": plat(last=now + 29 * M, new=33)})  # düzeldi
+        watch(repo, now + minutes * M)
+    assert tg[1:] == ["✅ Düzeldi: Facebook okuyucusu yeniden çalışıyor (son tur 1 dk önce, 33 yeni)."] and len(tg) == 2
+
+
+def test_after_recovery_a_new_failure_alerts_again_without_waiting_24_hours(social, tg):
+    now, repo = kk(7, 14, 0), Repo()
+    put(social, now, {"facebook": plat("fren", None, reason="x")})
+    watch(repo, now)
+    put(social, now + H, {"facebook": plat(last=now + 50 * M)})
+    watch(repo, now + H)
+    put(social, now + 3 * H, {"facebook": plat("fren", None, reason="x")})
+    watch(repo, now + 3 * H)
+    assert len(tg) == 3 and tg[2].startswith("⚠️ Facebook okuyucusu durdu")
+
+
+def test_a_recovery_without_an_alert_sent_before_says_nothing(social, tg):
+    """Uyarısı gitmemiş arızanın (teyit beklerken düzelen hata, gece olan fren) düzelmesi yazılmaz: sahip arızayı hiç duymadı."""
+    now, repo = kk(7, 14, 0), Repo()
+    put(social, now, {"facebook": plat("hata", kk(7, 13, 50))})
+    watch(repo, now)
+    put(social, now + 2 * H, {"facebook": plat(last=kk(7, 15, 50))})
+    watch(repo, now + 2 * H)
+    assert tg == []
+
+
+def test_a_stopped_reader_that_writes_again_is_announced_once(social, tg):
+    now, repo = kk(7, 15, 0), Repo()
+    put(social, now, {"facebook": plat(last=kk(7, 11, 0))}, written=kk(7, 11, 30))
+    watch(repo, now)
+    put(social, now + 15 * M, {"facebook": plat(last=now + 10 * M)})
+    watch(repo, now + 15 * M)
+    put(social, now + 30 * M, {"facebook": plat(last=now + 10 * M)})
     watch(repo, now + 30 * M)
-    assert len(tg) == 1  # yalnız fren uyarısı; "düzeldi" mesajı yok
+    assert tg[1:] == ["✅ Düzeldi: sosyal okuyucu yeniden çalışıyor."] and len(tg) == 2
 
 
 @pytest.mark.parametrize("hh,mm,sends", [(23, 0, True), (23, 59, True), (0, 0, False), (3, 30, False), (6, 59, False),
@@ -525,7 +600,7 @@ def test_a_vps_tick_runs_the_social_check_and_the_alert_goes_out(social, tg, mon
     now, repo = kk(7, 14, 0), Repo()
     put(social, now, {"facebook": plat("fren", None, reason="doğrulama isteniyor (checkpoint)")})
     after(monkeypatch, "vps", repo, now)
-    assert tg == ["⚠️ Facebook okuyucusu durdu: doğrulama isteniyor (checkpoint). Uzak masaüstünden giriş gerekebilir."]
+    assert tg == ["⚠️ Facebook okuyucusu durdu: doğrulama isteniyor (checkpoint). Uzak masaüstünden giriş gerekebilir. Düzelince ayrıca yazacağım."]
 
 
 @pytest.mark.parametrize("runner", ["github", "yerel"])
