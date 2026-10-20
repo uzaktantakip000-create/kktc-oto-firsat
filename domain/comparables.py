@@ -54,6 +54,7 @@ class Market:
     narrow_median_gbp: float | None = None  # genişleme birleşiminde (7c): dar (ilk geçerli) piyasanın medyanı; birleşme olmadıysa None
     wide_median_gbp: float | None = None  # ...ve geniş piyasanın kendi medyanı (median_gbp ikisinin küçüğüdür)
     near_n: int | None = None  # km'si ilana ±km_near_limit yakın (ya da km'si yazmayan) emsal sayısı; ilanın km'si bilinmiyorsa None
+    tl_factor: float | None = None  # taze TL ilanda fiyat ölçüleri (medyan, alt çeyrek, aralık) £ piyasasının bu katı (data_gate.tl_market); yoksa None
 
 
 def _is_comparable(target: dict, row: dict, year_span: int, now: datetime, s: Settings, gbp_only: bool = False) -> bool:

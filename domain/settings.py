@@ -1,6 +1,6 @@
 from pydantic import BaseModel, model_validator
 
-RULES_VERSION = "2026-10-11"  # değerleme kuralları değişince artır (günde en çok bir kez): sonraki TAM turda bildirime aday ilanlar yeni kurallarla yeniden değerlendirilir (EKLEME-YALNIZ: eski satır silinmez), kalanı 3 günlük yeniden bakışla yenilenir
+RULES_VERSION = "2026-10-20"  # 20.10: taze TL fiyatı 🟢 olabilir (decision._fresh_tl_strong) + yer tutucu km bilinmiyor (comparables.PLACEHOLDER_KM). Değerleme kuralları değişince artır (günde en çok bir kez): sonraki TAM turda bildirime aday ilanlar yeni kurallarla yeniden değerlendirilir (EKLEME-YALNIZ: eski satır silinmez), kalanı 3 günlük yeniden bakışla yenilenir
 
 
 class Settings(BaseModel):
@@ -47,6 +47,16 @@ class Settings(BaseModel):
     unknown_km_check: bool = True
     unknown_km_extra: int = 45_000
     unknown_km_min_age: int = 5
+    # Taze TL fiyatı (20.10.2026; sahip: KibrisArabaAl 2011 March 185.000 TL "gerçekten güzel bir fırsat" ama `tl_fiyat` yüzünden 🟡 kaldı).
+    # Ölçüm (canlı salt-okunur anlık görüntü, km'ye çekilmiş £-yalnız piyasa, n ≥ 8): yayın tarihi güvenilir ve ilk görülmeden ≤4 gün önce
+    # yayınlanmış TL ilan / piyasa medyanı 0,908 (Q1 0,826 – Q3 1,001; n=47; medyanın %90 bootstrap aralığı 0,890–0,961); aynı tazelikte
+    # £ ilan 0,993 (n=661); tarihsiz/eski TL 0,804 (n=171). Yani TL ucuzluğunun bir kısmı eski fiyattır, ama taze TL de ~%9 ucuz (ayrı bir
+    # alt pazar). Kural (decision._fresh_tl_strong): tarihi güvenilir, karar anına en çok `tl_fresh_days` gün yakın ve tutarı insan eliyle
+    # yazılmış TL ilanın piyasası £ ilan gibi (önce TL emsalsiz) kurulur, fiyat ölçüleri `tl_fresh_factor` ile çarpılır; bu piyasada bütün 🟢
+    # kapılarından geçerse 🟢. Geçmezse ve öbür bütün TL ilanlarda eskisi gibi en fazla 🟡 (`tl_fiyat`); 🟡/yok kararları değişmez.
+    # Katsayı ölçülen medyanın güven aralığının ALT ucu (0,89 < 0,908): muhafazakâr. 0 gün = kural kapalı (her TL ilan en fazla 🟡). Spec §24.32.
+    tl_fresh_days: int = 4
+    tl_fresh_factor: float = 0.89
     # --- kullanıcı kararları (Telegram komutlarıyla değişir, application/settings_store.py) ---
     max_buy_gbp: float | None = None  # bundan pahalı ilan için bildirim yok (/butce)
     blocked_brands: list[str] = []  # /istemiyorum <marka>
