@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 
 from domain.alert_policy import send_floor_ok
 from domain.comparables import Market, effective_km, find_market, km_adjusted_price
-from domain.data_gate import KM_UNKNOWN_WARNING, below_cheap_quartile, data_gaps, km_unknown
+from domain.data_gate import (KM_UNKNOWN_WARNING, below_cheap_quartile, data_gaps, km_unknown, tl_fresh, tl_fresh_warning,
+                              tl_market)
 from domain.model_ambiguity import model_ambiguous
 from domain.price_book import STATUS_SUSPECT, Estimate, PriceBook, estimate_from_book
 from domain.profit import Confidence, ProfitResult, Tier, buy_ceiling, evaluate_profit
@@ -105,6 +106,8 @@ def _market_assessment(listing: dict, market: Market, price: float, text: str, b
     absurd = price < market.median_gbp * s.absurd_price_ratio  # evaluate_profit: n<8'de 'yok', ≥8'de en fazla 🟡 (yazım hatası/tuzak): kırmızı bayrak her n'de kayda geçer
     if tier in (Tier.STRONG, Tier.NEGOTIABLE) and km_unknown(listing, now):
         warnings = warnings + [KM_UNKNOWN_WARNING]  # km eksik/şüpheli tek başına engel değil (sahip kararı 04.10.2026): uyarıyla gider
+    if tier in (Tier.STRONG, Tier.NEGOTIABLE) and market.tl_factor is not None:
+        warnings = warnings + [tl_fresh_warning(market.tl_factor)]  # piyasa ortası £ ilanlarınkinden düşük alındı: mesajda nedeni yazsın
     noted = gaps if downgraded else ["para_birimi_supheli"] if as_gbp is Tier.NONE else ["fiyat_asiri_dusuk"] if absurd else []
     return Decision(market, final, blocking, warnings, noted, text)
 
@@ -179,6 +182,22 @@ def _strong_checks(listing: dict, a: Decision, pool: list[dict], s: Settings, bo
     return Decision(a.market, capped, a.blocking, a.warnings, a.gaps + gaps, a.text, a.method, a.estimate)
 
 
+def _fresh_tl_strong(listing: dict, pool: list[dict], price: float, text: str, warnings: list[str], s: Settings, book: PriceBook | None,
+                     now: datetime, strong_checks: bool) -> Decision | None:
+    """Taze TL fiyatlı ilanın 🟢 yolu (20.10.2026; `data_gate.tl_fresh`): piyasa £ ilan gibi kurulur (önce TL emsalsiz: eski/tarihsiz TL emsaller
+    ~%20 ucuz görünür ve medyan yılını kaydırır, Adım 6c) ve fiyat ölçüleri `tl_fresh_factor` ile çarpılır (`tl_market`: yeni TL ilanlar da £
+    ilanlardan ~%9 ucuz durur). Bu piyasada BÜTÜN 🟢 kapılarından (kâr, asgari kâr, en ucuz çeyrek, emsal yılı, yakın km, gürültü, temkinli km…)
+    geçerse 🟢 kararı döner (mesajdaki rakamlar bu muhafazakâr piyasadan); geçmezse None ve ilan eskisi gibi değerlendirilir (TL: en fazla 🟡,
+    `tl_fiyat`). Böylece yalnız 🟢 eklenebilir; 🟡/yok kararları ve rakamları değişmez."""
+    m = find_market(dict(listing, currency="GBP"), pool, s, now)
+    if m is None:
+        return None
+    d = _market_assessment(listing, tl_market(m, s), price, text, [], warnings, s, book, now)
+    if d.profit.tier is Tier.STRONG and strong_checks:
+        d = _strong_checks(listing, d, pool, s, book, now)
+    return d if d.profit.tier is Tier.STRONG else None
+
+
 def decide(listing: dict, pool: list[dict], s: Settings, book: PriceBook | None = None, now: datetime | None = None,
            exclude_ids: tuple | frozenset = (), strong_checks: bool = True) -> Decision | None:
     """Tek ilanın piyasa değerlendirmesi. Emsal yoksa (ve 🟠 de yoksa) None.
@@ -196,6 +215,8 @@ def decide(listing: dict, pool: list[dict], s: Settings, book: PriceBook | None 
     a = _market_assessment(listing, market, price, text, blocking, warnings, s, book, now) if market is not None else None
     if a is not None and strong_checks and a.profit.tier is Tier.STRONG:
         a = _strong_checks(listing, a, pool, s, book, now)
+    if tl_fresh(listing, s, now) and not blocking:
+        a = _fresh_tl_strong(listing, pool, price, text, warnings, s, book, now, strong_checks) or a  # yalnız 🟢 çıkarsa yerine geçer
     if book is None:
         return a
     return _estimated_assessment(listing, market, a, price, text, blocking, warnings, s, book, now) or a

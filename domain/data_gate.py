@@ -1,5 +1,6 @@
 """Eksik/şüpheli veriyle 🟢 verilmesini engelleyen kural (en fazla 🟡)."""
-from datetime import date, datetime
+from dataclasses import replace
+from datetime import date, datetime, timedelta
 
 from domain.comparables import Market, effective_km
 from domain.llm_read import MISMATCH_LABELS
@@ -14,7 +15,7 @@ GAP_LABELS = {
     "fiyat_gurultu": "benzerlerin fiyatı çok dağınık: bu ucuzluk olağan fiyat farkı içinde kalabilir",
     "km_temkinli": "km yazmıyor: benzerlerinin ortasından 45.000 km fazla varsayılınca fırsat kalmıyor",
     "para_birimi_supheli": "fiyat USD/EUR yazıyor; aynı rakam STG olsaydı fırsat değil (satıcı para birimini yanlış seçmiş olabilir)",
-    "tl_fiyat": "fiyat TL: TL ilanlar GBP ilanlara göre ortalama %12-23 ucuz görünüyor; kontrol et",
+    "tl_fiyat": "fiyat TL: TL ilanlar £ ilanlardan ucuz görünür (eski/tarihsiz ilanda ~%20, yeni ilanda ~%9); bu fark düşülünce fırsat kalmıyor ya da ilan yeni değil; kontrol et",
     "fiyat_asiri_dusuk": "fiyat emsallerin yarısından düşük: yazım hatası ya da tuzak olabilir",
     "model_yok": "model okunamadı",
     "model_belirsiz": "model karışık havuzda (ör. CX-3/CX-5, Yaris/Yaris Cross): fiyat kıyası güvenilmez",
@@ -36,6 +37,42 @@ DATE_UNSURE = "tarih_belirsiz"  # listings.urgency_signals: Facebook gönderisin
 DATE_SEEN = "tarih_gorulme"  # listings.urgency_signals: Facebook gönderisinin paylaşım saati okunamadı, posted_at = ilk görülme (14.10.2026;
 # mesaj "N saat önce paylaşıldı" demez: application/notify.posted_age_text)
 GAP_LABELS.update(MISMATCH_LABELS)
+
+
+def tl_fresh(listing: dict, s: Settings, now: datetime | None) -> bool:
+    """TL fiyatı TAZE mi (20.10.2026, `Settings.tl_fresh_days`): TL okunmuş (tahmin değil), yayın tarihi var ve güvenilir (sosyal gönderide
+    paylaşım saati okunamadıysa `tarih_gorulme`/`tarih_belirsiz`: yok sayılır) ve karar anından en çok `tl_fresh_days` gün önce. Taze TL fiyatı
+    satıcının bugünkü kurla koyduğu fiyattır; eski/tarihsiz TL ilan bugünkü kurla çevrilince ~%20 ucuz görünür (ölçüm: settings yorumu).
+    Tutar insan eliyle yazılmış gibi olmalı (yüzlüğe yuvarlak ya da ...99: 185.000, 89.999): 417.136 / 714.702 gibi tutarlar sitenin başka para
+    biriminden çevirdiği fiyattır (satıcının asıl para birimi ve kuru bilinmez; KibrisArabaAl'da 6 ilan), 1.234.567 / 123.456 yer tutucudur.
+    `now` yoksa (eski çağıran) taze sayılmaz: eski kural (en fazla 🟡)."""
+    if listing.get("currency") != "TRY" or listing.get("currency_guess") or s.tl_fresh_days <= 0 or now is None:
+        return False
+    amount = listing.get("price_amount")
+    if not amount or round(float(amount)) % 100 not in (0, 99):
+        return False
+    posted, signals = listing.get("posted_at"), listing.get("urgency_signals") or []
+    if posted is None or DATE_SEEN in signals or DATE_UNSURE in signals:
+        return False
+    return now - posted <= timedelta(days=s.tl_fresh_days)
+
+
+def tl_market(market: Market, s: Settings) -> Market:
+    """Taze TL ilanın piyasası: £ ilan gibi kurulmuş piyasanın (decision._fresh_tl_strong) fiyat ölçüleri — medyan, alt çeyrek, aralık, dar/geniş medyan —
+    `tl_fresh_factor` ile çarpılır (taze TL ilanlar £ piyasasının ~0,91'inde durur; katsayı bunun güven aralığının alt ucu). Emsal kimlikleri,
+    sayılar ve yıllar aynı; gürültü kapısının yayılımı (log) ölçekten bağımsızdır, kapı çarpılmış medyana göre işler."""
+    f = s.tl_fresh_factor
+
+    def x(v):
+        return None if v is None else v * f
+    return replace(market, median_gbp=market.median_gbp * f, low_gbp=market.low_gbp * f, high_gbp=market.high_gbp * f, p25_gbp=x(market.p25_gbp),
+                   narrow_median_gbp=x(market.narrow_median_gbp), wide_median_gbp=x(market.wide_median_gbp), tl_factor=f)
+
+
+def tl_fresh_warning(factor: float) -> str:
+    """Taze TL ilanın 🟢 mesajındaki "⚠️ Dikkat" satırı: piyasa ortası neden £ ilanlarınkinden düşük."""
+    k = f"{factor:.2f}".replace(".", ",")
+    return f"fiyat TL (yeni ilan): yeni TL ilanlar £ ilanlardan ~%9 ucuz durduğu için piyasa ortası £ ilanlarınkinin {k} katı alındı; satıcıyla TL fiyatı teyit et"
 
 
 def km_unknown(listing: dict, now: datetime | None = None) -> bool:
@@ -61,8 +98,8 @@ def data_gaps(listing: dict, market: Market, settings: Settings | None = None, n
     gaps = []
     if listing.get("currency_guess"):
         gaps.append("para_birimi_tahmin")
-    if listing.get("currency") == "TRY":
-        gaps.append("tl_fiyat")  # TL ilanlar tabloya göre %6-10 ucuz görünür: 🟢/🟠 olmaz (en fazla 🟡)
+    if listing.get("currency") == "TRY" and market.tl_factor is None:
+        gaps.append("tl_fiyat")  # TL ilanlar £ ilanlardan ucuz görünür: 🟢/🟠 olmaz (en fazla 🟡); TEK istisna taze TL'nin kendi piyasası (decision._fresh_tl_strong)
     if not listing.get("model_norm"):
         gaps.append("model_yok")
     elif model_ambiguous(listing):
