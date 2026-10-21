@@ -1030,6 +1030,9 @@ class Repository:
     def unnotified_strong(self, rules_version: str, days: int = 14, limit: int = 50) -> list[dict]:
         """Bildirilmemiş 🟢'ler: EN SON değerlendirmesi bu kural sürümüyle 🟢 ve son 'days' günde yapılmış, ilan aktif, kopya/karantina değil,
         kaynağı anlık bildirim veren ('yesil'), hiçbir sohbete 🟢/🟠 gitmemiş (yazılamamış gönderimin yedek izi de sayılır). En iyi kâr önce.
+        "Son 'days' gün" İLANIN kendisi için de geçerli (22.10.2026): ilk görülmesi ya da son fiyat değişikliği bu pencerede olmalı. Aktif ilan
+        3 günde bir yeniden değerlendirildiği için yalnız değerlendirme tarihine bakmak pencereyi boşa çıkarıyordu: 01.10'da gelen KibrisArabaAl
+        ilanları (10.10'dan beri donmuş) ve Eylül'de yayınlanmış KKTCar ilanları her haftalık raporda yeniden "bildirmediğim fırsat" oluyordu.
         Tazelik ve emsal kapısı uygulamada süzülür (application/report.py; `photo_urls`: KKTCarabam fotoğraf yükleme tarihi için); canlılık kontrolü için
         fiyat/kaynak alanları da döner."""
         return self.conn.execute(
@@ -1043,11 +1046,14 @@ class Repository:
                FROM (SELECT DISTINCT ON (listing_id) * FROM evaluations ORDER BY listing_id, evaluated_at DESC) e
                JOIN listings l ON l.id = e.listing_id JOIN sources s ON s.id = l.source_id
                WHERE e.tier = 'guclu' AND e.rules_version = %s AND e.evaluated_at > NOW() - make_interval(days => %s)
+                 AND (l.first_seen_at > NOW() - make_interval(days => %s)
+                      OR EXISTS (SELECT 1 FROM listing_history h2 WHERE h2.listing_id = l.id AND h2.field = 'price_gbp'
+                                 AND h2.changed_at > NOW() - make_interval(days => %s)))
                  AND s.alert_level = 'yesil' AND l.is_active AND l.duplicate_of IS NULL AND l.karantina_nedeni IS NULL
                  AND NOT """ + _alerted_sql("l.id") + """  -- ilan ya da kopyası (aynı araç) bildirildiyse "bildirilmemiş" değil
                  AND NOT EXISTS (SELECT 1 FROM bot_state u WHERE starts_with(u.key, %s || l.id::text || ':'))
                ORDER BY e.profit_pct DESC LIMIT %s""",
-            (rules_version, days, SENT_ONCE_TIERS, UNSAVED_ALERT_PREFIX, limit)).fetchall()
+            (rules_version, days, days, days, SENT_ONCE_TIERS, UNSAVED_ALERT_PREFIX, limit)).fetchall()
 
     def near_misses(self, rules_version: str, days: int = 7, min_comparables: int = 8, skip_reasons: list[str] | tuple = (),
                     limit: int = 5) -> list[dict]:

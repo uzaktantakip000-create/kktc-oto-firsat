@@ -1083,8 +1083,20 @@ def test_unnotified_strong_lists_only_never_sent_current_green_listings_best_fir
     for name, cols in (("inactive", {"is_active": False}), ("dup", {"duplicate_of": best}), ("quarantine", {"karantina_nedeni": "test"})):
         add_report_eval(c, add_listing(c, sid, name, **cols), "guclu", pct=50)
     add_report_eval(c, add_listing(c, shadow, "shadow_src"), "guclu", pct=50)  # anlık bildirim vermeyen kaynak
+    # 22.10.2026: 3 günde bir yeniden değerlendirilen ESKİ ilan (01.10'da gelmiş, bugün yine 🟢) "son 14 günün" fırsatı değildir...
+    add_report_eval(c, add_listing(c, sid, "old_listing", first_seen_at=ago(days=21)), "guclu", pct=60)
+    # ...ama 14 gün içinde fiyatı değişen eski ilan yeni bir fırsattır (fiyat düşüşü)
+    repriced = add_listing(c, sid, "old_repriced", first_seen_at=ago(days=21))
+    c.execute("INSERT INTO listing_history (listing_id, field, old_value, new_value, changed_at) "
+              "VALUES (%s,'price_gbp','7000','6000', now() - interval '2 days')", (repriced,))
+    add_report_eval(c, repriced, "guclu", pct=30)
+    old_history = add_listing(c, sid, "old_history", first_seen_at=ago(days=40))
+    c.execute("INSERT INTO listing_history (listing_id, field, old_value, new_value, changed_at) "
+              "VALUES (%s,'price_gbp','7000','6000', now() - interval '20 days')", (old_history,))
+    add_report_eval(c, old_history, "guclu", pct=55)  # fiyat değişikliği de pencerenin dışında
     rows = db.unnotified_strong("v1", days=14)
-    assert item_names(c, rows) == ["best", "good", "digest_only"]
+    assert item_names(c, rows) == ["best", "old_repriced", "good", "digest_only"]
+    rows = [r for r in rows if r["id"] != repriced]
     assert item_names(c, db.unnotified_strong("v1", days=14, limit=1)) == ["best"]
     r = rows[0]
     assert r["method"] == "A" and r["price_changed_at"] is None and r["price_amount"] == 6000 and r["currency"] == "GBP"
