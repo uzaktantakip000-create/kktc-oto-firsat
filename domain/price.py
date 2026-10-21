@@ -19,6 +19,46 @@ class PriceToken:
     tight: bool = False  # para birimi boşluksuz bitişik: "£6500", "6500£"
     cur_span: tuple[int, int] | None = None  # para biriminin metindeki yeri (iki sayı aynı birimi paylaşıyor mu?)
     yearish: bool = False  # ayraçsız 1980–2039: model yılı olabilir
+    box: bool = False  # Facebook satış kutusu yazımı "TRY5,200": büyük harf "TRY" sayının ÖNÜNE bitişik (FB_BOX_TRY)
+
+
+# TL ile bundan küçük tutar araç fiyatı değildir (21.10.2026; 50.000 TL ≈ £760, kur ~66 TL/£): metinde kapora/peşinat/taksit, masraf, yol
+# vergisi, parça ("PEŞİNAT 4.250 ₺", "YOL RUSHATI 15000 TL", "30 bin tl lik ses sistemi"; fiyatı böyle okunmuş 17 Facebook ilanı = 7 araç:
+# 4'ünde tutar fiyat değil, 3'ü £450–600'lük hurda) ya da Facebook satış kutusunda TL seçilip yazılmış STG rakamı (FB_BOX_TRY).
+# Sitelerin yapılandırılmış TL fiyatı (KKTCar'da 1990'ların aracı 25–48 bin TL) ayrıştırıcıdan geçmez; ikinci kapılar (taze TL, ⚡) onları da
+# dışarıda bırakır ama bu tutarda 🟢/⚡ zaten çıkmaz (asgari kâr £750, piyasanın yarısından ucuz fiyat).
+# application.social_ingest.FB_EURO_TL_FROM aynı sınırdır (€ kutusu tutarı bundan büyükse TL).
+TL_CAR_MIN = 50_000
+# Facebook satış kutusu fiyatı "TRY5,200" diye gösterir (satıcının seçtiği birim; okuyucu satırı "ek_metin"e ya da gövdeye "+6⏎TRY100⏎…"
+# biçiminde yazar). Ölçüm (21.10.2026, bütün kaynaklar): "TRY" yazımı yalnız Facebook'ta ve yalnız bu biçimde (254 kez); kullanıcı TL'yi
+# "TL"/"₺" yazar. Kutuda TRY ≤ FB_BOX_TRY_PLACEHOLDER_MAX yer tutucudur (TRY1, TRY111, TRY321: 73 ilan); 1.000–50.000 arası STG rakamıdır
+# (83 ilan: gövdesinde fiyat yazan 20'sinin hepsinde gövde AYNI rakamı £ ile yazıyor, "5.200 £" + kutu TRY5,200; farklı tutar 0).
+FB_BOX_TRY = "TRY"
+FB_BOX_TRY_PLACEHOLDER_MAX = 1_000
+
+
+def placeholder_amount(amount: float | None) -> bool:
+    """Yer tutucu tutar (comparables.PLACEHOLDER_KM'nin fiyat karşılığı): satıcı fiyat yazmak istemiyor ama kutu/şablon fiyat istiyor.
+    Aynı rakamın en az 5 kez tekrarı (11.111, 111.111, 1.111.111, 999.999) ya da 1234… / 98765… sırası (1.234, 12.345, 123.456,
+    1.234.567; 98.765, 987.654). Para birimi fark etmez; kuruşlu tutar yer tutucu sayılmaz. 4 haneli tekrar (5.555, 9.999) gerçek fiyat
+    olabilir, sayılmaz. Ölçüm (21.10.2026, 9.175 fiyatlı ilan): 160 ilan, HEPSİ Facebook (€1.111.111 ×68, €111.111 ×54, €11.111 ×10,
+    1.234 / 12.345 / 123.456 / 1.234.567 ×27); sitelerde 0. € kuralıyla TL/STG tahmini sanılıyordu (€1.111.111 ≈ £16.800): 155 € ilanının
+    61'i değerlendirildi, 51 değerlendirme 🟡 (🟢/⚡ 0; emsal olmadı: para birimi tahmini)."""
+    if amount is None:
+        return False
+    a = float(amount)
+    if a <= 0 or a != int(a):
+        return False
+    d = str(int(a))
+    return (len(d) >= 5 and len(set(d)) == 1) or (len(d) >= 4 and "1234567890".startswith(d)) or (len(d) >= 5 and "9876543210".startswith(d))
+
+
+def implausible_amount(amount: float | None, currency: str | None) -> bool:
+    """Araç fiyatı olamayacak tutar: yer tutucu (placeholder_amount) ya da TL_CAR_MIN altı TL. Ayrıştırıcıdan kaçmış ESKİ satırlar ve yapay
+    zekâ okuması için ikinci kapı (data_gate.tl_fresh, application.urgent, llm_read)."""
+    if amount is None:
+        return False
+    return placeholder_amount(amount) or (currency == "TRY" and float(amount) < TL_CAR_MIN)
 
 
 _NUM = re.compile(r"(?<![\d.,])\d[\d.,]*")
@@ -92,7 +132,7 @@ def _resolve_shared(tokens: list[PriceToken]) -> list[PriceToken]:
             continue
         keep = [i for i in idx if tokens[i].tight] or [i for i in idx if not tokens[i].yearish] or idx
         drop.update(i for i in idx if i not in keep)
-    return [replace(t, currency=None, tight=False, cur_span=None) if i in drop else t for i, t in enumerate(tokens)]
+    return [replace(t, currency=None, tight=False, cur_span=None, box=False) if i in drop else t for i, t in enumerate(tokens)]
 
 
 def price_tokens(text: str) -> list[PriceToken]:
@@ -113,8 +153,9 @@ def price_tokens(text: str) -> list[PriceToken]:
             end = scale.end()
             yearish = False
         cur = _adjacent_currency(text, match.start(), end)
+        box = bool(cur and cur[1] and cur[2][1] == match.start() and text[cur[2][0]:cur[2][1]] == FB_BOX_TRY)  # "TRY5,200"
         out.append(PriceToken(amount, cur[0] if cur else None, match.start(), end, bool(cur and cur[1]), cur[2] if cur else None,
-                              yearish))
+                              yearish, box))
     return _resolve_shared(out)
 
 

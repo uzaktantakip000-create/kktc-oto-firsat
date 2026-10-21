@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from domain.comparables import Market, effective_km
 from domain.llm_read import MISMATCH_LABELS
 from domain.model_ambiguity import model_ambiguous
+from domain.price import implausible_amount
 from domain.settings import Settings
 
 KM_UNKNOWN_WARNING = "km yazmıyor ya da şüpheli: aracı görmeden km'ye güvenme (fiyat kıyası km'siz yapıldı)"
@@ -49,8 +50,8 @@ def tl_fresh(listing: dict, s: Settings, now: datetime | None) -> bool:
     if listing.get("currency") != "TRY" or listing.get("currency_guess") or s.tl_fresh_days <= 0 or now is None:
         return False
     amount = listing.get("price_amount")
-    if not amount or round(float(amount)) % 100 not in (0, 99):
-        return False
+    if not amount or round(float(amount)) % 100 not in (0, 99) or implausible_amount(amount, "TRY"):
+        return False  # yer tutucu (999.999) ya da TL_CAR_MIN altı (kapora/taksit, kutudaki STG rakamı; ayrıştırıcıdan önceki eski satırlar)
     posted, signals = listing.get("posted_at"), listing.get("urgency_signals") or []
     if posted is None or DATE_SEEN in signals or DATE_UNSURE in signals:
         return False

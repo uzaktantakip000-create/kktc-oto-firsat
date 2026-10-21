@@ -8,7 +8,7 @@ from datetime import date
 from domain.caption_parser import tr_lower
 from domain.model_year import max_model_year
 from domain.normalize import fold, normalize_brand
-from domain.price import parse_price
+from domain.price import implausible_amount, parse_price
 
 YEAR_MIN = 1980  # üst sınır: bu yıl + 1 (domain/model_year.py)
 KM_MAX = 600_000
@@ -86,6 +86,7 @@ def parse_llm_read(data, text: str, today: date | None = None) -> LlmRead | None
     if isinstance(price, (int, float)) and not isinstance(price, bool) and quote_in_text(quote, text):
         parsed = parse_price(quote)  # para birimini modele bırakmıyoruz: alıntıdan kendi kodumuz okur
         if (parsed and not parsed.currency_guess and PRICE_RANGE[0] <= parsed.amount <= PRICE_RANGE[1]
+                and not implausible_amount(parsed.amount, parsed.currency)  # yer tutucu / 50.000 TL altı (kutu "TRY5,200", kapora)
                 and abs(parsed.amount - price) <= PRICE_TOLERANCE * parsed.amount):
             out.price, out.currency = parsed.amount, parsed.currency
     if data.get("direksiyon") in ("RHD", "LHD"):
