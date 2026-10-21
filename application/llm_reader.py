@@ -27,7 +27,8 @@ OK_CHECK_EST = "✅ Yapay zekâ ilanı bağımsız okudu: fiyat uyuşuyor, ucuzl
 # Hesap hatası (20.10.2026): OpenRouter "http 402" (kredi bitti) 19.10'dan beri HER çağrıyı reddediyordu ve kimse bilmiyordu. Bot çalışmaya devam
 # ediyordu (🟢 "kontrol edilmedi" notuyla gider, fırsat notu eklenmez), ama Mezunum'da kuralla okunamayan ilanlar her turda yeniden
 # çekiliyordu ve sosyal/serbest metin 🟢'lerinin bağımsız ikinci okuması yapılmıyordu. Hesap hatası geçici değildir: sahibe 24 saatte bir
-# uyarı gider (para işini yalnız sahip yapar). Ağ hatası, zaman aşımı, 429 ve 5xx geçicidir: uyarı yok.
+# uyarı gider (para işini yalnız sahip yapar). Ağ hatası, zaman aşımı, 429 ve 5xx geçicidir: uyarı yok (saatlerce süren 429 serisi hariç:
+# rate_limit_alarm).
 ACCOUNT_ERRORS = {"http 402": "kredisi bitti", "http 401": "anahtarı geçersiz", "http 403": "anahtarı reddediliyor"}
 ACCOUNT_ALERT = ("⚠️ Yapay zekâ servisi (OpenRouter) {why} ({err}): okuma yapılamıyor. Etkisi: Facebook ve serbest metin 🟢'leri yapay zekâ "
                  "kontrolü olmadan \"kontrol edilmedi\" notuyla gider, fırsat notu eklenmez, Mezunum'da kuralla okunamayan ilanlar bekler. "
@@ -63,6 +64,57 @@ def account_alarm(repo, err: str | None) -> None:
         print("yapay zekâ hesap uyarısı yazılamadı:", type(e).__name__)
 
 
+# İstek sınırı (22.10.2026): ücretsiz model (openrouter.MODEL) günlük istek sınırlıdır; sınır dolunca her çağrı "http 429" döner. 429 geçicidir
+# (account_alarm yazmaz) ama bütün gün sürebilir ve kimse fark etmez. Seri bot_state'te (RATE_KEY: serinin ilk 429'unun anı + sayısı): en az
+# RATE_MIN_HOURS saattir ve en az RATE_MIN_CALLS çağrıdır HER çağrı 429 ise sahibe 24 saatte bir uyarı ("llm_429"). Kısa patlama (dakikalık sınır,
+# bir turdaki art arda km okumaları) uyarı yapmaz. Modelden ilk cevapta (işe yarar not/okuma çıkmasa da) seri silinir; ağ hatası, 5xx ve hesap
+# hatası seriyi ne uzatır ne bozar. Model değişmez (sahip kararı 21.10.2026).
+RATE_LIMITED = "http 429"
+RATE_KEY = "llm_429_seri"
+RATE_MIN_CALLS, RATE_MIN_HOURS = 5, 2
+RATE_ALERT = ("⚠️ Yapay zekâ servisi (OpenRouter, ücretsiz model) {hours} saattir her isteği geri çeviriyor (http 429 \"çok fazla istek\", üst üste "
+              "{n} istek): büyük olasılıkla ücretsiz modelin günlük istek sınırı doldu. Etkisi: ilanlar yalnız kural ayrıştırıcısıyla okunuyor "
+              "(kuralın okuyamadığı gönderi ve eksik km yapay zekâyla tamamlanamıyor), Facebook ve serbest metin 🟢'leri \"kontrol edilmedi\" notuyla gidiyor, "
+              "fırsat notu eklenmiyor. Senin bir şey yapman gerekmiyor: sınır sıfırlanınca kendiliğinden düzelir.")
+
+
+def _rate_streak(raw: str | None) -> tuple[datetime, int] | None:
+    try:
+        streak = json.loads(raw)
+        return datetime.fromisoformat(streak["since"]), int(streak["n"])
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def rate_limit_alarm(repo, err: str | None, now: datetime | None = None) -> None:
+    """Üst üste 429 serisini sayar (RATE_KEY); seri RATE_MIN_HOURS saati ve RATE_MIN_CALLS çağrıyı geçince sahibe 24 saatte bir uyarı.
+    Modelden cevap gelince (err yok ya da ANSWERED_ERRORS) seri silinir. Hiçbir hata yukarı fırlamaz."""
+    if err != RATE_LIMITED and err is not None and err not in ANSWERED_ERRORS:
+        return  # ağ hatası, 5xx, hesap hatası: seri ne uzar ne bozulur
+    try:
+        raw = repo.get_state(RATE_KEY)
+        if err != RATE_LIMITED:  # model cevap verdi: sınır açık
+            if raw:
+                repo.set_state(RATE_KEY, "")
+            return
+        now = now or datetime.now(timezone.utc)
+        since, n = _rate_streak(raw) or (now, 0)
+        n += 1
+        repo.set_state(RATE_KEY, json.dumps({"since": since.isoformat(), "n": n}))
+        hours = (now - since).total_seconds() / 3600
+        if n >= RATE_MIN_CALLS and hours >= RATE_MIN_HOURS:
+            from application.health import notify_owner  # tembel: health → notify → ... döngüsü olmasın
+            notify_owner(repo, "llm_429", RATE_ALERT.format(hours=int(hours), n=n), repeat_hours=24)
+    except Exception as e:
+        print("yapay zekâ istek sınırı uyarısı yazılamadı:", type(e).__name__)
+
+
+def call_alarms(repo, err: str | None, now: datetime | None = None) -> None:
+    """Her gerçek yapay zekâ çağrısından sonra (bütçe doluyken çağrı yok, sayılmaz): hesap hatası uyarısı ve 429 serisi."""
+    account_alarm(repo, err)
+    rate_limit_alarm(repo, err, now)
+
+
 class LlmReader:
     def __init__(self, repo: Repository, api_key: str, model: str, call=openrouter.read_listing, now=None,
                  image_call=openrouter.read_image_text):
@@ -89,9 +141,9 @@ class LlmReader:
         data, err, cost = self._call(self.api_key, self.model, text)
         self.repo.set_state(self._spend_key(), f"{spent + cost:.5f}")
         self.calls += 1
+        call_alarms(self.repo, err, self._now)
         if err:
             self.last_error = err
-            account_alarm(self.repo, err)
             return None
         read = parse_llm_read(data, text)
         self.last_error = None if read else "çıktı geçersiz"
@@ -107,7 +159,7 @@ class LlmReader:
         text, err, cost = self._image_call(self.api_key, self.model, image, mime)
         self.repo.set_state(self._spend_key(), f"{spent + cost:.5f}")
         self.last_error = err or (None if text else "görselde okunur yazı yok")
-        account_alarm(self.repo, err)
+        call_alarms(self.repo, err, self._now)
         return text or None
 
 
@@ -260,7 +312,7 @@ def deal_notes(repo: Repository, evs: list[Evaluated], api_key: str, model: str,
             stalled = transient_error(err)
             if err:
                 print("LLM notu alınamadı:", err + (" (geçici: sonraki turda yeniden sorulur, bu turda başka not sorulmaz)" if stalled else ""))
-                account_alarm(repo, err)
+            call_alarms(repo, err, now)  # hesap hatası ve 429 serisi (cevap gelince seri silinir)
             repo.set_state(ledger._spend_key(), f"{spent + cost:.5f}")
             if not stalled:  # geçici hata önbelleğe yazılmaz
                 repo.set_state(key, json.dumps(note, ensure_ascii=False))
