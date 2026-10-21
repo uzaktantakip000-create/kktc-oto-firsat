@@ -117,6 +117,15 @@ def test_backup_line_with_a_warning_after_eight_days(monkeypatch, age, text):
     assert lines({BACKUP: (NOW - age).isoformat()}, monkeypatch=monkeypatch) == [text]
 
 
+def test_backup_day_is_the_kktc_calendar_day_not_24_hours(monkeypatch):
+    """22.10.2026: 21.10 11:47 KKTC'deki elle yedek, 22.10 08:06 KKTC sabah mesajında (20 saat sonra) "bugün" görünecekti."""
+    morning = datetime(2026, 10, 22, 5, 6, tzinfo=timezone.utc)  # KKTC 08:06
+    backup = datetime(2026, 10, 21, 8, 47, tzinfo=timezone.utc)  # KKTC 11:47, dün
+    assert lines({BACKUP: backup.isoformat()}, now=morning, monkeypatch=monkeypatch) == ["Son veritabanı yedeği: 1 gün önce"]
+    night = datetime(2026, 10, 21, 22, 30, tzinfo=timezone.utc)  # KKTC 22.10 01:30: UTC'de hâlâ 21.10 ama KKTC'de bugün
+    assert lines({BACKUP: night.isoformat()}, now=morning, monkeypatch=monkeypatch) == ["Son veritabanı yedeği: bugün"]
+
+
 def test_the_backup_line_is_omitted_when_the_key_is_missing(monkeypatch):
     assert lines({VPS_TICK_KEY: ago(4, NOW)}, monkeypatch=monkeypatch) == ["Taramalar: sunucuda ✅ (son tur 4 dk önce)"]
 
