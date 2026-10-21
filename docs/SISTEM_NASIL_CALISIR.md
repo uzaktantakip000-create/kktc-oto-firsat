@@ -14,13 +14,14 @@ KKTC'deki ikinci el araç ilanlarını her gün gezen, her arabayı benzerleriyl
 
 ## Her turda ne taranıyor?
 Siteyi her seferinde baştan okumaz.
-- **KibrisArabaAl ve KKTCar:** sitenin "ilan listesi" dosyasını (site haritası) her turda okur; bu çok hafif bir listedir. Listede olup veritabanında olmayan **yeni** ilanları açar (tur başına en çok 10 tane KibrisArabaAl, 25 tane KKTCar). Ayrıca daha önce kaydettiği ilanlardan en eski kontrol edilenleri (tur başına yaklaşık 25 tane) yeniden açar: fiyat düştü mü, satıldı mı? Listeden kaybolan ilan pasif olur.
+- **KibrisArabaAl ve KKTCar:** sitenin "ilan listesi" dosyasını (site haritası) her turda okur; bu çok hafif bir listedir. Listede olup veritabanında olmayan **yeni** ilanları açar (tur başına en çok 10 tane KibrisArabaAl, 25 tane KKTCar). KKTCar'da ayrıca daha önce kaydettiği ilanlardan en eski kontrol edilenleri (tur başına yaklaşık 25 tane) yeniden açar: fiyat düştü mü, satıldı mı? (KibrisArabaAl'da bu yeniden açma 21.10.2026'da kaldırıldı.) Listeden kaybolan ilan pasif olur.
 - **KKTCarabam:** yalnızca ilk sayfayı (en yeni ~18 ilan) okur; 2 saatte bir (ayrı bir iş, çünkü bu site gerçek tarayıcı ister). Listede ilk kez görülen her ilanın kendi sayfasını da (aynı tarayıcıda, 3 sn arayla, tur başına en çok 18) açar: km, ilan tarihi ve satıcı adı oradan gelir. Sayfa açılamazsa ilan eskisi gibi (km'siz) kaydedilir, tur bozulmaz.
 - **Mezunum:** ilk 2 sayfa, yeni ilanlar için; kural okuyamazsa yapay zekâ yardımıyla. Gündüz 30 dakikada, gece 60 dakikada bir.
 - **KibrisCars ve SahibindenArabaKibris:** küçük, durgun siteler; nazik hızda taranır (KibrisCars gündüz 30, gece 60 dakikada bir; SahibindenArabaKibris gündüz 60, gece 120 dakikada bir). Hacimleri düşük olduğu için nadiren fırsat çıkar.
 
 ## Hangi güvenlikler var?
-- Siteler nazik hızda okunur (KibrisArabaAl'da 5 saniye aralık).
+- Siteler nazik hızda okunur.
+- **KibrisArabaAl (21.10.2026'dan beri):** site 10.10'dan beri bizi engelliyor; izni gelene kadar hiç okunmuyor (izin kapısı kapalı, /durum'da "⏸ izin bekleniyor"). İzin gelince yalnız sunucudan, kimliğimizi ve iletişim adresimizi söyleyerek, robots.txt'e uyarak (en az 10 sn aralık), saatte en çok 60 / günde 300 istekle ve yalnız yeni ilanları okur; eski ilanları yeniden açmaz. Site engel verirse 24 saat durur (ayrıntı: KKTC_OTO_SISTEM_SPEC.md §24.34).
 - Bir site bir anda "tüm ilanlar kalktı" derse veya okuma bozulursa robot durur ve alarm verir; yanlış toplu silme yapmaz.
 - Şüpheli ilanlar (bozuk fiyat, peşinat/taksit, hasarlı, çok eksik bilgi) fırsat sayılmaz.
 - Yapay zekâ yalnızca okuyucu ve kontrolcüdür; tek başına fırsat ilan etmez.

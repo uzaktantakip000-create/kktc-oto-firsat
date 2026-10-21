@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from application.collect_facebook import MONTHLY_BUDGET_USD as FB_BUDGET
 from application.collect_instagram import MONTHLY_BUDGET_USD as IG_BUDGET
-from application import feed_switch, price_book_job, selfwatch
+from application import feed_switch, kaa_gate, price_book_job, selfwatch
 from application.maintenance import summary_line
 from application.health import notify_owner, source_limit_hours
 from domain.kktc_time import kktc_hour, to_kktc
@@ -30,14 +30,26 @@ def _money(repo: Repository, prefix: str, now: datetime) -> float:
         return 0.0
 
 
-def _is_late(r: dict, quiet: set | frozenset = frozenset()) -> bool:
+def _is_late(r: dict, quiet: set | frozenset = frozenset(), kaa_idle: str | None = None) -> bool:
     if r["platform"] in quiet:
         return False  # duraklamadan yeni çıkmış sosyal kaynak: ilk toplama bitene kadar gecikmiş sayılmaz
+    if kaa_idle and kaa_gate.is_kaa_url(r.get("url")):
+        return False  # KibrisArabaAl bilerek okunmuyor (izin kapısı kapalı / engel beklemesi): gecikme değil
     return r["hours_since_check"] is None or r["hours_since_check"] > source_limit_hours(r)
 
 
-def _source_line(r: dict, quiet: set | frozenset = frozenset()) -> str:
+def _kaa_idle(repo: Repository, now: datetime) -> str | None:
+    """KibrisArabaAl neden okunmuyor (application/kaa_gate); okunuyorsa None. Bakılamazsa da nötr say (rapor bozulmasın)."""
+    try:
+        return kaa_gate.idle_reason(repo, now)
+    except Exception as e:
+        return f"durum okunamadı ({type(e).__name__}), istek atılmıyor"
+
+
+def _source_line(r: dict, quiet: set | frozenset = frozenset(), kaa_idle: str | None = None) -> str:
     kind = KIND.get(r["platform"], r["platform"])
+    if kaa_idle and kaa_gate.is_kaa_url(r.get("url")):  # 21.10.2026: "⚠️ GECİKMİŞ" değil, nötr satır (izin bekleniyor)
+        return f"⏸ {kind}: {r['name']} · {kaa_idle}"
     mark = "⚠️ GECİKMİŞ —" if _is_late(r, quiet) else "✅"
     return f"{mark} {kind}: {r['name']} · {_ago(r['hours_since_check'])} · {r['fresh_n']} güncel ilan, bugün {r['new_24h']} yeni"
 
@@ -93,7 +105,8 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
     open_n = [r for r in scanned if r["alert_level"] == "yesil"]
     shadow_n = [r for r in scanned if r["alert_level"] != "yesil"]
     quiet = feed_switch.quiet_platforms(repo, now)
-    late = [r for r in scanned if _is_late(r, quiet)]
+    kaa_idle = _kaa_idle(repo, now)
+    late = [r for r in scanned if _is_late(r, quiet, kaa_idle)]
 
     # yalnız 🟢 sayılır: ⚡ ("acil", 20.10.2026) satırları seviye süzgeciyle bilerek dışarıda (repository.URGENT_TIER)
     sent24 = repo.conn.execute(
@@ -121,11 +134,11 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
         lines.append(f"Son kontrol saat {to_kktc(datetime.fromisoformat(last_tick)):%H:%M}. Her 15 dakikada bir tekrar bakılır.")
 
     lines += ["", f"📣 SANA HABER VEREN YERLER ({len(open_n) + (1 if fb_lines else 0)})", "Burada iyi bir fırsat görürsem hemen yazarım."]
-    lines += [_source_line(r, quiet) for r in open_n] + fb_lines
+    lines += [_source_line(r, quiet, kaa_idle) for r in open_n] + fb_lines
     if shadow_n:
         lines += ["", f"🗒 BİLDİRİM VERMEYENLER ({len(shadow_n)})",
                   "Buralara bakıyorum ama haber vermiyorum, sadece ölçüyorum (sen kapattın ya da çok yanlış fiyat çıktığı için ben düşürdüm)."]
-        lines += [_source_line(r, quiet) for r in shadow_n]
+        lines += [_source_line(r, quiet, kaa_idle) for r in shadow_n]
 
     # Eski Apify yolu duraklatılmış olsa da gölge Facebook grupları VPS'teki sosyal okuyucuyla okunuyor (gölge haftası, 10.10.2026):
     # "bakmıyorum" demek yanlıştı (Kapsam departmanı bulgusu). Bunlar ayrı satırda; kalanlar eskisi gibi.
@@ -175,12 +188,14 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
 
 
 def late_sources(repo: Repository, now: datetime | None = None) -> list[dict]:
-    """Taranan (aktif/deneme), duraklatılmamış ve normal süresinden uzun süredir başarılı taranmamış kaynaklar (nabız ve haftalık rapor)."""
+    """Taranan (aktif/deneme), duraklatılmamış ve normal süresinden uzun süredir başarılı taranmamış kaynaklar (nabız ve haftalık rapor).
+    Bilerek okunmayan KibrisArabaAl (izin kapısı kapalı / engel beklemesi) gecikme sayılmaz."""
     now = now or datetime.now(timezone.utc)
     rows = repo.conn.execute(_SOURCE_SQL).fetchall()
     paused = feed_switch.paused_platforms(repo, now)
     quiet = feed_switch.quiet_platforms(repo, now)
-    return [r for r in rows if r["status"] in ("aktif", "deneme") and r["platform"] not in paused and _is_late(r, quiet)]
+    kaa_idle = _kaa_idle(repo, now)
+    return [r for r in rows if r["status"] in ("aktif", "deneme") and r["platform"] not in paused and _is_late(r, quiet, kaa_idle)]
 
 
 READER_DAILY_MAX_AGE_H = 3  # okuyucunun günlük sayısı (~20 dk'da bir yazılır) bundan eskiyse gösterilmez

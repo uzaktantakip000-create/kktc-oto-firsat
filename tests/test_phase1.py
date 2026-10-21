@@ -34,12 +34,18 @@ def test_ai_doubt_line_shown_first_among_notes():
 
 class LiveRepo:
     def __init__(self, result):
-        self.result, self.calls = result, 0
+        self.result, self.calls, self.state = result, 0, {}
 
     def apply_refresh(self, listing_id, old, data):
         self.calls += 1
         assert isinstance(old["price_gbp"], float)
         return self.result
+
+    def get_state(self, key, default=None):  # KibrisArabaAl izin kapısı (engel beklemesi, robots.txt, kota)
+        return self.state.get(key, default)
+
+    def set_state(self, key, value):
+        self.state[key] = value
 
 
 class FakeClient:
@@ -222,8 +228,11 @@ KAA_URL = "https://kibrisarabaal.com/ilan/1234-toyota-vitz"
 
 
 def fake_kaa(monkeypatch, data):
+    """İzin kapısı açık (21.10.2026'dan beri kapalıyken KibrisArabaAl hiç okunmaz: tests/test_kaa_gate.py); sayfa sahte, istek yok."""
+    monkeypatch.setenv("KAA_IZIN", "1")
+    monkeypatch.setenv("KKTC_RUNNER", "vps")
+    monkeypatch.setenv("BOT_CONTACT_EMAIL", "bot@example.org")
     monkeypatch.setattr(liveness.kibrisarabaal, "fetch_detail", lambda client, entry: data)
-    monkeypatch.setattr(liveness.kibrisarabaal, "polite_sleep", lambda: None)
     monkeypatch.setattr(liveness, "_kaa_gbp", lambda d: 5000.0)
 
 

@@ -93,6 +93,8 @@ def run(job: str, repo: Repository, outcomes: list | None = None) -> list[tuple[
         if needle in source["url"]:
             try:
                 result = fn(repo, source)
+                if getattr(result, "skipped", None):  # KibrisArabaAl izin kapısı kapalı / engel beklemesi: ne hata ne başarı (alarm da
+                    continue  # "tekrar çalışıyor" da yok); nedeni kaa_gate.log_idle bir kez yazdı, /durum'da nötr satır
                 print(f"{source['name']}: {result}")
                 if outcomes is not None:
                     outcomes.append(result)

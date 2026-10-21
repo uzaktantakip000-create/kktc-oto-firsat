@@ -105,8 +105,9 @@ def fill_engine() -> None:
 
 
 def backfill_kaa() -> None:
-    """kibrisarabaal geçmiş ilanlarını yerelde doldurur (robots.txt Crawl-delay 5 sn → ~3 saat). Kaldığı yerden devam eder.
-    Kullanım: admin_cli kaa [en_fazla_ilan]"""
+    """kibrisarabaal geçmiş ilanlarını doldurur. YALNIZ izin kapısı açıkken (application/kaa_gate: KAA_IZIN=1, VPS, iletişim adresi, engel
+    yok); kapalıysa siteye tek istek atmadan nedenini yazıp çıkar. Kota (saatte 60, günde 300) ve robots.txt aralığı burada da geçerli:
+    kota dolunca durur, sonraki çalıştırmada kaldığı yerden devam eder. Kullanım: admin_cli kaa [en_fazla_ilan]"""
     from application.collect_kibrisarabaal import collect_kibrisarabaal
     limit = int(sys.argv[2]) if len(sys.argv) > 2 else 5000
     repo = Repository(require("DATABASE_URL"))
@@ -115,11 +116,26 @@ def backfill_kaa() -> None:
     source = next(s for s in repo.sources("web", ("aktif", "deneme")) if "kibrisarabaal.com" in s["url"])
     total = 0
     while total < limit:
-        stats = collect_kibrisarabaal(repo, source, max_new=50)
+        stats = collect_kibrisarabaal(repo, source, max_new=50, max_seconds=None)
+        if stats.skipped:
+            print(f"KibrisArabaAl okunmadı: {stats.skipped}", flush=True)
+            break
         total += stats.fetched
-        print(f"toplam={total} bu tur yeni={stats.new} başarısız={stats.failed} sitemap={stats.in_sitemap}", flush=True)
+        print(f"toplam={total} bu tur yeni={stats.new} başarısız={stats.failed} sitemap={stats.in_sitemap} istek={stats.requests}", flush=True)
+        if stats.stopped:
+            print(f"durdu: {stats.stopped}", flush=True)
+            break
         if stats.fetched == 0 or (stats.new == 0 and stats.failed == stats.fetched):
             break
+
+
+def reopen_kaa() -> None:
+    """KibrisArabaAl kalıcı durdurmasını (üst üste engel) ve engel beklemesini İNSAN ONAYIYLA kaldırır. Kapı (KAA_IZIN=1) ayrıca açık
+    olmalı; sonraki turda tek istekle yeniden denenir. Kullanım: admin_cli kaa-ac"""
+    from application import kaa_gate
+    repo = Repository(require("DATABASE_URL"))
+    kaa_gate.reopen(repo)
+    print("KibrisArabaAl: durdurma ve bekleme kaldırıldı;", kaa_gate.idle_reason(repo) or "kapı açık, sonraki turda denenir")
 
 
 def shadow_tahmini() -> None:
@@ -138,6 +154,7 @@ if __name__ == "__main__":
         "asof": fill_data_as_of,
         "engine": fill_engine,
         "kaa": backfill_kaa,
+        "kaa-ac": reopen_kaa,
         "backtest": backtest,
         "report": weekly_report,
         "oyla": vote_queue,

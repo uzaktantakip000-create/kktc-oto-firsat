@@ -18,6 +18,21 @@ GitHub'da bu isimlerle **Secret** olarak durur (repo → Settings → Secrets an
 | `OPENROUTER_MODEL` | (eski) model adı | 21.10.2026'dan beri KULLANILMIYOR: model kodda sabit (`minimax/minimax-m3.1-flash:free`) |
 | `APIFY_TOKEN` | Instagram/Facebook okuma | **Şimdilik gerekmez.** Yalnız sosyal medya okuma yeniden açılırsa |
 
+### KibrisArabaAl izni (21.10.2026) — yalnız VPS ortam dosyasına (`/etc/kktc-bot/bot.env`), GitHub'a GİRİLMEZ
+KibrisArabaAl 10.10.2026'dan beri bizi engelliyor. Sitenin izni gelene kadar kapı **kapalı**: hiçbir yerden siteye istek gitmez, /durum'da "⏸ izin bekleniyor" yazar (gecikme ya da alarm sayılmaz). İzin gelince aşağıdakiler girilir:
+
+| Değişken | Ne için | Gerekli mi? |
+|---|---|---|
+| `KAA_IZIN` | `1` = site izin verdi, okumayı aç. Yoksa ya da başka değerse kapalı | İzin gelince |
+| `BOT_CONTACT_EMAIL` | Sitenin bize ulaşacağı e-posta. Botun kimliğinde görünür: `KKTCOtoBot/1.0 (+mailto:adres)` | **Evet**: yoksa kapı açık olsa da okunmaz |
+| `KAA_USER_AGENT` | Site belli bir kimlik isterse onun tamamı. Tarayıcı kimliği (`Mozilla/...`) kabul edilmez | Hayır |
+| `KAA_ACCESS_TOKEN` | Site bir erişim anahtarı verirse | Hayır |
+| `KAA_TOKEN_HEADER` | Anahtarın gideceği başlık adı (ör. `X-Api-Key`); boşsa `Authorization` | Hayır |
+
+- Kapı açıkken kurallar: yalnız VPS okur (GitHub turları asla); robots.txt günde bir kez okunur ve uyulur (iki istek arası en az 10 sn); saatte en çok 60, günde en çok 300 istek; yalnız site haritası + yeni ilanlar (her ilan bir kez).
+- Site 403/429/503 verirse: tur hemen durur, 24 saat (site daha uzun bekle derse o kadar) istek yok, sana 30 günde bir mesaj. 3 bekleme sonrası hâlâ engelse tamamen durur. Yeniden açmak (insan onayı): VPS'te `python -m entrypoints.admin_cli kaa-ac`.
+- Değiştirince: tarama turları dosyayı her turda kendisi okur; /durum'un da görmesi için `sudo systemctl restart kktc-bot`.
+
 **Kullanılmayanlar:** `SUPABASE_URL` ve `SUPABASE_SERVICE_KEY` kodda hiçbir yerde kullanılmıyor. GitHub Secrets'ta varsa silebilirsin (zararı yok ama gereksiz anahtar bırakmamak daha güvenli). `.env.example` dosyasında da yazıyorlar; boş kalabilir. `ANTHROPIC_API_KEY` yok ve gerekmez.
 
 ---

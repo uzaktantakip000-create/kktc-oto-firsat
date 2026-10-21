@@ -25,6 +25,25 @@ def _no_real_social_status_file(monkeypatch):
     monkeypatch.setattr(selfwatch, "SOCIAL_STATUS_PATH", "/yok/kktc-social-durum/durum.json")
 
 
+KAA_ENV = ("KAA_IZIN", "BOT_CONTACT_EMAIL", "KAA_USER_AGENT", "KAA_ACCESS_TOKEN", "KAA_TOKEN_HEADER")
+
+
+@pytest.fixture(autouse=True)
+def _kaa_gate_closed(monkeypatch):
+    """KibrisArabaAl izin kapısı (application/kaa_gate) her testte KAPALI başlar: geliştiricinin ortamında KAA_IZIN/BOT_CONTACT_EMAIL olsa
+    bile hiçbir test siteye istek atamaz. Kapıyı açan testler `kaa_open`'ı ister ve yalnız sahte istemci kullanır."""
+    for name in KAA_ENV:
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def kaa_open(monkeypatch):
+    """Kapı açık: izin + VPS + iletişim adresi (uydurma adres; gerçek değil)."""
+    monkeypatch.setenv("KAA_IZIN", "1")
+    monkeypatch.setenv("KKTC_RUNNER", "vps")
+    monkeypatch.setenv("BOT_CONTACT_EMAIL", "bot@example.org")
+
+
 def safe_test_dsn(env=None) -> str | None:
     """TEST_DATABASE_URL, yalnızca yerel bir sunucudaki adında 'test' geçen veritabanını gösteriyorsa döner; aksi halde None."""
     dsn = (env if env is not None else os.environ).get("TEST_DATABASE_URL")
