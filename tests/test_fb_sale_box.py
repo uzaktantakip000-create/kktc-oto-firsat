@@ -81,12 +81,21 @@ def test_box_price_never_gives_green_alone():
     assert FIELD_PRICE not in data_gaps(listing | {"urgency_signals": ["foto_fiyat"]}, Market(12, 11000, 9000, 13000, 2, 0.0))
 
 
-def test_urgent_box_price_goes_only_to_the_owner():
-    owner, others = [], []
+def test_urgent_box_price_goes_to_everyone_and_only_to_the_owner_under_the_old_rule(monkeypatch):
+    """Sahip kararı 22.10.2026 ("bana gelen tüm mesajlar herkese"): fiyatı yalnız satış kutusundan gelen ⚡ de abonelere gider; eski kural
+    (doğrulanana dek yalnız sahibe) notify.OWNER_ONLY_KINDS'a urgent.SELECTIVE_KIND eklenince geri gelir."""
+    from application import notify
+
     boxed = ev("kutu", price=7000)
     boxed.listing["urgency_signals"] = [FIELD_PRICE]
     # "normal" başka yıl: aynı model/yıl ±%5 fiyatlı ikinci ilan aynı-araç kilidine takılırdı (20.10.2026); bu test yalnız paylaşımı sınar
-    assert urgent.run(UrgentRepo(), [boxed, ev("normal", price=6900, year=2016)], collect(owner), Settings(), EVAL_NOW, share=collect(others)) == 2
+    evs = [boxed, ev("normal", price=6900, year=2016)]
+    owner, others = [], []
+    assert urgent.run(UrgentRepo(), evs, collect(owner), Settings(), EVAL_NOW, share=collect(others)) == 2
+    assert len(owner) == 2 and others == owner
+    monkeypatch.setattr(notify, "OWNER_ONLY_KINDS", frozenset({urgent.SELECTIVE_KIND}))
+    owner, others = [], []
+    assert urgent.run(UrgentRepo(), evs, collect(owner), Settings(), EVAL_NOW, share=collect(others)) == 2
     assert len(owner) == 2 and len(others) == 1 and others[0] != next(m for m in owner if "/kutu/" in m)
 
 

@@ -1,4 +1,4 @@
-from application import discovery
+from application import discovery, notify
 
 
 class Repo:
@@ -23,6 +23,9 @@ class Repo:
     def mark_alerted(self, key):
         self.state[key] = "x"
 
+    def approved_subscribers(self):  # sahip ("1") + bir abone (uydurma kimlikler)
+        return [{"chat_id": "1", "is_owner": True}, {"chat_id": "22", "is_owner": False}]
+
 
 def test_candidates_skip_known_junk_and_decided():
     repo = Repo([{"handle": "yenigaleri", "n": 5}, {"handle": "kibris.car", "n": 9}, {"handle": "gmail.com", "n": 4},
@@ -34,18 +37,21 @@ def test_candidates_skip_known_junk_and_decided():
 def test_discovery_is_switched_off_by_default(monkeypatch):
     """Sahibin kararı (03.10.2026): sosyal medya konu dışıyken haftalık Instagram önerisi gitmez."""
     sent = []
-    monkeypatch.setattr(discovery, "api", lambda token, method, **kw: sent.append(kw))
+    monkeypatch.setattr(notify, "api", lambda token, method, **kw: sent.append(kw))
     assert discovery.ENABLED is False and discovery.send_discovery(Repo([{"handle": "yenigaleri", "n": 5}]), "t", "1") == 0 and sent == []
 
 
 def test_weekly_message_has_buttons_and_is_sent_once(monkeypatch):
     monkeypatch.setattr(discovery, "ENABLED", True)
     sent = []
-    monkeypatch.setattr(discovery, "api", lambda token, method, **kw: sent.append(kw))
+    monkeypatch.setattr(notify, "api", lambda token, method, **kw: sent.append(kw))
     repo = Repo([{"handle": "yenigaleri", "n": 5}])
     assert discovery.send_discovery(repo, "t", "1") == 1
-    assert "disc:ekle:yenigaleri" in str(sent[0]["reply_markup"]) and "disc:gec:yenigaleri" in str(sent[0]["reply_markup"])
-    assert discovery.send_discovery(repo, "t", "1") == 0 and len(sent) == 1  # haftada bir
+    owner, sub = sent
+    assert owner["chat_id"] == "1" and "disc:ekle:yenigaleri" in str(owner["reply_markup"]) and "disc:gec:yenigaleri" in str(owner["reply_markup"])
+    # abone aynı metni alır ama "Ekle" kaynak ekler (yönetim düğmesi): abonenin kopyası düğmesiz (sahip kararı 22.10.2026)
+    assert sub["chat_id"] == "22" and sub["text"] == owner["text"] and "reply_markup" not in sub
+    assert discovery.send_discovery(repo, "t", "1") == 0 and len(sent) == 2  # haftada bir
 
 
 def test_decide_records_choice(monkeypatch):

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from application import ask_price, feed_switch, hunt, selfwatch, social_import, source_export
 from application.health import notify_owner, report_collect_errors
-from application.notify import TelegramError, api
+from application.notify import TelegramError, send_to_all
 from application.runner_gate import TICK_FRESH, VPS_TICK_KEY, github_should_skip, mark_vps
 from domain.kktc_time import kktc_hour
 from entrypoints import cron_collect, cron_evaluate
@@ -16,7 +16,8 @@ from infrastructure.db.repository import Repository
 from infrastructure.fx import frankfurter
 
 TOLERANCE = timedelta(minutes=3)  # dış tetikleyici birkaç dakika kayabilir
-GAP_ALERT_MIN = 45  # bu kadar dakika hiç çalışma olmazsa sahibine haber verilir
+GAP_ALERT_MIN = 45  # bu kadar dakika hiç çalışma olmazsa sahibine (ve abonelere: notify.send_to_all) haber verilir
+GAP_KIND = "kesinti"  # kesinti uyarısının türü (notify.OWNER_ONLY_KINDS)
 EVAL_STALE_MIN = 45  # tick çalışıyor ama son BAŞARILI değerlendirme bu kadar dakikadan eskiyse sahibine haber verilir (cron_evaluate.EVAL_LAST_KEY)
 DAY_KKTC = range(8, 24)  # gündüz = KKTC yerel saatiyle 08:00–24:00 (yaz-kış aynı; ilanlar yerel gündüz saatinde girilir)
 # iş -> (gündüz aralığı dk, gece aralığı dk)
@@ -137,24 +138,26 @@ def timed_evaluate(label: str) -> bool:
 
 
 def run_hunts(repo) -> None:
-    """🎯 Av modu (application/hunt): değerlendirmeden sonra, bu turda ilk kez görülen ilanlar sahibin avlarına karşı. Hata turu durdurmaz."""
+    """🎯 Av modu (application/hunt): değerlendirmeden sonra, bu turda ilk kez görülen ilanlar sahibin avlarına karşı; mesaj sahibe ve abonelere
+    (sahip kararı 22.10.2026). Hata turu durdurmaz."""
     t0 = time.monotonic()
     try:
         from application.settings_store import load_settings
         owner, token = require("TELEGRAM_CHAT_ID"), require("TELEGRAM_BOT_TOKEN")
-        n = hunt.run(repo, owner, lambda text: api(token, "sendMessage", chat_id=owner, text=text), load_settings(repo))
+        n = hunt.run(repo, owner, lambda text: send_to_all(repo, token, owner, text, hunt.KIND), load_settings(repo))
         print(f"iş av: {n} mesaj, {time.monotonic() - t0:.0f} sn", flush=True)
     except Exception as e:
         print(f"av: HATA {type(e).__name__}: {redact(str(e))[:150]}", flush=True)
 
 
 def run_ask_price(repo) -> None:
-    """📞 FİYAT SOR (application/ask_price): devirden gelen fiyatsız Facebook ilanları → sahibe kart (yalnız sahip). Hata turu durdurmaz."""
+    """🖼 Fotoğrafta fiyat kartı (application/ask_price): devirden gelen Facebook ilanları → sahibe ve abonelere kart (sahip kararı 22.10.2026;
+    eskiden yalnız sahip). Hata turu durdurmaz."""
     t0 = time.monotonic()
     try:
         from application.settings_store import load_settings
         owner, token = require("TELEGRAM_CHAT_ID"), require("TELEGRAM_BOT_TOKEN")
-        n = ask_price.run(repo, lambda text: api(token, "sendMessage", chat_id=owner, text=text), load_settings(repo))
+        n = ask_price.run(repo, lambda text: send_to_all(repo, token, owner, text, ask_price.KIND), load_settings(repo))
         print(f"iş fiyat sor: {n} kart, {time.monotonic() - t0:.0f} sn", flush=True)
     except Exception as e:
         print(f"fiyat sor: HATA {type(e).__name__}: {redact(str(e))[:150]}", flush=True)
@@ -175,8 +178,8 @@ def main() -> None:
     gap = heartbeat_gap(now, _parse(repo.get_state("tick:last")))
     if gap:
         try:
-            api(require("TELEGRAM_BOT_TOKEN"), "sendMessage", chat_id=require("TELEGRAM_CHAT_ID"),
-                text=f"⚠️ Sistem {gap} dakika boyunca çalışmadı (zamanlayıcı kesintisi). Şimdi yeniden devrede.")
+            send_to_all(repo, require("TELEGRAM_BOT_TOKEN"), require("TELEGRAM_CHAT_ID"),
+                        f"⚠️ Sistem {gap} dakika boyunca çalışmadı (zamanlayıcı kesintisi). Şimdi yeniden devrede.", GAP_KIND)
         except TelegramError as e:
             print("kesinti uyarısı gönderilemedi:", e.status)
     repo.set_state("tick:last", now.isoformat())

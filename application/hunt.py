@@ -1,7 +1,8 @@
 """🎯 Av modu (11.10.2026, sahip: "beni şaşırtın"): sahibin kalıcı aramaları; galericinin "müşteri siparişi". "/avla vitz 2016 sonrası 7000"
 kurulur; uyan YENİ ilan taranan sitelere düştüğü turda (🟢 olmasa da) sahibe yazılır, taranan ilanla aynı kararla (domain.decision.decide)
 işaretli. Arama metni /bul ile aynı ayrıştırıcıdan geçer (application/search_cmd) ve kurulurken filtreye çevrilip saklanır: turda değer
-tablosu okunmaz (çıkış kotası). Yalnız sahip (v1). Saklama bot_state'te: avlar:<sohbet> (JSON liste), av:son_tur (en son bakılan an).
+tablosu okunmaz (çıkış kotası). Avı yalnız sahip kurar (v1); 22.10.2026'dan beri av mesajı onaylı abonelere de gider (sahip kararı:
+"bana gelen tüm mesajlar herkese"; notify.send_to_all, tür KIND). Saklama bot_state'te: avlar:<sohbet> (JSON liste), av:son_tur (en son bakılan an).
 Gönderim en çok bir kez: önce "son tur" yazılır, sonra gönderilir (tur çöker de aynı ilan iki kez gitmez; kaçan ilan /bul'da görünür).
 Tazelik taranan ilanla aynı (notify.is_fresh + yeniden çıkmış eski KKTCarabam ilanı elenir); Facebook/Instagram listelenmez (search_active)."""
 import json
@@ -18,6 +19,7 @@ PER_MESSAGE = 5  # bir turda bir ava uyan ilan bundan çoksa en iyi 5'i yazılı
 CANDIDATES = 40
 FIRST_LOOKBACK = timedelta(minutes=20)  # ilk turda (son tur kaydı yoksa) yalnız son 20 dakikaya bakılır: eski ilan yağmuru olmasın
 LAST_KEY = "av:son_tur"
+KIND = "av"  # av mesajının türü (notify.OWNER_ONLY_KINDS)
 HELP = ("🎯 Av modu: aradığın aracı tarif et, taranan sitelere düştüğü turda yazayım (🟢 olmasa da, değerlemesiyle).\n"
         "Örnekler:\n/avla vitz 2016 sonrası 7000\n/avla bmw 3 2014-2018 otomatik 12bin\n/avla corolla 150bin km 9000 altı\n"
         "Avların: /avla liste · Silmek: /avla sil 2 · Hepsini sil: /avla sil hepsi")
@@ -95,7 +97,7 @@ def _list_text(hunts: list[dict]) -> str:
 
 def run(repo: Repository, chat: str, send, s: Settings, now: datetime | None = None) -> int:
     """Turun sonunda: son turdan bu yana İLK KEZ görülen, avlara uyan taze ilanlar → av başına tek mesaj. Gönderilen mesaj sayısı.
-    send(text): sahibe Telegram mesajı (önizlemeli: ilanın fotoğrafı görünsün)."""
+    send(text): sahibe ve abonelere Telegram mesajı (notify.send_to_all; önizlemeli: ilanın fotoğrafı görünsün)."""
     hunts = load(repo, chat)
     now = now or datetime.now(timezone.utc)
     try:

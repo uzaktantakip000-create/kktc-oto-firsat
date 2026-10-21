@@ -16,12 +16,15 @@ birbirine bağlanmamıştı (duplicate_of yok; metin günden güne değişmiş, 
 alerts'e yazılmıyordu: oylanamıyor, /son'da ve haftalık raporda görünmüyordu. Artık: (1) ⚡ 🟢 ile aynı 👍/👎 (+ WhatsApp) düğmeleriyle gider
 ve ulaştığı her sohbet alerts'e 'acil' olarak yazılır (application/notify.send_urgent / send_to_subscribers); (2) mükerrer bulmadan
 BAĞIMSIZ bir "aynı araç" kilidi (`same_car`, `locked_by`, `run`) aynı aracın ikinci ⚡'ini durdurur. Paylaşım kuralları (worth_sharing,
-satış kutusu fiyatı yalnız sahibe) DEĞİŞMEDİ."""
+satış kutusu fiyatı yalnız sahibe) DEĞİŞMEDİ.
+22.10.2026 (sahip: "bana gelen tüm mesajlar botu takip eden herkese aynı şekilde gitsin"): sahibe giden HER ⚡ abonelere de gider (`shared`);
+11.10 kuralına (worth_sharing + satış kutusu fiyatı yalnız sahibe) dönmek için notify.OWNER_ONLY_KINDS'a SELECTIVE_KIND, hiç paylaşmamak
+için KIND eklenir."""
 import json
 import re
 from datetime import datetime, timedelta, timezone
 
-from application.notify import is_fresh
+from application.notify import is_fresh, owner_only
 from domain.data_gate import FIELD_PRICE
 from domain.decision import CONFUSABLE_CURRENCIES
 from domain.kktc_time import to_kktc
@@ -39,6 +42,8 @@ SENT_KEY = "acil:islenen"  # bot_state: ⚡ gönderilen ilan kimlikleri (gönder
 DAY_KEY = "acil:gun:{}"
 KEEP = 500
 SHARE_MAX_CUT = 0.10  # %20 kâr sınırına inmek için gereken pazarlık fiyatın en çok bu kadarıysa herkese (ilk ⚡: Fiesta, %4)
+KIND = "acil"  # ⚡'in türü (notify.OWNER_ONLY_KINDS): eklenirse hiçbir ⚡ abonelere gitmez
+SELECTIVE_KIND = "acil_secici"  # eklenirse 11.10 kuralı: yalnız worth_sharing olan ve fiyatı satış kutusundan gelmeyen ⚡ abonelere
 QUOTE = {"acil": "acil / ihtiyaçtan", "mezun/ayrılıyor": "ayrılıyor / mezun", "nakit/borç": "nakit ihtiyacı / borç"}
 # Aynı-araç kilidi (20.10.2026, Swift dersi): son LOCK_DAYS günde ⚡ gitmiş bir araçla aynı (marka, model, yıl) ve fiyatı ±LOCK_PRICE_SHARE
 # içinde olan ya da aynı satıcı telefonlu ilana ikinci ⚡ gitmez. ±%5: Swift kopyalarında fiyat %2,3 oynadı; TL ilanın sterlin karşılığı
@@ -94,6 +99,16 @@ def worth_sharing(ev, s: Settings) -> bool:
     """Herkese gider mi: sınıra inmek için gereken pazarlık fiyatın en çok SHARE_MAX_CUT'ı (fiyat zaten altındaysa da evet)."""
     price = float(ev.listing["price_gbp"])
     return price - ceiling(ev, s) <= price * SHARE_MAX_CUT
+
+
+def shared(ev, s: Settings) -> bool:
+    """Bu ⚡ abonelere de gider mi? 22.10.2026'dan beri hepsi (sahip kararı). notify.OWNER_ONLY_KINDS'ta KIND varsa hiçbiri; SELECTIVE_KIND
+    varsa 11.10 kuralı: pazarlığı az (worth_sharing) ve fiyatı yalnız Facebook satış kutusundan gelmeyen (doğrulanana dek yalnız sahibe)."""
+    if owner_only(KIND):
+        return False
+    if owner_only(SELECTIVE_KIND):
+        return worth_sharing(ev, s) and FIELD_PRICE not in (ev.listing.get("urgency_signals") or [])
+    return True
 
 
 def message(ev, s: Settings, now: datetime) -> str:
@@ -161,8 +176,8 @@ def _fingerprint(listing: dict, now: datetime) -> dict:
 
 def run(repo, evaluated: list, send, s: Settings, now: datetime | None = None, share=None) -> int:
     """Turun değerlendirmesinden sonra: acil satıcı ilanlarını sahibe yollar; gönderilen sayısı. send(listing, text): sahibe Telegram mesajı
-    (düğmeli + alerts kaydı: application/notify.send_urgent). share(listing, text): sahip dışındaki onaylı abonelere (yalnız worth_sharing
-    olanlar ve fiyatı satış kutusundan gelmeyenler; verilmezse kimseye; notify.send_to_subscribers).
+    (düğmeli + alerts kaydı: application/notify.send_urgent). share(listing, text): sahip dışındaki onaylı abonelere (`shared`: 22.10.2026'dan
+    beri hepsi; verilmezse kimseye; notify.send_to_subscribers).
     Sıra (20.10.2026): aday → bu ilan daha önce işlendi mi → günlük kota → aynı-araç kilidi (`locked_by`: önce veritabanındaki son 7 günün
     ⚡'leri, sonra BU turda kilitten geçenler: aynı turdaki 4 kopyadan yalnız en ucuzu gider) → gidecekler "işlendi" yazılır (gönderimden
     ÖNCE: en çok bir kez) → gönderim. Kilide takılan ilan "işlendi" YAZILMAZ: kilidin belleği işlenmiş listedir; takılan ilan ona girseydi
@@ -207,6 +222,6 @@ def run(repo, evaluated: list, send, s: Settings, now: datetime | None = None, s
     for ev in keep:
         text = message(ev, s, now)
         send(ev.listing, text)
-        if share is not None and worth_sharing(ev, s) and FIELD_PRICE not in (ev.listing.get("urgency_signals") or []):
-            share(ev.listing, text)  # fiyatı yalnız Facebook satış kutusundan gelen ilan doğrulanana dek yalnız sahibe
+        if share is not None and shared(ev, s):
+            share(ev.listing, text)
     return len(keep)

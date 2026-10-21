@@ -1102,3 +1102,37 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
   - B (önerilen, kodla, geri alınabilir): gece bakımı (`quality.find_quarantine`) `implausible_amount`ı "fiyat_yer_tutucu" sayar. Bakımın gördüğü 123 satırın 49'u zaten karantinada; yeni 74 (Facebook yer tutucu 31 + küçük TL 16, hepsi aktif; site TL<50.000 27, 24'ü pasif; KKTCar'da 1990'ların aracı 25–48 bin TL gerçek fiyattır, karantina onları yalnız emsalden çıkarır). Kod geri alınınca ertesi gece düzelir.
   - A (yeniden ayrıştırma): önce salt okunur kuru çalışma (bu görevdeki betik: 251 satır, 90 aktif kanonik), yedek (kktc-backup), tek işlemde fiyat alanları. `listing_history`'ye 'price_gbp' satırı YAZILMAMALI: fiyat değişikliği sayılır, ilan "taze" olur, anlık 🟢/⚡ yolunu açar. Fiyatı silinen satırın eski 🟡 değerlendirmesi yakın kaçanlar sorgusunda kalabilir; B ile birlikte yapılmalı.
   - **RULES_VERSION artırılmadı:** karar kuralı yalnız imkânsız tutarlara ikinci kapı ekledi; tekrar oynatmada 🟢 değişimi 0. Ayrıştırma kuralı kural sürümüne bağlı değil (yalnız yeni gönderi). Ekip liderinin bir sonraki artırmasına bırakıldı.
+
+### 24.35 Sahibe giden her mesaj abonelere de (22.10.2026; sahip: "bana gelen tüm mesajlar botu takip eden herkese aynı şekilde gitmesini istiyorum zamanla eğer ben istersem sana şunlar gitsin veya gitmesin diye daha sonra müdahale ederiz.")
+- **Ne:** sahibe kendiliğinden giden her mesaj, aynı metinle onaylı abonelere de gider. Merkez `notify.share_with_subscribers`: `health.notify_owner` (uyarılar) ve `notify.send_to_all` (av, kart, denetim, kesinti) bunu kullanır.
+- **Kural:** önce sahibe; sahibe gitmezse kimseye gitmez (sonraki turda hepsi birlikte). Tekrar sınırı mesaj başına TEK anahtardır ve sahibe gidince yazılır: tekrarlar abone sayısıyla çoğalmaz. Sahip satırı ve sahibin sohbeti atlanır. Metin, gece sessizliği ve önizleme sahibinkiyle aynı. Bir abonenin hatası öbürlerini durdurmaz; botu engelleyen (403) abone `durduruldu` olur; log'da sohbet kimliği maskeli.
+- **Sonradan "bu gitmesin" (tek satır):** `notify.OWNER_ONLY_KINDS`'a türün adı eklenir (baştan eşleşme). Bugün boş. Tür = uyarı anahtarı ya da modülün `KIND` sabiti:
+
+| Mesaj | Kime | Tür (anahtar başı) |
+|---|---|---|
+| Sunucu/yedek: durdu, GitHub devraldı, yeniden çalışıyor, kaynak azalıyor (selfwatch) | herkese | `vps_` |
+| Anında cevap durdu/düzeldi (selfwatch) | herkese | `listener_` |
+| Facebook okuyucusu: fren, hata, susuyor, düzeldi, devir klasörü, grup sessiz, kesik metin (selfwatch, handoff_watch) | herkese | `social_` |
+| Kaynak alarmı/düzeldi, tarama yok, ilan gelmiyor, hacim düştü (source_alarm, health) | herkese | `src_alarm:` `src_ok:` `stale:` `silent:` `volume:` |
+| Döviz kuru bayat, KibrisArabaAl engeli, sosyal duraklatma | herkese | `fx_stale:` `kaa_blocked` `feed_paused:` |
+| Değerlendirme hatası/bayat, 🟠 arıza freni, kayıt yazılamadı, hızlı şerit hatası, yapay zekâ hesabı | herkese | `eval_errors` `eval_stale` `est_burst` `alert_unsaved` `hizli_serit_hata` `llm_hesap` |
+| Kendiliğinden ayar: kaynak anlık bildirimden çıktı, model 🟠 durdu, 🟠 eşiği sıkılaştı (sahibin oy SAYISINI söyler) | herkese | `guard:` `est_off:` `est_tighten_msg:` |
+| Facebook grubu: katılım, gölge bitti/euro, keşif (fb_join) | herkese | `fb_katilim_` `fb_golge_` `fb_kesif_` |
+| Sabah nabzı | herkese | `durum-sabah` |
+| "Sistem N dakika çalışmadı" (tick) | herkese | `kesinti` |
+| 🎯 Av mesajı (avı yalnız sahip kurar) | herkese | `av` |
+| 🖼 Fotoğrafta fiyat kartı | herkese | `fiyatsor` |
+| ⚡ ACİL SATICI: artık HEPSİ (eskiden yalnız pazarlığı ≤%10 ve fiyatı satış kutusundan gelmeyen) | herkese, 👍/👎 düğmeli | `acil` (hiçbiri), `acil_secici` (11.10 kuralı) |
+| 🧪 Aylık denetim | düğmesiz herkese: ❌ Yanlış ilanı herkesin emsalinden çıkarır | `audit` |
+| Instagram keşif önerisi (kapalı) | düğmesiz herkese: "Ekle" kaynak ekler | `discovery` |
+| 🟢/🟠 fırsat, 🟠 özet, 🟡 özet (kapalı) | zaten herkese (değişmedi) | — |
+| Haftalık rapor | zaten herkese, oy listesi kişiye özel: sahibinki aynen kopyalanmaz (`share=False`) | — |
+| Abone başvurusu "👤 X bildirim almak istiyor" + Onayla/Reddet | yalnız sahibe: başkasının adı + yönetim düğmesi | — |
+| "✅ X onaylandı / ⛔ reddedildi" | yalnız sahibe: sahibin düğmesine cevap + kişinin adı | — |
+| "Bu modelin bildirimlerini kapatayım mı?" | yalnız sahibe: sahibin 'pas' basışına cevap, sahibin oyları + ayar düğmesi | — |
+| /oyla, `admin_cli oyla` | yalnız sahibe: komuta cevap, sahibin kişisel oy listesi | — |
+| Komut ve düğme cevapları (/durum, /son, /kaynaklar, ilan kontrolü...) | yazan kişiye: cevaptır, yayın değil | — |
+
+- **Düğmeler:** abonenin kopyasında yalnız bağlantı (📲 WhatsApp) ve kişinin kendi oyu (`fb:`; denetim `fb:audit_*` hariç) kalır (`notify.subscriber_markup`). Bilinmeyen tür de düşer. Düğme kalmazsa düğmesiz gider.
+- **Güvenlik denetimi (bot_poll):** bütün yönetim düğmeleri (`sub:`, `disc:`, `mute:`, `src:`, `fb:audit_*`) ve sahip komutları sunucuda sahip kimliğiyle denetleniyor. Abonenin oyu yalnız kayıttır (satılmış, kusurlu satıcı, 'pas' eylemleri yalnız sahipte). Açık bulunmadı.
+- **Bedel:** abonelere giden mesaj sayısı artar. Bazı metinler yalnız sahibin kullanabildiği komutları anar (/durum, /kaynaklar, /kaynak_seviye); abone yazarsa "Bu komut yalnız sahip içindir" cevabı alır. Av mesajı sahibin aradığı aracı, grup mesajları okunan Facebook gruplarının adını abonelere gösterir. RULES_VERSION değişmedi.

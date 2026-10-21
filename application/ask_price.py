@@ -8,7 +8,8 @@ Bu adım her VPS turunun sonunda, devir aktarıcısının yazdığı FİYATSIZ F
 kısa bir kart yollar: aracın piyasa ortası ve "%20 kâr için en çok £X" (domain.profit.buy_ceiling; ilan dosyası ve haftalık raporla aynı
 hesap; domain.decision.ask_value). Satıcı bu rakamın altını söylerse fırsattır. Bu bir 🟢 DEĞİLDİR (fiyat yok, araç görülmedi), ayrı etikettir; otomatik mesaj yok.
 Seçim: son WINDOW_H saatte ilk kez görülen, kopya olmayan, galeri görünmeyen (satıcı radarı + metin), sahibin engellediği marka/satıcı
-olmayan, tuzak metni olmayan ve 🟢 kadar emsali (8) olan ilan. Gölge kaynaklar dahil (kart emsal ya da 🟢 üretmez). Yalnız sahip (v1).
+olmayan, tuzak metni olmayan ve 🟢 kadar emsali (8) olan ilan. Gölge kaynaklar dahil (kart emsal ya da 🟢 üretmez). Eskiden
+yalnız sahibe; 22.10.2026'dan beri onaylı abonelere de (sahip kararı: "bana gelen tüm mesajlar herkese"; notify.send_to_all, tür KIND).
 Gönderim en çok bir kez: önce "işlendi" yazılır, sonra gönderilir. Günlük üst sınır var (KKTC günü).
 Fotoğraftan fiyat (sahip onayı 11.10.2026): fiyatı yalnız fotoğrafta yazan ilanın fiyatını görüntü okuyucu okur (social_import; "foto_fiyat").
 Okunan fiyat %20 sınırının en çok PHOTO_SLACK üstündeyse kart fiyatı gösterir ve sınırla kıyaslar ("teyit et"); daha pahalıysa kart yok;
@@ -27,6 +28,7 @@ WINDOW_H = 3  # bu kadar saat içinde ilk kez görülen fiyatsız ilan (tur kaç
 MAX_POST_AGE_H = 12  # paylaşım zamanı biliniyorsa bundan eski gönderi kart almaz (okuma gecikmesi payı)
 PER_MESSAGE = 5
 MAX_PER_DAY = 15  # KKTC günü başına en çok kart (sel olmasın: grup sayısı artınca)
+KIND = "fiyatsor"  # kartın türü (notify.OWNER_ONLY_KINDS)
 SENT_KEY = "fiyatsor:islenen"  # bot_state: işlenen ilan kimlikleri (JSON liste, son KEEP)
 PRINTS_KEY = "fiyatsor:izler"  # bot_state: kart giden aracın izi (aynı aracın yeniden paylaşımı ikinci kart almasın; JSON liste, son KEEP)
 DAY_KEY = "fiyatsor:gun:{}"  # bot_state: o KKTC gününde gönderilen kart sayısı
@@ -108,7 +110,8 @@ def pick(rows: list[dict], pool: list[dict], s: Settings, now: datetime, seen: s
 
 
 def run(repo, send, s: Settings, now: datetime | None = None, since: datetime | None = None) -> int:
-    """Turun sonunda: yeni fiyatsız Facebook ilanları → sahibe kart. Gönderilen kart (ilan) sayısı. send(text): sahibe Telegram mesajı.
+    """Turun sonunda: yeni fiyatsız Facebook ilanları → sahibe kart. Gönderilen kart (ilan) sayısı.
+    send(text): sahibe ve abonelere Telegram mesajı (notify.send_to_all).
     `since` (Facebook hızlı şeridi): yalnız bu andan sonra ilk kez görülen ilanlar okunur (veritabanı çıkışı)."""
     now = now or datetime.now(timezone.utc)
     done = _load_ids(repo)

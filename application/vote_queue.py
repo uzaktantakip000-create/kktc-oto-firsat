@@ -1,5 +1,6 @@
 """Oy bekleyen bildirimler (sahip 20.10.2026: "bugüne kadar bir çok gönderilen ilanın oylaması yapılmış yapılmayanlar ve güncel olanlar varsa
-temiz bir düzen olarak bottan tekrardan göndermeni istiyorum"). /oyla komutu (yalnız sahip) ve `admin_cli oyla`.
+temiz bir düzen olarak bottan tekrardan göndermeni istiyorum"). /oyla komutu (yalnız sahip) ve `admin_cli oyla`. YALNIZ SAHİBE (sahip kararı
+22.10.2026 "herkese" yayınının dışında; spec §24.35): sahibin yazdığı komuta cevaptır ve sahibin kişisel oy listesidir.
 
 Sahibe gitmiş (🟢/🟠/⚡) ve SAHİBİN hiç oy vermediği, hâlâ ilanda görünen her araç için TEK mesaj: önce bir başlık, sonra 🟢/🟠, en sonda ⚡;
 her grup kendi içinde en yeni önce. Her mesaj 🟢 ile aynı 👍 İşe yarar / 👎 Yanlış (+ telefon varsa WhatsApp) düğmeleriyle gider

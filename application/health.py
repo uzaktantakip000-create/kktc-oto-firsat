@@ -3,7 +3,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from application import feed_switch, kaa_gate
-from application.notify import TelegramError, api
+from application.notify import TelegramError, api, share_with_subscribers
 from domain.kktc_time import kktc_hour, to_kktc
 from infrastructure.config import redact
 from infrastructure.db.repository import Repository
@@ -12,18 +12,25 @@ REPEAT_HOURS = 12  # aynı uyarı en fazla bu aralıkla tekrarlanır
 FX_FALLBACK_ALERT_HOURS = 24  # döviz servisi bu kadar saattir yanıt vermeyip yedek kur kullanılıyorsa sahibe haber
 
 
-def notify_owner(repo: Repository, key: str, text: str, repeat_hours: int = REPEAT_HOURS, max_chars: int = 3500, **extra) -> bool:
-    """Sahibe uyarı yollar; aynı 'key' kısa süre önce gönderildiyse susar. TELEGRAM_* yoksa sessizce atlar.
+def notify_owner(repo: Repository, key: str, text: str, repeat_hours: int = REPEAT_HOURS, max_chars: int = 3500, share: bool = True,
+                 **extra) -> bool:
+    """Sahibe uyarı yollar; aynı 'key' kısa süre önce gönderildiyse susar. TELEGRAM_* yoksa sessizce atlar. Sahibe gittiyse aynı metin onaylı
+    abonelere de gider (sahip kararı 22.10.2026; notify.share_with_subscribers, tür = `key`; yalnız sahibe kalanlar notify.OWNER_ONLY_KINDS).
+    Tekrar sınırı mesaj başına TEK anahtardır ve sahibe gidince yazılır (eskisi gibi; aboneye gidemese de): tekrarlar abone sayısıyla çoğalmaz.
+    `share=False`: aboneye kendi sürümü ayrıca giden mesaj (haftalık rapor: oy listesi kişiye özel).
     `max_chars`: güvenlik kesimi (Telegram sınırı 4096; kendi boyunu ölçen rapor daha yüksek verebilir).
-    `extra`: sendMessage'e aynen geçen alanlar (ör. reply_markup düğmeleri, disable_web_page_preview)."""
+    `extra`: sendMessage'e aynen geçen alanlar (ör. reply_markup düğmeleri, disable_web_page_preview); abone de aynılarını alır."""
     token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat or repo.alert_recent(key, repeat_hours):
         return False
+    body = redact(text)[:max_chars]
     try:
-        api(token, "sendMessage", chat_id=chat, text=redact(text)[:max_chars], **extra)
+        api(token, "sendMessage", chat_id=chat, text=body, **extra)
     except TelegramError:
         return False
     repo.mark_alerted(key)
+    if share:
+        share_with_subscribers(repo, token, chat, body, key, api_call=api, **extra)
     return True
 
 
