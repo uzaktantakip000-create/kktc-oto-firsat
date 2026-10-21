@@ -120,17 +120,29 @@ def test_urgency_reader(text, signals):
     assert urgency_signals(text) == signals
 
 
-def test_close_deals_go_to_everyone_far_ones_only_to_the_owner():
-    """Sahip 11.10 (ilk ⚡ sonrası): "mantıklıysa herkese gönder". %20 sınırına inmek için gereken pazarlık fiyatın en çok %10'u ise öbür
-    abonelere de gider. Varsayılan piyasa: orta £9.000 → sınır £6.850."""
-    repo, owner, others = Repo(), [], []
+def test_every_flash_goes_to_everyone_and_the_old_rules_are_one_line_away(monkeypatch):
+    """Sahip 22.10.2026: "bana gelen tüm mesajlar botu takip eden herkese aynı şekilde gitsin" → sahibe giden HER ⚡ abonelere de gider
+    (eskiden yalnız pazarlığı az olan). Varsayılan piyasa: orta £9.000 → sınır £6.850."""
+    from application import notify
+
     evs = [ev("yakin", price=7000), ev("uzak", price=8000)]  # £150 (%2) ve £1.150 (%14) pazarlık
-    assert urgent.run(repo, evs, collect(owner), Settings(), NOW, share=collect(others)) == 2
+    owner, others = [], []
+    assert urgent.run(Repo(), evs, collect(owner), Settings(), NOW, share=collect(others)) == 2
+    assert len(owner) == 2 and others == owner and "pazarlıkla £1.150 inmesi gerekir" in others[1]
+    # sahip "bunlar gitmesin" derse tek satır: OWNER_ONLY_KINDS'a SELECTIVE_KIND → 11.10 kuralı ("mantıklıysa herkese gönder"):
+    # %20 sınırına inmek için gereken pazarlık fiyatın en çok %10'u ise abonelere de
+    monkeypatch.setattr(notify, "OWNER_ONLY_KINDS", frozenset({urgent.SELECTIVE_KIND}))
+    owner, others = [], []
+    assert urgent.run(Repo(), evs, collect(owner), Settings(), NOW, share=collect(others)) == 2
     assert len(owner) == 2 and others == [owner[0]] and "pazarlıkla £150 inmesi gerekir" in others[0]
+    monkeypatch.setattr(notify, "OWNER_ONLY_KINDS", frozenset({urgent.KIND}))  # hiçbir ⚡ abonelere gitmez
+    owner, others = [], []
+    assert urgent.run(Repo(), evs, collect(owner), Settings(), NOW, share=collect(others)) == 2 and len(owner) == 2 and others == []
     assert urgent.worth_sharing(ev(price=7600), Settings()) and not urgent.worth_sharing(ev(price=7700), Settings())  # £750 = %9,9; £850 = %11
     fiesta = ev(price=2922.2, median=4058.49, n=16)  # ilk ⚡ (11.10 19:50): £122 pazarlık = %4
     assert urgent.worth_sharing(fiesta, Settings()) and urgent.ceiling(fiesta, Settings()) == 2800
-    assert urgent.run(Repo(), [ev("a", price=7000)], collect(owner), Settings(), NOW) == 1  # share verilmezse yalnız sahip
+    owner = []
+    assert urgent.run(Repo(), [ev("a", price=7000)], collect(owner), Settings(), NOW) == 1 and len(owner) == 1  # share verilmezse yalnız sahip
 
 
 def test_shared_text_reaches_every_approved_subscriber_but_the_owner(monkeypatch):
@@ -296,16 +308,26 @@ def test_every_flash_message_has_vote_buttons_and_is_recorded_per_chat(monkeypat
                           ("yakin", "s2", "acil", 103, "e-1", 7000.0)]
 
 
-def test_flash_with_a_valid_phone_gets_the_whatsapp_button_and_owner_only_ones_are_recorded_for_the_owner(monkeypatch):
+def test_flash_with_a_valid_phone_gets_the_whatsapp_button_and_far_ones_now_reach_everyone(monkeypatch):
+    from application import notify
+
     calls, repo = tg(monkeypatch), TgRepo()
     send, share = wired(repo)
-    far = ev("uzak", price=8000, seller_phone="+905331112233")  # £1.150 pazarlık: yalnız sahibe
+    far = ev("uzak", price=8000, seller_phone="+905331112233")  # £1.150 pazarlık: 22.10.2026'dan beri herkese (eskiden yalnız sahibe)
     assert urgent.run(repo, [far], send, Settings(), NOW, share=share) == 1
-    (only,) = calls
-    rows = only["reply_markup"]["inline_keyboard"]
-    assert only["chat_id"] == "own" and rows[0][0]["url"].startswith("https://wa.me/905331112233?text=")
-    assert votes_of(only["reply_markup"]) == ["fb:ilgilendim:uzak", "fb:yanlis_fiyat:uzak"]
-    assert [(s[1], s[2]) for s in repo.saved] == [("own", "acil")]
+    assert [c["chat_id"] for c in calls] == ["own", "s1", "s2"]
+    for c in calls:  # herkeste aynı WhatsApp + 👍/👎 düğmeleri; her sohbet kendi 'acil' kaydıyla
+        rows = c["reply_markup"]["inline_keyboard"]
+        assert rows[0][0]["url"].startswith("https://wa.me/905331112233?text=")
+        assert votes_of(c["reply_markup"]) == ["fb:ilgilendim:uzak", "fb:yanlis_fiyat:uzak"]
+    assert [(s[1], s[2]) for s in repo.saved] == [("own", "acil"), ("s1", "acil"), ("s2", "acil")]
+    # 11.10 kuralı geri açılırsa (OWNER_ONLY_KINDS'a SELECTIVE_KIND) yalnız sahibe gider ve yalnız sahip için kaydedilir
+    monkeypatch.setattr(notify, "OWNER_ONLY_KINDS", frozenset({urgent.SELECTIVE_KIND}))
+    calls.clear()
+    repo = TgRepo()
+    send, share = wired(repo)
+    assert urgent.run(repo, [far], send, Settings(), NOW, share=share) == 1
+    assert [c["chat_id"] for c in calls] == ["own"] and [(s[1], s[2]) for s in repo.saved] == [("own", "acil")]
 
 
 def test_a_failed_subscriber_send_is_not_recorded_and_others_still_are(monkeypatch):

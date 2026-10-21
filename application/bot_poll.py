@@ -191,6 +191,9 @@ def _download_photo(token: str, photo: list[dict]) -> bytes | None:
 
 
 def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None:
+    # Cevaplar komutu/mesajı YAZANA gider: yayın değildir, sahip kararı 22.10.2026'nın ("bana gelen tüm mesajlar herkese",
+    # notify.share_with_subscribers) dışındadır (spec §24.35); sahibe giden başvuru sorusu da yalnız sahibe kalır (aşağıda, nedeniyle).
+    # Yönetim komutlarının hepsi `chat_id == owner` ile sunucuda denetlenir.
     chat_id = str(msg["chat"]["id"])
     name = " ".join(filter(None, [msg["from"].get("first_name"), msg["from"].get("last_name")])) or chat_id
     text = re.sub(r"^(/[a-z0-9_]+)@\w+", r"\1", (msg.get("text") or "").strip().lower())  # /son@botadi gruplarda da çalışsın
@@ -218,6 +221,7 @@ def _handle_message(repo: Repository, token: str, owner: str, msg: dict) -> None
                 )
             # Önce sahibe sorulur, sonra başvurana cevap verilir: sahibe giden mesaj düşerse (ör. 429) başvurana hata cevabı gider ve
             # tekrar /start sahibe yeniden sorar. Bekleyenin tekrar /start'ı sahibi en çok APPLY_PING_HOURS saatte bir rahatsız eder.
+            # YALNIZ SAHİBE (abonelere paylaşılmaz, 22.10.2026): başvuranın adı (kişisel veri) ve onay/ret düğmesi (yönetim) taşır.
             if new or not repo.alert_recent(f"basvuru:{chat_id}", APPLY_PING_HOURS):
                 api(token, "sendMessage", chat_id=owner, text=f"👤 {name} bildirim almak istiyor.",
                     reply_markup={"inline_keyboard": [[
@@ -325,6 +329,7 @@ def _maybe_ask_mute(repo: Repository, token: str, owner: str, listing_id) -> Non
     if n < PAS_LIMIT or key in (repo.get_state("cfg:muted_models", "") or "").split(",") or repo.get_state(f"mute_asked:{key}"):
         return
     repo.set_state(f"mute_asked:{key}", "1")  # her model için bir kez sorulur
+    # yalnız sahibe (abonelere paylaşılmaz, 22.10.2026): sahibin kendi 'pas' basışına cevaptır, sahibin oylarını sayar ve ayar düğmesi taşır
     api(token, "sendMessage", chat_id=owner,
         text=f"{brand} {model} ilanlarına {n} kez 'pas' dedin. Bu modelin 🟢 bildirimlerini kapatayım mı?",
         reply_markup={"inline_keyboard": [[{"text": "✅ Evet, kapat", "callback_data": f"mute:evet:{key}"[:64]},
@@ -386,7 +391,7 @@ def _handle_callback(repo: Repository, token: str, owner: str, cb: dict) -> None
                         "Bana /start yazmasını söyle.")
         else:
             note = f"⛔ {name} reddedildi; ona bildirim gitmeyecek."
-        api(token, "sendMessage", chat_id=owner, text=note)
+        api(token, "sendMessage", chat_id=owner, text=note)  # yalnız sahibe: sahibin düğmesine cevap ve kişinin adı (kişisel veri)
     elif kind == "disc" and sender == owner and action in ("ekle", "gec"):
         _answer(token, cb["id"], "Tamam")
         api(token, "sendMessage", chat_id=owner, text=discovery.decide(repo, action, target))

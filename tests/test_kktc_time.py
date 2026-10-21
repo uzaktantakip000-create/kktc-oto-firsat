@@ -226,8 +226,9 @@ def test_estimated_deal_alert_is_silent_at_night_too_and_the_burst_summary_with_
             assert all(kw["disable_notification"] is True for kw in subs)
         else:
             assert not any("disable_notification" in kw for kw in subs)
-        (warning,) = owner  # sahibe "arıza freni" uyarısı gece de SESLİ: sistem mesajı fırsat mesajı değil
-        assert warning["chat_id"] == "owner" and warning["text"].startswith("⚠️ 🟠 arıza freni") and "disable_notification" not in warning
+        # "arıza freni" uyarısı sahibe, sonra aynı metinle abonelere (sahip kararı 22.10.2026); gece de SESLİ: sistem mesajı fırsat mesajı değil
+        assert [kw["chat_id"] for kw in owner] == ["owner", "a", "b"]
+        assert all(kw["text"].startswith("⚠️ 🟠 arıza freni") and "disable_notification" not in kw for kw in owner)
 
 
 def test_the_weekly_report_and_owner_warnings_stay_audible_at_night(monkeypatch):

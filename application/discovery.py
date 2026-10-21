@@ -1,13 +1,15 @@
 """Kaynak keşfi (ücretsiz): ilan metinlerinde birden çok kez anılan Instagram hesapları haftada bir sahibe
-"Ekle / Geç" düğmeleriyle önerilir. Hiçbir hesap sahibin onayı olmadan taranmaz."""
+"Ekle / Geç" düğmeleriyle önerilir. Hiçbir hesap sahibin onayı olmadan taranmaz. Öneri metni (açılırsa) onaylı abonelere de gider
+(sahip kararı 22.10.2026), DÜĞMESİZ: "Ekle" kaynak ekler (notify.subscriber_markup düşürür; bot_poll disc: düğmesini yalnız sahipten kabul eder)."""
 from application import sources_cmd
 from application.health import notify_owner
-from application.notify import TelegramError, api
+from application.notify import TelegramError, send_to_all
 from infrastructure.db.repository import Repository
 
 ENABLED = False  # KAPALI (sahibin kararı 03.10.2026): sosyal medya konu dışıyken Instagram hesabı önermesin; kod, geri açılabilsin diye duruyor
 MAX_PER_WEEK = 5
 MIN_POSTS = 2
+KIND = "discovery"  # öneri mesajının türü (notify.OWNER_ONLY_KINDS)
 JUNK = ("gmail", "hotmail", "yahoo", "outlook", "icloud")
 
 
@@ -32,9 +34,8 @@ def send_discovery(repo: Repository, token: str, owner: str) -> int:
     rows = [[{"text": f"➕ @{c['handle']} ({c['n']} ilanda anıldı)", "callback_data": f"disc:ekle:{c['handle']}"[:64]},
              {"text": "Geç", "callback_data": f"disc:gec:{c['handle']}"[:64]}] for c in found]
     try:
-        api(token, "sendMessage", chat_id=owner, reply_markup={"inline_keyboard": rows},
-            text="🔎 Bu hafta ilanlarda sık anılan Instagram hesapları buldum. Eklersen anlık bildirim verir. "
-                 "İstediklerini ekle:")
+        send_to_all(repo, token, owner, "🔎 Bu hafta ilanlarda sık anılan Instagram hesapları buldum. Eklersen anlık bildirim verir. "
+                    "İstediklerini ekle:", KIND, reply_markup={"inline_keyboard": rows})
     except TelegramError:
         return 0
     repo.mark_alerted("discovery")

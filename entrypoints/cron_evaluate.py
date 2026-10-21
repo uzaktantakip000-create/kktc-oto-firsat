@@ -243,8 +243,9 @@ def deliver(repo: Repository, token: str, owner: str, settings: Settings, evalua
                 est_sent = send_alerts(repo, token, est, tier=Tier.ESTIMATED, s=settings)
         except Exception as e:  # 🟠 hatası özet/rapor gibi yan işleri engellemesin
             print("tahmini fırsat gönderimi başarısız:", type(e).__name__, redact(str(e))[:150])
-    try:  # ⚡ ACİL SATICI (application/urgent): bu turda değerlendirilen ilanlardan acelesi olan bireysel satıcı, piyasanın %10+ altında; sahibe,
-        # az pazarlık isteyen herkese. 20.10.2026: 👍/👎 (+ WhatsApp) düğmeli, ulaştığı her sohbet alerts'e 'acil' yazılır, aynı-araç kilidi
+    try:  # ⚡ ACİL SATICI (application/urgent): bu turda değerlendirilen ilanlardan acelesi olan bireysel satıcı, piyasanın %10+ altında; sahibe
+        # ve herkese (22.10.2026; önceden yalnız az pazarlık isteyen: urgent.shared). 20.10.2026: 👍/👎 (+ WhatsApp) düğmeli, ulaştığı her sohbet
+        # alerts'e 'acil' yazılır, aynı-araç kilidi
         urgent_sent = urgent.run(repo, evaluated, lambda listing, text: send_urgent(repo, token, owner, listing, text), settings,
                                  share=lambda listing, text: send_to_subscribers(repo, token, text, skip_chat=owner, listing=listing))
         if urgent_sent:

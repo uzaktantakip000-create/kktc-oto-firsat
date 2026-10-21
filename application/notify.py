@@ -22,6 +22,12 @@ SOCIAL = ("instagram", "facebook")
 QUIET_HOURS_KKTC = range(0, 7)
 CURRENCY_NAMES = {"GBP": "STG", "TRY": "TL", "EUR": "EUR", "USD": "USD"}
 API = "https://api.telegram.org/bot{token}/{method}"
+# Sahip kararı (22.10.2026, spec §24.35): "bana gelen tüm mesajlar botu takip eden herkese aynı şekilde gitsin; zamanla ... müdahale ederiz".
+# Sahibe kendiliğinden giden her mesaj aynı metinle onaylı abonelere de gider (`share_with_subscribers`). Bir tür yalnız sahibe kalsın denirse
+# adı buraya eklenir (tek satır). Tür = health.notify_owner'da uyarı anahtarı, öbür yollarda modülün KIND sabiti; eşleşme baştandır ("vps_"
+# bütün sunucu uyarılarını, "fb_katilim_" bütün grup katılım mesajlarını kapsar). Türlerin listesi: spec §24.35. Bugün boş: sahip "hepsi" dedi.
+# Başkasının kişisel verisini taşıyan ya da sahibin komutuna cevap olan mesaj bu yoldan hiç geçmez (bot_poll, vote_queue: nedeni yanında yazılı).
+OWNER_ONLY_KINDS: frozenset[str] = frozenset()
 
 
 class TelegramError(RuntimeError):
@@ -407,6 +413,70 @@ def send_to_subscribers(repo: Repository, token: str, text: str, skip_chat: str 
         if listing is not None:
             _record_urgent(repo, listing, sub["chat_id"], res["message_id"])
     return n
+
+
+def owner_only(kind: str) -> bool:
+    """Bu tür yalnız sahibe mi kalır (`OWNER_ONLY_KINDS`, baştan eşleşme)?"""
+    return any(kind.startswith(k) for k in OWNER_ONLY_KINDS)
+
+
+def subscriber_markup(markup: dict | None) -> dict | None:
+    """Abonenin kopyasında kalan düğmeler: bağlantı (📲 WhatsApp) ve kişinin kendi oyu (fb:<oy>:<ilan>; bot_poll her sohbetin oyunu ayrı
+    kaydeder). Sistemi değiştiren düğme (abone onayı sub:, kaynak src:, keşif disc:, model sessize alma mute:, aylık denetim fb:audit_*:
+    "❌ Yanlış" ilanı herkesin emsalinden çıkarır) yalnız sahibin kopyasında kalır; bot_poll onları zaten yalnız sahipten kabul eder.
+    Bilinmeyen tür de düşer: yeni bir yönetim düğmesi kendiliğinden aboneye gitmesin. Düğme kalmazsa None."""
+    def keep(b: dict) -> bool:
+        data = str(b.get("callback_data") or "")
+        return bool(b.get("url")) or (data.startswith("fb:") and not data.startswith("fb:audit_"))
+
+    rows = [[b for b in row if keep(b)] for row in (markup or {}).get("inline_keyboard") or []]
+    rows = [row for row in rows if row]
+    return {"inline_keyboard": rows} if rows else None
+
+
+def share_with_subscribers(repo: Repository, token: str, owner, text: str, kind: str, *, api_call=None, **extra) -> int:
+    """Sahibe GİTMİŞ mesajın aynısını onaylı abonelere yollar (sahip satırı ve sahibin sohbeti atlanır: ona zaten gitti; `OWNER_ONLY_KINDS`
+    türü kimseye); dönen: ulaşan abone sayısı. Metin ve alanlar (gece sessizliği, önizleme) sahibinkiyle aynı; yalnız sistemi değiştiren
+    düğmeler düşer (`subscriber_markup`). Tekrar sınırı çağıranındır ve mesaj başınadır, sohbet başına değil: tekrarlar abone sayısıyla
+    çoğalmaz. Bir abonenin hatası öbürlerini durdurmaz; botu engelleyen (403) abone durdurulur (send_to_subscribers gibi). Hiçbir hata
+    yukarı fırlamaz: sahibin mesajı zaten gitti. `api_call`: çağıranın Telegram işlevi (health kendi `api`sini verir); yoksa bu modülünki."""
+    if owner_only(kind):
+        return 0
+    send = api_call or api
+    try:
+        subs = repo.approved_subscribers()
+    except Exception as e:  # abone listesi okunamadı: sahibin mesajı gitti, tur bozulmasın
+        print(f"abonelere paylaşılamadı: {type(e).__name__}")
+        return 0
+    if "reply_markup" in extra:
+        markup = subscriber_markup(extra.pop("reply_markup"))
+        if markup:
+            extra["reply_markup"] = markup
+    n = 0
+    for sub in subs:
+        chat = str(sub["chat_id"])
+        if sub.get("is_owner") or chat == str(owner):
+            continue
+        try:
+            try:
+                send(token, "sendMessage", chat_id=chat, text=text, **extra)
+                n += 1
+            except TelegramError as e:
+                print(f"paylaşım gönderilemedi ({mask_chat(chat)}): {e.status} {e.description}")
+                if e.status == 403:  # kullanıcı botu engellemiş: bir daha denenmesin
+                    repo.conn.execute("UPDATE subscribers SET status='durduruldu' WHERE chat_id=%s", (sub["chat_id"],))
+        except Exception as e:  # beklenmedik hata (veritabanı...) de öbür abonelere gitmeyi durdurmasın
+            print(f"paylaşım gönderilemedi ({mask_chat(chat)}): {type(e).__name__}")
+    return n
+
+
+def send_to_all(repo: Repository, token: str, owner, text: str, kind: str, **extra) -> dict:
+    """Sahibe gönderir, gittiyse aynısını onaylı abonelere (`share_with_subscribers`; sahip kararı 22.10.2026). Sahibe gönderim hatası eskisi
+    gibi yukarı fırlar, abonelere de gitmez. Tekrar sınırını kendi tutan yollar içindir (av, fotoğrafta fiyat kartı, aylık denetim, keşif,
+    kesinti uyarısı); health.notify_owner aynı paylaşımı kendi tekrar sınırıyla yapar. Dönen: sahibin mesajının Telegram cevabı."""
+    res = api(token, "sendMessage", chat_id=owner, text=text, **extra)
+    share_with_subscribers(repo, token, owner, text, kind, **extra)
+    return res
 
 
 def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes: dict | None = None,

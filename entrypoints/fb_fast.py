@@ -19,7 +19,7 @@ from application import ask_price, hunt, social_import
 from application.dedupe import mark_duplicates
 from application.evaluate import LazyBook, evaluate_new, load_book
 from application.health import notify_owner
-from application.notify import api, quiet_extra
+from application.notify import quiet_extra, send_to_all
 from application.settings_store import load_settings
 from domain.kktc_time import to_kktc
 from entrypoints import cron_evaluate
@@ -89,11 +89,11 @@ def run_round(repo, devir_dir, token: str, owner: str, wait=wait_lock, log=print
         evaluated = evaluate_new(repo, settings, book=book, since=since, platform=PLATFORM)
         strong, sent, est_sent = cron_evaluate.deliver(repo, token, owner, settings, evaluated, book, platform=PLATFORM)
 
-        def send(text):
-            return api(token, "sendMessage", chat_id=owner, text=text)
+        def send(kind):  # sahibe, sonra onaylı abonelere (sahip kararı 22.10.2026: notify.send_to_all)
+            return lambda text: send_to_all(repo, token, owner, text, kind)
 
-        cards = _side("fotoğrafta fiyat", lambda: ask_price.run(repo, send, settings, since=since))
-        hunts = _side("av", lambda: hunt.run(repo, owner, send, settings))
+        cards = _side("fotoğrafta fiyat", lambda: ask_price.run(repo, send(ask_price.KIND), settings, since=since))
+        hunts = _side("av", lambda: hunt.run(repo, owner, send(hunt.KIND), settings))
     finally:
         repo.release_lock(cron_evaluate.LOCK, ev_token)
     log(f"hızlı şerit: yeni={rep.new_listings} kopya={marked} değerlendirilen={len(evaluated)} güçlü={strong} bildirilen={sent} "

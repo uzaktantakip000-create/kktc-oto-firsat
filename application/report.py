@@ -346,7 +346,9 @@ def send_weekly_report(repo: Repository, recheck=None, now: datetime | None = No
     now = now or datetime.now(timezone.utc)
     shared = _shared(repo, recheck or recheck_before_send, now)
     text, keyboard = _compose(repo, now, shared, owner_chat, True)
-    if not notify_owner(repo, REPORT_KEY, text, repeat_hours=REPEAT_HOURS, max_chars=MAX_UNITS, **_extra(keyboard)):
+    # share=False: sahibin raporunda kendi oy listesi var, abonelere aynen gitmez; rapor yine herkese gider: her abone aşağıda aynı raporun
+    # kendi oy listeli sürümünü alır (08.10.2026'dan beri; spec §24.18, §24.35)
+    if not notify_owner(repo, REPORT_KEY, text, repeat_hours=REPEAT_HOURS, max_chars=MAX_UNITS, share=False, **_extra(keyboard)):
         return False
     for sub in repo.approved_subscribers():
         chat = str(sub["chat_id"])
