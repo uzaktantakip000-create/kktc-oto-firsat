@@ -49,7 +49,8 @@ def listing_data(post: RawGroupPost, source: dict) -> dict | None:
         "brand": p.brand, "model": p.model, "year": p.year, "km": p.km, "fuel": p.fuel,
         "transmission": p.transmission, "steering": p.steering, "location": p.location,
         "price_raw": p.price_raw, "price_amount": p.price_amount, "currency": p.currency,
-        "currency_guess": False, "price_gbp": round(p.price_amount * gbp_rate(p.currency), 2),
+        # birim tahmini yalnız Facebook kutusu "TRY…" 50.000 altıysa (STG okunur; domain.freetext_parser._token_price, 21.10.2026)
+        "currency_guess": p.currency_guess, "price_gbp": round(p.price_amount * gbp_rate(p.currency), 2),
         "seller_phone": p.phone, "negotiable": p.negotiable, "extraction_by": "parser_serbest",
     }
 

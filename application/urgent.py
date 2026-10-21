@@ -25,6 +25,7 @@ from application.notify import is_fresh
 from domain.data_gate import FIELD_PRICE
 from domain.decision import CONFUSABLE_CURRENCIES
 from domain.kktc_time import to_kktc
+from domain.price import implausible_amount
 from domain.profit import Tier, buy_ceiling
 from domain.red_flags import MOTIVATED
 from domain.settings import Settings
@@ -63,6 +64,8 @@ def candidates(evaluated: list, s: Settings, now: datetime) -> list:
             continue
         if l.get("seller_type") == "galeri" or l.get("shadow") or l.get("duplicate_of") or l.get("currency_guess"):
             continue  # para birimi tahminse (Facebook €: STG mi TL mi bilinmiyor) "ucuz" hesabı güvenilmez
+        if implausible_amount(l.get("price_amount"), l.get("currency")):
+            continue  # yer tutucu (1.234.567 TL) ya da 50.000 TL altı tutar araç fiyatı değil (domain.price, 21.10.2026)
         if (l.get("seller_phone") and l["seller_phone"] in blocked_phones) or l.get("brand_norm") in blocked_brands:
             continue
         price = l.get("price_gbp")

@@ -18,6 +18,7 @@ from domain.caption_parser import is_sold_post, sold_ilan_no
 from domain.data_gate import DATE_SEEN, DATE_UNSURE, FIELD_PRICE  # fiyat yalnız FB satış kutusunda (ilk hafta en fazla 🟡); tarih belirsiz (anlık
 # bildirim yok); paylaşım saati okunamadı (mesaj "paylaşıldı" demez)
 from domain.freetext_parser import body_price, diagnose
+from domain.price import TL_CAR_MIN
 from infrastructure.collectors.facebook_groups import RawGroupPost
 from infrastructure.collectors.instagram_apify import RawPost
 from infrastructure.fx.frankfurter import gbp_rate
@@ -71,7 +72,9 @@ def raw_group_post(post: SocialPost, source: SocialSource) -> RawGroupPost:
                         group_url=source.url, image_url=post.image_url)
 
 
-FB_EURO_TL_FROM = 50_000  # Facebook'ta "€" ile görünen tutar bundan büyükse TL'dir (KKTC'de araç TL ile 100.000+ yazılır), küçükse STG
+FB_EURO_TL_FROM = TL_CAR_MIN  # Facebook'ta "€" ile görünen tutar bundan büyükse TL'dir (KKTC'de araç TL ile 100.000+ yazılır), küçükse STG
+# (50.000; kutudaki "TRY…" için aynı sınır ayrıştırıcıda: domain.freetext_parser._token_price). Yer tutucu € tutarı (€1.111.111, €12.345)
+# ayrıştırıcıda zaten fiyat sayılmaz (domain.price.placeholder_amount): gönderi fiyatsız ilan olur, buraya gelmez.
 
 
 def fb_euro(data: dict) -> None:
@@ -86,8 +89,10 @@ def fb_euro(data: dict) -> None:
 
 def price_only_in_field(post: SocialPost, data: dict) -> bool:
     """Okunan fiyat gövdenin kendi fiyatı değil (gövdede fiyat yok ya da farklı): fiyat satış kutusundan geldi. Satış kutusunda fiyat
-    zorunlu olduğundan yer tutucu ("£1") ya da dikkat çekmek için düşük yazılmış olabilir: önce ölçülür, 🟢 sonra açılır (13.10.2026)."""
-    if not post.extra_text or data.get("price_amount") is None or data.get("extraction_by") == "llm":
+    zorunlu olduğundan yer tutucu ("£1") ya da dikkat çekmek için düşük yazılmış olabilir: önce ölçülür, 🟢 sonra açılır (13.10.2026).
+    "ek_metin" yoksa da bakılır (21.10.2026): okuyucu kutu satırını gövdeye de yazabiliyor ("+6⏎TRY100⏎…"); body_price kutu yazımlı
+    tutarı ("TRY…") saymaz. Kutu satırı olmayan gövdede sonuç değişmez (aynı metin, aynı kural)."""
+    if data.get("price_amount") is None or data.get("extraction_by") == "llm":
         return False
     return body_price(post.text) != (data["price_amount"], data["currency"])
 

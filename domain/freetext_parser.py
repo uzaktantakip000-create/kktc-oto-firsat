@@ -6,7 +6,8 @@ from datetime import date
 from domain.caption_parser import ParsedCaption, normalize_phone, tr_lower
 from domain.model_year import max_model_year
 from domain.normalize import fold
-from domain.price import join_split_thousands, price_tokens
+from domain.price import (FB_BOX_TRY_PLACEHOLDER_MAX, TL_CAR_MIN, PriceToken, join_split_thousands, placeholder_amount,
+                          price_tokens)
 
 _BRANDS = [  # (aranan kelime, marka)
     "toyota", "honda", "nissan", "mazda", "suzuki", "hyundai", "kia", "ford", "opel", "vauxhall", "renault", "peugeot",
@@ -77,41 +78,79 @@ def _clean_lines(text: str) -> list[str]:
     return [ln.strip() for ln in text.splitlines() if ln.strip()]
 
 
-def _price(lines: list[str]) -> tuple[float, str, str] | None:
-    """Tek, açık para birimli fiyat. Birden çok farklı tutar varsa 'fiyat/nakit' ipuçlu satırdaki tek tutar; yoksa belirsiz -> None.
-    Para birimi sayının HEMEN yanında olmalı (price_tokens): pencerede başka sayı varsa birim ona verilmez ('2014 £6500')."""
-    found: list[tuple[float, str, str, bool]] = []
+_PLACEHOLDER = "yer_tutucu"  # _token_price: tutar aday sayılır (başka tutarla belirsizlik yaratır) ama fiyat olarak SEÇİLMEZ
+
+
+def _token_price(t: PriceToken) -> tuple[str, bool] | None:
+    """Aday tutarın (para birimi, tahmin mi); aday değilse None (21.10.2026, domain.price):
+    - yer tutucu tutar (placeholder_amount: 11.111, 1.111.111, 123.456 …) ve kutuda TRY ≤1.000 hiçbir birimde fiyat değil, ama ADAY kalır
+      (birim _PLACEHOLDER): eskiden olduğu gibi yanındaki ipuçsuz tutarı belirsiz yapar. Düşürülseydi gövdedeki başka bir rakam tek aday
+      kalıp fiyat olurdu ("1500stg ye yakın extralıdır" + kutu €111,111: 2011 Juke £1.500 olurdu; 14 günde 3 ilan);
+    - Facebook satış kutusu "TRY…" (FB_BOX_TRY): 1.000–50.000 STG rakamıdır, STG TAHMİN okunur (€ kuralının aynası, social_ingest.fb_euro:
+      en fazla 🟡, emsal olmaz, ⚡ ve taze TL yolu yok); TL_CAR_MIN ve üstü TL;
+    - kutu dışı TL tutarı TL_CAR_MIN altındaysa araç fiyatı değil (kapora, taksit, masraf, parça): aday olmaz, varsa başka tutar alınır."""
+    if not t.currency:
+        return None
+    if placeholder_amount(t.amount) or (t.currency == "TRY" and t.box and t.amount <= FB_BOX_TRY_PLACEHOLDER_MAX):
+        return _PLACEHOLDER, False
+    if t.currency == "TRY" and t.box:
+        return ("GBP", True) if t.amount < TL_CAR_MIN else ("TRY", False)
+    if t.currency == "TRY" and t.amount < TL_CAR_MIN:
+        return None
+    return t.currency, False
+
+
+def _price(lines: list[str], skip_box: bool = False) -> tuple[float, str, str, bool] | None:
+    """Tek, açık para birimli fiyat: (tutar, para birimi, satır, birim tahmin mi). Birden çok farklı tutar varsa 'fiyat/nakit' ipuçlu
+    satırdaki tek tutar; yoksa belirsiz -> None. Para birimi sayının HEMEN yanında olmalı (price_tokens): pencerede başka sayı varsa birim
+    ona verilmez ('2014 £6500'). Tutar ve birim _token_price'tan geçer. Aynı tutar hem kutudan (STG tahmini) hem gövdeden açık birimle
+    geliyorsa ("5.200 £" + kutu TRY5,200) birim tahmin değildir. Metinde TL_CAR_MIN altı TL olarak yazılan rakam başka yerde de (±%1) aday
+    olmaz: "Fiyat: 40.000 TL" + kutu "€39,999" ya da "30.000₺" + "€30,000" kutudaki rakamın da TL olduğunu söyler (€ kuralıyla £39.999'luk
+    2005 Peugeot olurdu; 14 günde 5 ilan). skip_box: kutu tutarları ("TRY5,200") aday olmaz (body_price)."""
+    found: list[tuple[float, str, str, bool, bool]] = []
+    small_tl: list[float] = []
     for ln in lines:
         if re.search(r"tramer|boya", ln, re.I) and not _PRICE_HINT.search(ln):
             continue
         scrubbed = join_split_thousands(_PHONE.sub(" ", ln))
         # "5000£ taksitli" gibi aynı satırda birden çok tutar olabilir: her sayı ayrı aday
         for t in price_tokens(scrubbed):
-            if not t.currency:
+            if skip_box and t.box:
+                continue
+            read = _token_price(t)
+            if read is None:
+                if t.currency == "TRY" and not t.box and 300 <= t.amount < TL_CAR_MIN and not placeholder_amount(t.amount):
+                    small_tl.append(t.amount)
                 continue
             before, after = scrubbed[max(0, t.start - 14): t.start], scrubbed[t.end: t.end + 14]
             hint = bool(_PRICE_HINT.search(before))
             if (_NOT_PRICE_LINE.search(before) or _NOT_PRICE_LINE.search(after)) and not hint:
                 continue  # "taksitli 5000£", "peşinat 3000£", "tramer 32.000 TL"
             if 300 <= t.amount <= 2_000_000:
-                found.append((t.amount, t.currency, ln, hint or bool(_PRICE_HINT.search(ln)) and not _NOT_PRICE_LINE.search(ln)))
+                found.append((t.amount, read[0], ln, hint or bool(_PRICE_HINT.search(ln)) and not _NOT_PRICE_LINE.search(ln), read[1]))
+    found = [f for f in found if not any(abs(f[0] - s) <= 0.01 * s for s in small_tl)]
     if not found:
         return None
-    amounts = {(a, c) for a, c, _, _ in found}
+    amounts = {(a, c) for a, c, _, _, _ in found}
     if len(amounts) == 1:
-        a, c, ln, _ = found[0]
-        return a, c, ln
-    hinted = {(a, c) for a, c, _, h in found if h}
-    if len(hinted) == 1:
+        a, c = next(iter(amounts))
+    else:
+        hinted = {(a, c) for a, c, _, h, _ in found if h}
+        if len(hinted) != 1:
+            return None
         a, c = next(iter(hinted))
-        return a, c, next(ln for x, y, ln, _ in found if (x, y) == (a, c))
-    return None
+    if c == _PLACEHOLDER:
+        return None  # seçilen tutar yer tutucu: fiyat yok
+    same = [(ln, g) for x, y, ln, _, g in found if (x, y) == (a, c)]
+    return a, c, same[0][0], all(g for _, g in same)
 
 
 def body_price(text: str) -> tuple[float, str] | None:
     """Metnin kendi fiyatı (tutar, para birimi), parse_freetext ile aynı kural (telefon atılır, tek/ipuçlu tutar). Facebook satış kutusu
-    satırlarının (devir "ek_metin") eklenmediği gövde için: fiyat yalnız kutudan mı geldi? (application/social_ingest, 13.10.2026)"""
-    price = _price(_clean_lines(_PHONE.sub(" ", text or "")))
+    satırlarının (devir "ek_metin") eklenmediği gövde için: fiyat yalnız kutudan mı geldi? (application/social_ingest, 13.10.2026)
+    Kutu yazımlı tutar ("TRY5,200") gövdede de olsa gövdenin fiyatı sayılmaz (21.10.2026): okuyucu kutu satırını 856 satırda gövdeye
+    yazdı ("+6⏎TRY100⏎…"); fiyat yalnız oradan geliyorsa da "fiyat_alani"dır."""
+    price = _price(_clean_lines(_PHONE.sub(" ", text or "")), skip_box=True)
     return (price[0], price[1]) if price else None
 
 
@@ -168,6 +207,7 @@ def parse_freetext(text: str, default_steering: str | None = None, max_year: int
     years = [int(y) for y in _YEAR.findall(no_phone) if int(y) <= max_year]
     if not years:
         return None
+    guess = False
     if known_price:
         amount, currency = known_price
         price_line = f"{amount:g} {currency}"
@@ -175,7 +215,7 @@ def parse_freetext(text: str, default_steering: str | None = None, max_year: int
         price = _price(_clean_lines(no_phone))
         if price is None and not allow_no_price:
             return None
-        amount, currency, price_line = price or (None, None, None)
+        amount, currency, price_line, guess = price or (None, None, None, False)  # guess: Facebook kutusu TRY<50.000 = STG tahmini
     if not known_price and amount in years and any(y != amount for y in years):
         years = [y for y in years if y != amount]  # "Fiyat 2000 STG, 2008 model": 2000 fiyattır, yıl değil
 
@@ -230,7 +270,7 @@ def parse_freetext(text: str, default_steering: str | None = None, max_year: int
     out.location = next((c.title() for c in _CITIES if c in low), None)
     out.phone = phones[0] if phones else None
     out.price_raw = price_line[:80] if price_line else None
-    out.price_amount, out.currency, out.currency_guess = amount, currency, False
+    out.price_amount, out.currency, out.currency_guess = amount, currency, guess
     out.negotiable = bool(re.search(r"pazarl[ıi]k", low))
     out.swap = True if re.search(r"takas\s+(olur|var|yap[ıi]l[ıi]r|kabul)|takasa\s+uygun", low) else None
     return out
