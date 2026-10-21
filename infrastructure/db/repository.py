@@ -1059,9 +1059,11 @@ class Repository:
                     limit: int = 5) -> list[dict]:
         """Yakın kaçanlar (yalnız bilgi): son 'days' günde ilk görülen ya da fiyatı değişen aktif ilanlardan EN SON değerlendirmesi bu kural
         sürümüyle 🟡 ('pazarlik') ve en az 'min_comparables' emsalli olanlar; kopya/karantina değil, kaynağı 'yesil', hiç 🟢/🟠 gitmemiş.
-        Nedenlerinden biri 'skip_reasons' içinde olan (ör. yazım hatası şüphesi, karışık model) atlanır. En iyi kâr önce."""
+        Nedenlerinden biri 'skip_reasons' içinde olan (ör. yazım hatası şüphesi, karışık model) atlanır. En iyi kâr önce.
+        brand_norm/model_norm/seller_phone: raporun "aynı araç bir kez" süzgeci için (application/report._one_per_car; telefon mesaja yazılmaz)."""
         return self.conn.execute(
             """SELECT l.id, l.url, l.year, l.brand, l.model, l.price_gbp::float8 AS price_gbp, l.price_amount::float8 AS price_amount, l.currency,
+                      l.brand_norm, l.model_norm, l.seller_phone,
                       s.name AS source_name, e.comparables_n, e.profit_pct::float8 AS profit_pct, e.nedenler,
                       e.exit_price_gbp::float8 AS exit_price_gbp
                FROM (SELECT DISTINCT ON (listing_id) * FROM evaluations ORDER BY listing_id, evaluated_at DESC) e
