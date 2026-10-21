@@ -24,7 +24,7 @@ import json
 import re
 from datetime import datetime, timedelta, timezone
 
-from application.notify import is_fresh, owner_only
+from application.notify import is_fresh, km_text, owner_only
 from domain.data_gate import FIELD_PRICE
 from domain.decision import CONFUSABLE_CURRENCIES
 from domain.kktc_time import to_kktc
@@ -116,7 +116,7 @@ def message(ev, s: Settings, now: datetime) -> str:
     price = float(l["price_gbp"])
     below = round((1 - price / m.median_gbp) * 100)
     name = " ".join(x for x in (str(l.get("year") or ""), l.get("brand_norm") or "", l.get("model") or l.get("model_norm") or "") if x)
-    bits = [name, f"{l['km']:,} km".replace(",", ".") if l.get("km") else "km yazmıyor", _gbp(price)]
+    bits = [name, km_text(l, "km yazmıyor"), _gbp(price)]
     if l.get("currency") and l["currency"] != "GBP" and l.get("price_amount"):
         bits[-1] += f" (ilanda {l['price_amount']:,.0f} {l['currency']})".replace(",", ".")
     where = " · ".join(x for x in (l.get("source_name"), l.get("location")) if x)

@@ -138,3 +138,13 @@ def test_collect_marks_only_final_outcomes(monkeypatch):
     stats = cm.collect_mezunum(repo, {"id": "m", "name": "Mezunum"})
     assert repo.upserts == {"b": ["arac_degil"], "c": ["okunamadi"]}  # geçici olan ('a') hiç işaretlenmedi
     assert stats.unread == 1 and stats.not_car == 2
+
+
+def test_masked_km_marks_the_listing_as_a_lower_bound(monkeypatch):
+    """22.10.2026: açıklamada "192***KM" -> km 192.000 + "km_alt_sinir" işareti (uydurma metin)."""
+    from application import collect_mezunum as cm
+    monkeypatch.setattr(cm, "gbp_rate", lambda c: 1.0)
+    data, by_llm, status = cm.read_listing({**ODD, "title": "Suzuki Swift 2008", "description": "192***KM temiz"})
+    assert status == "ok" and not by_llm and data["km"] == 192000 and data["urgency_signals"] == ["km_alt_sinir"]
+    data, _, _ = cm.read_listing({**ODD, "title": "Suzuki Swift 2008", "description": "192.000 KM temiz"})
+    assert data["km"] == 192000 and "urgency_signals" not in data

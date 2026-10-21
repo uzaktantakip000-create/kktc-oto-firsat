@@ -357,3 +357,9 @@ def test_flash_shows_up_in_the_history_command_with_its_own_mark():
     row = dict(tier="acil", sent_at=NOW, year=2021, brand="Suzuki", model="Swift", price_gbp=7770.0, median_gbp=10_500.0, feedback=None,
                url=None)
     assert history_cmd._line(row).startswith("⚡ ") and history_cmd._line(row | {"tier": "guclu"}).startswith("🟢 ")
+
+
+def test_masked_km_is_shown_as_a_lower_bound_in_the_urgent_message():
+    """22.10.2026: ⚡ mesajında da gizli haneli km alt sınırdır ("192.000+ km")."""
+    assert "192.000+ km" in urgent.message(ev(km=192000, urgency_signals=["km_alt_sinir"]), Settings(), NOW)
+    assert "192.000 km" in urgent.message(ev(km=192000), Settings(), NOW)

@@ -4,6 +4,7 @@ import re
 from datetime import date
 
 from domain.caption_parser import ParsedCaption, normalize_phone, tr_lower
+from domain.data_gate import KM_LOWER
 from domain.model_year import max_model_year
 from domain.normalize import fold
 from domain.price import (FB_BOX_TRY_PLACEHOLDER_MAX, TL_CAR_MIN, PriceToken, join_split_thousands, placeholder_amount,
@@ -46,6 +47,15 @@ _KM_SERVICE = re.compile(r"bak[ıi]m(?!l[ıi])|servis|ya[gğ][ıi]?(?![a-zçğı
 _KM_PART = re.compile(r"tak[ıi]l|s[öo]k[üu]l|getir|al[ıi]nm[ıi][sş]", re.I)  # parça/motor takıldı, araç ... km'de alınmış
 _KM_SERVICE_AFTER = re.compile(r"(?:['’][a-zçğıöşü]+)?[^\S\n]*(?:[dt][ae][^\S\n]+bir\b|bir\b|[öo]nce\b|sonra\b|kala\b|kadar\b)", re.I)
 _KM_SERVICE_MAX = 20_000
+# Gizli haneli km (22.10.2026): Facebook'ta km çoğu zaman son haneleri gizlenerek yazılır ("192***KM", "192.***km", "85xxx km", "192 *** km";
+# 30 günde 78 ilan / 40 araç). Eskiden km bilinmiyor okunuyordu (21.10 ⚡ 2008 Swift km'siz değerlendi). Gizli haneler 0 sayılır: değer km'nin
+# ALT SINIRIdır (192*** -> 192.000, 85xxx -> 85.000; ayraçtan sonra tam üç gizli hane: 192.*** -> 192.000) ve ilan KM_LOWER işareti alır.
+# Yalnız km biriminin hemen önünde ya da km etiketinin hemen arkasında okunur; fiyat ve yıl maskesiz metinden okunur (bu yol onlara dokunmaz).
+# Önünde rakam/harf olan parça (telefon "0533 xxx", yıl "2008") ve arkasında ikinci gizli grup olan dizi ("533 xxx xx xx") km sayılmaz.
+_KM_MASK = r"(?<![\w.,*])(?:(?P<th>\d{1,3})[^\S\n]?[.,][^\S\n]?[*x]{3}|(?P<head>\d{1,3})[^\S\n]?(?P<mask>[*x]{2,4}))(?![*x\d])"
+_KM_MASK_UNIT = re.compile(_KM_MASK + r"(?=[^\S\n]*km\b)", re.I)
+_KM_MASK_LABEL = re.compile(r"(?P<label>\b(?:km|kilometre(?:si)?|kilometer|mileage)(?:[^\S\n]*[:\-]\s*|[^\S\n]*))" + _KM_MASK
+                            + r"(?![^\S\n]*[*x]{2})", re.I)
 _CC = re.compile(r"\b(\d{3,4})\s*cc\b", re.I)
 _MODEL_STOP = {"il", "ilk", "ilan", "sahibinden", "galeriden", "yeni", "temiz", "hasarsiz", "hatasiz", "boyasiz", "tek",
                "motor", "arac", "otomobil", "arabasi", "araba", "marka", "model", "aracimiz", "gunluk", "satilik", "benz"}
@@ -188,6 +198,26 @@ def _km(text: str) -> int | None:
     return _km_value(m.group(1))
 
 
+def _unmask(m: re.Match) -> str:
+    if m.group("th"):
+        return str(int(m.group("th")) * 1000)
+    return str(int(m.group("head")) * 10 ** len(m.group("mask")))
+
+
+def _km_read(text: str) -> tuple[int | None, bool]:
+    """(km, alt sınır mı); text telefonu atılmış metin. Gizli haneler 0 yazılıp aynı km kuralı (_km: bakım cümlesi, yıl, mil, aralık) yeniden
+    çalışır; okunan km gizli yazımdan geldiyse (maskesiz okumadan farklıysa) alt sınırdır. Gizli yazım yoksa ya da okunamıyorsa sonuç maskesiz
+    okumadır. Gizli haneler binlik ayracı birleştirmesinden ÖNCE açılır: "4x4 120xxx km" birleşince "4x4.120xxx" olurdu."""
+    plain = _km(join_split_thousands(text))  # "120 000 km"
+    unmasked = _KM_MASK_LABEL.sub(lambda m: m.group("label") + _unmask(m), _KM_MASK_UNIT.sub(_unmask, text))
+    if unmasked == text:
+        return plain, False
+    km = _km(join_split_thousands(unmasked))
+    if km is None or km == plain:
+        return plain, False
+    return km, True
+
+
 def parse_freetext(text: str, default_steering: str | None = None, max_year: int | None = None,
                    known_price: tuple[float, str] | None = None, today: date | None = None,
                    allow_no_price: bool = False) -> ParsedCaption | None:
@@ -247,7 +277,9 @@ def parse_freetext(text: str, default_steering: str | None = None, max_year: int
     brand_line = no_phone[line_start: line_end if line_end != -1 else None]
     near = [int(y) for y in _YEAR.findall(brand_line) if int(y) <= max_year and int(y) in years]
     out.year = near[0] if near else years[0]  # önce marka satırındaki yıl ("2021 HONDA FIT"), yoksa metindeki ilk yıl
-    out.km = _km(join_split_thousands(no_phone))  # "120 000 km"
+    out.km, km_lower = _km_read(no_phone)  # "120 000 km"; "192***KM" -> 192.000 (alt sınır)
+    if km_lower:
+        out.notes.append(KM_LOWER)
     low = tr_lower(no_phone)
     if re.search(r"otomatik|automatic|\bauto\b|dsg|tiptronic", low):
         out.transmission = "otomatik"

@@ -6,7 +6,7 @@ import httpx
 
 from application.evaluate import Evaluated, confidence_label
 from domain.comparables import Market, effective_km
-from domain.data_gate import DATE_SEEN, DATE_UNSURE, KM_UNKNOWN_WARNING
+from domain.data_gate import DATE_SEEN, DATE_UNSURE, KM_LOWER, KM_UNKNOWN_WARNING
 from domain.kktc_time import kktc_hour
 from domain.photo_date import kktcarabam_photo_time
 from domain.profit import Tier
@@ -189,6 +189,14 @@ def _dikkat(listing: dict, warnings: list[str]) -> list[str]:
     return [KM_STEERING_UNKNOWN_WARNING if w == KM_UNKNOWN_WARNING else w for w in warnings]
 
 
+def km_text(listing: dict, missing: str = "km yok") -> str:
+    """Mesajdaki km ("192.000 km"); gizli haneli yazılmış km (`KM_LOWER`: "192***KM") alt sınırdır: "192.000+ km"."""
+    if not listing.get("km"):
+        return missing
+    plus = "+" if KM_LOWER in (listing.get("urgency_signals") or []) else ""
+    return f"{listing['km']:,}{plus} km".replace(",", ".")
+
+
 def format_alert(ev: Evaluated, note: dict | None = None, twins: list[dict] | None = None) -> str:
     """Sahibin kararı (03.10.2026): her mesaj = araç, fiyat, piyasa ortası + emsal sayısı, tek satır "neden", link (+ 2 düğme). Güven etiketi, 🆕, telefon
     satırı (WhatsApp düğmesi var), emsal listesi ve gümrük hatırlatması kalktı. KALANLAR güvenlik/veri uyarısıdır (km şüpheli, para birimi tahmin,
@@ -196,7 +204,7 @@ def format_alert(ev: Evaluated, note: dict | None = None, twins: list[dict] | No
     l, m, p = ev.listing, ev.market, ev.profit
     est = p.tier is Tier.ESTIMATED
     price = float(l["price_gbp"])
-    km = f"{l['km']:,} km".replace(",", ".") if l["km"] else "km yok"
+    km = km_text(l)
     steering = " · SOL DİREKSİYON" if l.get("steering") == "LHD" else ""
     if est:  # değer tablosu eğrisinden tahmin: çıkış fiyatı alt sınırdan (temkinli), emsal sayısı yerine eğri ilan sayısı
         head = EST_HEAD

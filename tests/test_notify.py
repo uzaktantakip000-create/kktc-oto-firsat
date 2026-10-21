@@ -326,3 +326,13 @@ def test_facebook_alert_names_the_group_and_says_membership_is_needed():
     site = ev(2)
     site.listing.update(platform="web", url="https://kktcar.com/listing/x")
     assert "👥" not in notify.format_alert(site) and "👥" not in notify.format_alert(ev(3))  # site ve platformu bilinmeyen: satır yok
+
+
+def test_masked_km_is_shown_as_a_lower_bound():
+    """22.10.2026: gizli haneli km ("192***KM", işaret "km_alt_sinir") mesajda "192.000+ km"; işaretsiz km ve km'siz ilan değişmez."""
+    e = ev(1)
+    e.listing.update(km=192000, urgency_signals=["km_alt_sinir"])
+    assert " · 192.000+ km · " in notify.format_alert(e)
+    e.listing["urgency_signals"] = None
+    assert " · 192.000 km · " in notify.format_alert(e)
+    assert notify.km_text({"km": None, "urgency_signals": ["km_alt_sinir"]}) == "km yok"

@@ -173,3 +173,47 @@ def test_kilometre_and_mileage_labels(text, km):
 def test_one_line_facebook_posts_and_trade_in_are_not_mistaken_for_non_car_ads(text, why):
     """11.10.2026: FB gönderisi çoğu zaman tek satır; sondaki 'jantlar' ya da 'takas alınır' ilanı 'araç değil' yapmamalı."""
     assert diagnose(text) == why
+
+
+# --- Gizli haneli km (22.10.2026): "192***KM" km'nin ALT SINIRIdır; eskiden km bilinmiyor okunuyordu (21.10 ⚡ 2008 Swift) ---
+# Metinler uydurmadır (gerçek ilan/telefon yok).
+@pytest.mark.parametrize("text,km", [
+    ("Suzuki Swift 2008 192***KM 2.300 stg", 192000),
+    ("Suzuki Swift 2008\n192.***km\n2.300 stg", 192000),
+    ("Suzuki Swift 2008\n85xxx km\n2.300 stg", 85000),
+    ("Suzuki Swift 2008 192 *** km 2.300 stg", 192000),
+    ("Suzuki Swift 2008 192 XXX KM 2.300 stg", 192000),
+    ("Suzuki Swift 2008\nKM: 192.***\n2.300 stg", 192000),  # etiketten sonra
+    ("Suzuki Swift 2008 Kilometre: 85xxx Fiyat 2.300 stg", 85000),
+    ("Peugeot 308 2012 120 *** km 4.250 STG", 120000),  # önündeki model numarası (308) katılmaz
+    ("Suzuki Jimny 2008 4x4 120xxx km 2.300 stg", 120000),  # binlik birleştirme "4x4 120" yapmaz
+    ("Suzuki Swift 2008 192***KM tel 0533 000 00 00 2.300 stg", 192000),
+])
+def test_masked_km_is_read_as_its_lower_bound(text, km):
+    p = parse_freetext(text)
+    assert (p.km, p.notes) == (km, ["km_alt_sinir"])
+    assert p.year in (2008, 2012) and p.price_amount in (2300, 4250) and p.currency == "GBP"  # fiyat ve yıl aynen
+
+
+@pytest.mark.parametrize("text,km", [
+    ("Suzuki Swift 2008 model\nKm: 533 xxx xx xx\n2.300 stg", None),  # gizli telefon km etiketinin arkasında: km değil
+    ("Suzuki Swift 2008 2.300 stg\nTel: 0533 xxx xx xx", None),  # gizli telefon: km birimi/etiketi yok
+    ("Suzuki Swift 2008 *** km 2.300 stg", None),  # yıl gizli hanelerin önünde: 2.008.000 ya da 8.000 değil
+    ("Suzuki Swift 2008 xxx km 2.300 stg", None),  # rakam yok
+    ("Suzuki Swift 2008 99xxxx km 2.300 stg", None),  # 990.000 km: aralık dışı, bilinmiyor
+    ("Suzuki Swift 2008 85xxxxx km 2.300 stg", None),  # 5 gizli hane: belirsiz
+    ("Suzuki Swift 2008 192.** km 2.300 stg", None),  # ayraçtan sonra üç gizli hane değil: belirsiz
+    ("Suzuki Swift 2008 85xxx mil 2.300 stg", None),  # mil km'ye çevrilmez
+    ("Suzuki Swift 2008 85xxx km'de motor takıldı 2.300 stg", None),  # parça km'si (yazılı sayıyla aynı kural)
+    ("Suzuki Swift 2008 150.000 km, motoru 85xxx km'de değişti 2.300 stg", 150000),  # ilk ve açık km
+    ("Toyota Vitz 2014 96.000 km 5.500 stg", 96000),  # gizli hane yok: işaret yok
+])
+def test_masked_km_never_misreads_phones_years_or_ranges(text, km):
+    p = parse_freetext(text)
+    assert (p.km, p.notes) == (km, [])
+    assert p.year in (2008, 2014) and p.price_amount in (2300, 5500)
+
+
+def test_masked_price_is_not_unmasked():
+    """Gizli hane açma yalnız km içindir: "2.xxx stg" fiyat sayılmaz (fiyat yok = ilan yok, eskisi gibi)."""
+    assert parse_freetext("Suzuki Swift 2008 85xxx km fiyat 2.xxx stg") is None

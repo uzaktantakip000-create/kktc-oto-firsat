@@ -2,6 +2,7 @@ import time
 from dataclasses import dataclass
 
 from application.llm_reader import LlmReader, listing_fields
+from domain.data_gate import KM_LOWER
 from domain.freetext_parser import parse_freetext
 from infrastructure.collectors import mezunum
 from infrastructure.db.repository import Repository
@@ -37,7 +38,8 @@ def read_listing(detail: dict, reader: LlmReader | None = None) -> tuple[dict | 
         return base | {"brand": p.brand, "model": p.model, "year": p.year, "km": p.km, "fuel": p.fuel, "transmission": p.transmission,
                        "steering": p.steering, "price_raw": p.price_raw, "price_amount": p.price_amount, "currency": p.currency,
                        "price_gbp": round(p.price_amount * gbp_rate(p.currency), 2), "negotiable": p.negotiable,
-                       "extraction_by": "parser_serbest"}, False, "ok"
+                       "extraction_by": "parser_serbest",
+                       **({"urgency_signals": [KM_LOWER]} if KM_LOWER in p.notes else {})}, False, "ok"  # gizli haneli km: alt sınır
     if reader is None:
         return None, False, "retry"  # kuralla okunamadı, yapay zekâ yok: araç olmadığı kanıtlanmadı
     read = reader.read(f"{text}\nFiyat: {detail['price_amount']:g} {detail['currency']}")

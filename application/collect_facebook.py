@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from dataclasses import replace
 
 from application.llm_reader import LlmReader, listing_fields
+from domain.data_gate import KM_LOWER
 from domain.freetext_parser import diagnose, parse_freetext
 from infrastructure.collectors import facebook_groups
 from infrastructure.collectors.apify_run import ApifyRunError
@@ -41,7 +42,7 @@ def listing_data(post: RawGroupPost, source: dict) -> dict | None:
     p = parse_freetext(post.text, default_steering=group_default_steering(source))
     if p is None:
         return None
-    return {
+    data = {
         "url": post.url,
         "posted_at": post.posted_at,
         "raw_text": post.text,
@@ -53,6 +54,9 @@ def listing_data(post: RawGroupPost, source: dict) -> dict | None:
         "currency_guess": p.currency_guess, "price_gbp": round(p.price_amount * gbp_rate(p.currency), 2),
         "seller_phone": p.phone, "negotiable": p.negotiable, "extraction_by": "parser_serbest",
     }
+    if KM_LOWER in p.notes:  # km gizli haneli yazılmış ("192***KM" -> 192.000): kayıttaki km alt sınırdır (domain.freetext_parser)
+        data["urgency_signals"] = [KM_LOWER]
+    return data
 
 
 def priceless_data(post: RawGroupPost, source: dict) -> dict | None:
@@ -66,7 +70,8 @@ def priceless_data(post: RawGroupPost, source: dict) -> dict | None:
         "brand": p.brand, "model": p.model, "year": p.year, "km": p.km, "fuel": p.fuel,
         "transmission": p.transmission, "steering": p.steering, "location": p.location,
         "price_raw": None, "price_amount": None, "currency": None, "currency_guess": False, "price_gbp": None,
-        "seller_phone": p.phone, "negotiable": p.negotiable, "extraction_by": "parser_serbest", "urgency_signals": ["fiyatsiz"],
+        "seller_phone": p.phone, "negotiable": p.negotiable, "extraction_by": "parser_serbest",
+        "urgency_signals": ["fiyatsiz", *([KM_LOWER] if KM_LOWER in p.notes else [])],
     }
 
 
