@@ -1054,3 +1054,21 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
 - **Yapılan:** `openrouter.MODEL` tek sabit (okuyucu, 🟢 doğrulaması, fırsat notu, görsel okuma); ortam değişkenleri (`OPENROUTER_MODEL`, `OPENROUTER_READ_MODEL`) artık modeli değiştirmez: sunucu ve GitHub yedeğinde farklı model kalamaz, GitHub sırlarına dokunulmadı. Her istekte `REASONING` düşük ve `max_tokens` var (okuyucuya 2.000 tavanı eklendi); içerik boş + finish=length → "yanıt kesildi" hatası (sessiz "json yok" değil). Fırsat notu sorusuna ilanın £ karşılığı ve asıl tutarı eklendi: yalnız "185.000 TL" görünce model kuru kendi tahmin edip yanlış (45–50 TL/£) yorum yazıyordu. Fırsat notu artık anahtar varsa her zaman sorulur (eskiden model ortam değişkeni boşsa sorulmazdı; sunucuda doluydu, davranış aynı).
 - **Sınırlar:** ücretsiz modelin günlük istek sınırı OpenRouter hesabına bağlı; 429 geçici sayılır (uyarı yok), okuma sonraki tura kalır. Çağrı başına deftere 0,0005 $ yazılır (yanıt maliyeti 0): günlük 0,40 $ bütçe ~800 çağrı tavanı olur. Görsel okuma şu an kapalı (SOCIAL_FB_PHOTO=0); bu modelin görsel desteği denenmedi.
 - **CLAUDE.md** model satırı sahibin bu kararıyla güncellendi.
+
+### 24.34 13 Facebook grubu dışarıda, /durum düzeltmesi, KibrisArabaAl izin ekibi (21.10.2026; sahip: "bide artık şu KibrisArabaAl sitesi sorunu da çözülsün istediğin kadar meclis kurabilirsin, Alt ajan spawn edebilirsin ama önemli olan bu ve bunun gibi sorunları çözün artık"; /durum'u gönderip "Anlık bu şekilde sebebi nedir? Çalışmayan kısımlar hala mı var?")
+- **Model canlıda doğrulandı (712a9f0, 20.10 22:40 UTC):** Mezunum'da bekleyen 4 ilan okundu (unread 0), 402 uyarısı tekrar etmedi.
+- **Mükerrer:** tam tarama sonrası Facebook kopya bağı 1.975 → 3.815.
+- **SAHİP KARARI (sosyal oturumda 20.10 ~14:45 KKTC "13 grubu çıkar (Önerilen)"; bu oturumda 21.10 AskUserQuestion ile yeniden onaylandı "Evet, çıkar (Önerilen)"):** 13 Facebook grubu `disari`:
+  - 8 yabancı üniversite öğrenci grubu: Lee University, St. George's Grenada, UNC Charlotte, Kent, UTS, SMU, Auchi Poly, Nottingham. Okuyucunun keşfi KKTC dışını da bulmuştu.
+  - 5 grup 7 günde ilan getirmedi ya da yalnız 1–7 getirdi.
+  - Hiçbirinden bildirim çıkmamıştı.
+  - Yedek kktc-backup 20261021-084746; yazma autocommit, yeni bağlantıdan doğrulandı. Açık Facebook kaynağı 37. Geri alma: /kaynaklar.
+- **Birleşik akış (/groups/feed) A/B (sosyal oturum):** kullanılamaz. Akış algoritmik ve zaman sırası yok; 48 grubun yalnız 6'sından ~82 öğe geldi. Grup grup okuma sürüyor.
+- **/durum (b8bbeef):** eski Apify anahtarı (07.10'dan beri emekli) yüzünden Facebook "📴 duraklatıldı / bakmıyorum, alarm da vermiyorum" ve "deneme haftası" görünüyordu; Apify'ın bayat hunisi ("bu ay 365 gönderi") ve harcama satırı da duruyordu.
+  - Artık "SANA HABER VEREN YERLER"de tek Facebook satırı var: grup sayısı, haber veren, denemede olan, 24 saatin yeni ilanı ve sunucuda okuyucunun kendi durumu. Okuyucu arızasında ⚠️.
+  - Kaynak sayımları kopya ilanı saymıyor: Facebook'un 24 saatlik "yeni ilan"ı 844 → 366.
+- **KibrisArabaAl (403, 10.10'dan beri):** engeli aşmak (başka IP/proxy, tarayıcı taklidi, Cloudflare atlatma) proje kuralıyla yasak; tek meşru yol sitenin izni. Opus "izin meclisi" kuruldu: sitenin herkese açık iletişim kanalları, API/veri akışı imkânı, bizim eski erişim biçimimiz, sahibin göndereceği izin mesajı taslağı ve izin gelince kodun hazır olması (siteye istek atılmadan).
+- **Facebook fiyat tuzakları (sosyal oturumun ölçümü; Opus alt ajan uyguluyor):**
+  - Satış kutusunda TRY < 50.000 aslında STG.
+  - Kutuda yer tutucu tutarlar var (11111, 1.111.111, 1234…; €≥50.000'in %36'sı).
+  - Metinde < 50.000 TL çoğunlukla kapora/taksit.
