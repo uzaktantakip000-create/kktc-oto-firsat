@@ -43,6 +43,19 @@ def test_stale_and_silent_sources_flagged():
     assert [k.split(":")[0] for k, _ in probs] == ["stale", "silent"]
 
 
+def test_stale_warning_is_not_repeated_while_the_source_alarm_is_open():
+    """22.10.2026: kaynak alarmı (source_alarm) arızayı bir kez söyler ve 'srcalarm:<ad>' ile açık tutar ("düzelince haber veririm"). Sağlık
+    kontrolü aynı arızayı her 24 saatte bir yeniden yazıyordu (KibrisArabaAl 10.10–21.10 her gün "⏱ … saattir başarılı tarama yok").
+    Alarm açıkken susar; alarm kapanınca (düzeldi: boş değer) ya da hiç alarm yokken eskisi gibi uyarır. "🔇 7 gündür yeni ilan yok" ayrı arızadır."""
+    repo = FakeRepo([src("KKTCar", hours=30, url="https://kktcar.com/x", platform="web"), src("b", hours=1, n7=0)])
+    repo.state["srcalarm:KKTCar"] = "1"
+    assert [k.split(":")[0] for k, _ in health.source_problems(repo)] == ["silent"]
+    repo.state["srcalarm:KKTCar"] = ""  # alarm kapandı (düzeldi ya da hiç açılmadı): uyarı eskisi gibi
+    assert [k.split(":")[0] for k, _ in health.source_problems(repo)] == ["stale", "silent"]
+    repo.state["srcalarm:b"] = "1"  # başka kaynağın açık alarmı bu kaynağın uyarısını susturmaz
+    assert [k.split(":")[0] for k, _ in health.source_problems(repo)] == ["stale", "silent"]
+
+
 def test_kktcarabam_has_longer_limit():
     """KKTCarabam 2 saatte bir taranır: 8 saate kadar sessizlik normal (4 tur payı), 9 saat arıza; diğer web kaynakları 3 saatte uyarır."""
     ok = health.source_problems(FakeRepo([src("k", hours=7, url="https://www.kktcarabam.com/x", platform="web")]))

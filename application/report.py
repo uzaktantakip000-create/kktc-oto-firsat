@@ -18,6 +18,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
+from application import urgent
 from application.health import notify_owner
 from application.liveness import can_check, recheck_before_send
 from application.notify import TelegramError, api, is_fresh, photo_stale, price_text, resurfaced_ids
@@ -42,6 +43,9 @@ VOTE_DAYS, VOTE_SHOW = 30, 10  # 30 günlük ölçüm penceresi (spec §24.5); e
 UNNOTIFIED_DAYS, UNNOTIFIED_SHOW = 14, 5  # sahibin kararı: en çok 5
 LIVENESS_MAX_CHECKS = 10  # haftada bir en çok bu kadar sayfa isteği (KibrisArabaAl yalnız izin kapısı açıkken, ≥10 sn aralıkla: ~2 dk)
 NEAR_SHOW = 5
+# Aynı araç birkaç satır olabilir (22.10.2026: 2021 Suzuki Swift'in Facebook'taki 4 ayrı paylaşımı 5 satırın 4'ünü tutuyordu; metin her
+# paylaşımda değiştiği için kopya bağı kurulamamıştı): tekilleştirmeden önce bu kadar satır okunur, listede her araç bir kez
+NEAR_FETCH = NEAR_SHOW * 4
 NEAR_SKIP = ("fiyat_asiri_dusuk", "okuma_satildi", "model_belirsiz", "para_birimi_supheli")  # yazım hatası/tuzak, yapay zekâya göre satılmış, karışık model, USD/EUR şüphesi: "kâr" sahte
 SHORT_REASON = {"km_yuksek": "km yüksek", "tl_fiyat": "fiyat TL (TL ilanlar ucuz görünür)", "emsal_yili_yeni": "emsaller daha yeni model",
                 "ucuz_ceyrek_degil": "benzerlerin en ucuz çeyreğinde değil", "para_birimi_tahmin": "para birimi yazmıyor", "para_birimi_supheli": "USD/EUR yazıyor, STG olabilir",
@@ -223,8 +227,19 @@ def _unnotified_section(repo: Repository, recheck, now: datetime) -> _Section:
 
 
 # --- 3. yakın kaçanlar ---
+def _one_per_car(rows: list[dict]) -> list[dict]:
+    """Aynı araç listede bir kez, sıradaki ilk (en iyi kârlı) satırıyla. Aynı araç = ⚡ kilidinin kuralı (`urgent.same_car`): telefon ikisinde de
+    var ve aynı ya da marka/model/yıl aynı ve fiyat ±%5. Markası bilinmeyen satır birleştirilmez (bilinmeyen = bilinmeyen değildir)."""
+    out: list[dict] = []
+    for r in rows:
+        if r.get("brand_norm") and any(urgent.same_car(r, o) for o in out):
+            continue
+        out.append(r)
+    return out
+
+
 def _near_section(repo: Repository, s: Settings) -> _Section:
-    rows = repo.near_misses(RULES_VERSION, WEEK_DAYS, MIN_COMPARABLES_TO_SEND, list(NEAR_SKIP), NEAR_SHOW)
+    rows = _one_per_car(repo.near_misses(RULES_VERSION, WEEK_DAYS, MIN_COMPARABLES_TO_SEND, list(NEAR_SKIP), NEAR_FETCH))[:NEAR_SHOW]
     if not rows:
         return _Section("yakın kaçan", ["👀 Bu hafta yakın kaçan yok."])
     thr = s.strong_threshold * 100

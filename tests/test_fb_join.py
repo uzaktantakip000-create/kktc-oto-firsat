@@ -222,6 +222,18 @@ def test_owner_shadowed_group_stays_and_euro_group_is_held_back(sent):
     assert sent[-1][0] == "fb_golge_euro_fb:222" and "%40 kadarı euro fiyatlı" in sent[-1][1]
 
 
+def test_a_shadow_group_without_any_priced_listing_stays_in_shadow_and_is_quiet(sent):
+    """22.10.2026: keşfin açtığı yabancı gruplar (Bristol Uni Students, Ole Miss bilet grubu…) 3 günde hiç ilan getirmedi; eski kod onları
+    "✅ … sorunsuz okundu (0 fiyatlı ilan). Artık fırsatları anında gelecek." diye yeşile alıyordu. Ölçülecek ilan yoksa gölge sürer, mesaj yok;
+    fiyatlı ilan gelince (euro kontrolüyle) yeşile geçer."""
+    empty = PromoRepo([src(9, "555", "aktif", "Bristol Uni Students") | {"alert_level": "golge"}], mix=(0, 0))
+    fb_join.start_shadow(empty, "fb:555", NOW)
+    assert fb_join.promote(empty, NOW + timedelta(days=5), log=lambda _: None) == 0 and empty.levels == [] and sent == []
+    empty.mix = (2, 0)  # gölgede okunmaya devam etti, fiyatlı ilan geldi
+    assert fb_join.promote(empty, NOW + timedelta(days=6), log=lambda _: None) == 1 and empty.levels == [(9, "yesil")]
+    assert "(2 fiyatlı ilan)" in sent[-1][1]
+
+
 def test_a_discovered_public_group_starts_its_shadow_clock(sent, inserted):
     repo = Repo([])
     fb_join.discover(repo, kesif(("fb:333", "KKTC Araba Pazarı", 20000, "acik", 30), ("fb:444", "Girne Oto", 800, "kapali", 2)), NOW, log=lambda _: None)

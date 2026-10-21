@@ -65,6 +65,11 @@ def source_problems(repo: Repository) -> list[tuple[str, str]]:
             continue
         limit_h = source_limit_hours(s)
         if s["hours_since_check"] > limit_h:
+            # Kaynak alarmı (application/source_alarm) bu arızayı zaten söylediyse ve açık tutuyorsa ('srcalarm:<ad>' dolu; düzelince "✅ tekrar
+            # çalışıyor" gider) burada tekrar yazılmaz. 22.10.2026: alarm anında yalnız 24 saat susturuluyordu; KibrisArabaAl 10.10'dan 21.10'a
+            # her gün yeniden "⏱ … saattir başarılı tarama yok" yazdı (kaynak alarmının "tek mesaj" sözüne aykırı gürültü).
+            if repo.get_state(f"srcalarm:{s['name']}"):
+                continue
             problems.append((f"stale:{s['id']}", f"⏱ {s['name']}: {s['hours_since_check']:.0f} saattir başarılı tarama yok"))
         elif (s["listings_7d"] or 0) == 0 and s["hours_since_check"] < limit_h and _older_than_week(repo, s):
             problems.append((f"silent:{s['id']}", f"🔇 {s['name']}: 7 gündür yeni ilan gelmedi (hesap kapanmış/engellenmiş olabilir)"))

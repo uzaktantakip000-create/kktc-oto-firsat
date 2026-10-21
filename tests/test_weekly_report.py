@@ -313,12 +313,39 @@ def test_near_misses_say_why_in_one_line_and_use_the_send_floor():
                           near_row(3, pct=22), near_row(4, pct=18.6)])
     text, _ = build(repo)
     rv, days, min_n, skip, limit = repo.calls["near"]
-    assert (rv, days, min_n, limit) == (report.RULES_VERSION, 7, 8, 5) and {"fiyat_asiri_dusuk", "model_belirsiz", "okuma_satildi"} <= set(skip)
+    assert (rv, days, min_n, limit) == (report.RULES_VERSION, 7, 8, report.NEAR_FETCH) and {"fiyat_asiri_dusuk", "model_belirsiz", "okuma_satildi"} <= set(skip)
     assert "• 2013 BMW 116i · £7.750 · ~%34 kâr ama km yüksek · https://kktcar.com/listing/2013-bmw-116i-1" in text
     assert "~%24 kâr ama emsaller daha yeni model, fiyat TL (TL ilanlar ucuz görünür) ·" in text
     assert "~%22 kâr ama kâr tutarı £750 altında" in text and "~%19 kâr (eşik %20)" in text
     near_part = text[text.index("👀"):text.index("🩺")]
     assert all("\n" not in line for line in near_part.strip().split("\n• ")[1:])  # tek satır
+
+
+def test_near_misses_list_the_same_car_once():
+    """22.10.2026 (canlı önizleme): 2021 Suzuki Swift'in Facebook'taki 4 ayrı paylaşımı (420.000/430.000 TL; metin her paylaşımda değiştiği için
+    kopya bağı yok) 5 satırlık listenin 4'ünü tutuyordu. Aynı araç (⚡ kilidinin kuralı: marka/model/yıl aynı ve fiyat ±%5, ya da aynı telefon)
+    bir kez, en iyi kârlı satırıyla; yer açılan satırlara sıradaki farklı araçlar gelir."""
+    def swift(i, price, pct, phone=None):
+        return near_row(i, pct=pct) | {"year": 2021, "brand": "Suzuki", "model": "SWİFT", "brand_norm": "Suzuki", "model_norm": "swift",
+                                       "price_gbp": price, "seller_phone": phone, "url": f"https://example.test/ilan-{i}-x"}
+    def other(i, pct, **kw):
+        return near_row(i, pct=pct) | {"brand_norm": "BMW", "model_norm": "1", "url": f"https://example.test/ilan-{i}-x", **kw}
+    rows = [swift(1, 6359.0, 67), swift(2, 6359.0, 65), swift(3, 6510.0, 61), swift(4, 6510.0, 61),
+            other(5, 40, year=2013), other(6, 39, year=2013, price_gbp=7900.0),  # aynı model-yıl, fiyat ±%5 içinde: aynı araç sayılır
+            other(7, 35, year=2013, price_gbp=9900.0),  # aynı model-yıl ama fiyat çok farklı: başka araç
+            other(8, 30, year=2015, seller_phone="905331112233"), other(9, 29, year=2009, seller_phone="905331112233"),  # aynı satıcı
+            other(10, 28, year=2010), other(11, 27, year=2011)]
+    repo = FakeRepo(near=rows)
+    text, _ = build(repo)
+    near_part = text[text.index("👀"):text.index("🩺")]
+    assert near_part.count("2021 Suzuki SWİFT") == 1 and "~%67 kâr" in near_part
+    shown = [u for u in (r["url"] for r in rows) if u in near_part]
+    assert shown == [rows[i]["url"] for i in (0, 4, 6, 7, 9)]  # Swift, BMW 2013, BMW 2013 £9.900, BMW 2015, BMW 2010
+    assert repo.calls["near"][4] == report.NEAR_FETCH > report.NEAR_SHOW
+
+
+def test_near_misses_without_a_known_brand_are_never_merged():
+    assert len(report._one_per_car([near_row(1), near_row(2), near_row(3)])) == 3  # marka bilinmiyor: aynı fiyat bile aynı araç değil
 
 
 def test_near_miss_threshold_follows_owner_setting():

@@ -64,7 +64,12 @@ def promote(repo, now: datetime, log=print) -> int:
         if now - started < timedelta(days=SHADOW_DAYS):
             continue
         priced, euro = repo.currency_mix(r["id"], days=SHADOW_DAYS + 1)
-        if priced and euro / priced > FOREIGN_SHARE:
+        if not priced:
+            # Ölçülecek ilan yok: gölge "sorunsuz okundu" sayılamaz (22.10.2026). Keşfin bulduğu yabancı öğrenci/bilet grupları (Bristol, Ole Miss…)
+            # 3 günde hiç ilan getirmeden "✅ … (0 fiyatlı ilan). Artık fırsatları anında gelecek." mesajıyla yeşile geçiyordu. Grup gölgede
+            # okunmaya devam eder; son SHADOW_DAYS+1 günde fiyatlı ilan getirince (euro kontrolüyle) yeşile geçer. Sahibe mesaj yok.
+            continue
+        if euro / priced > FOREIGN_SHARE:
             notify_owner(repo, f"fb_golge_euro_{key}", f"⚠️ \"{r['name']}\" Facebook grubundaki ilanların %{euro * 100 // priced} kadarı euro fiyatlı: "
                          "Güney Kıbrıs grubu olabilir. Gölgede bıraktım (bildirim yok). İstersen /kaynak_seviye ile aç ya da /kaynaklar'dan kapat.",
                          repeat_hours=ONCE_H)

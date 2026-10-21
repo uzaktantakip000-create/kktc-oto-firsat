@@ -490,11 +490,13 @@ def _scan_line(repo, now: datetime) -> str | None:
 
 
 def _backup_line(repo, now: datetime) -> str | None:
-    """"Son veritabanı yedeği: 3 gün önce" (8 günden eskiyse başında ⚠️); `backup_last_ok` yoksa/bozuksa satır yok."""
+    """"Son veritabanı yedeği: 3 gün önce" (8 günden eskiyse başında ⚠️); `backup_last_ok` yoksa/bozuksa satır yok.
+    Gün, KKTC takvim günüdür (22.10.2026): geçen süreye (24 saat) bakınca 21.10 11:47'deki elle yedek ertesi sabah 08:06'da "bugün" görünüyordu."""
     age = _age(repo.get_state(BACKUP_OK_KEY), now)
     if age is None:
         return None
-    when = "bugün" if age.days < 1 else f"{age.days} gün önce"
+    days = (to_kktc(now).date() - to_kktc(now - age).date()).days
+    when = "bugün" if days < 1 else f"{days} gün önce"
     return f"{'⚠️ ' if age > BACKUP_MAX_AGE else ''}Son veritabanı yedeği: {when}"
 
 
