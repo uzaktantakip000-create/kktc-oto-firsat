@@ -42,22 +42,54 @@ def _source_line(r: dict, quiet: set | frozenset = frozenset()) -> str:
     return f"{mark} {kind}: {r['name']} · {_ago(r['hours_since_check'])} · {r['fresh_n']} güncel ilan, bugün {r['new_24h']} yeni"
 
 
+# kopya ilan (duplicate_of: aynı aracın yeniden paylaşımı/başka sitedeki ikizi) sayılmaz (21.10.2026): Facebook'ta bir araç 10 gruba atılınca
+# "10 yeni ilan" görünüyordu
 _SOURCE_SQL = """SELECT s.name, s.platform, s.url, s.status, s.alert_level,
                   EXTRACT(EPOCH FROM (NOW() - s.last_checked_at)) / 3600 AS hours_since_check,
-                  (SELECT count(*) FROM listings l WHERE l.source_id = s.id AND l.is_active
+                  (SELECT count(*) FROM listings l WHERE l.source_id = s.id AND l.is_active AND l.duplicate_of IS NULL
                       AND COALESCE(l.posted_at, l.first_seen_at) > NOW() - interval '60 days') AS fresh_n,
-                  (SELECT count(*) FROM listings l WHERE l.source_id = s.id AND l.is_active
+                  (SELECT count(*) FROM listings l WHERE l.source_id = s.id AND l.is_active AND l.duplicate_of IS NULL
                       AND COALESCE(l.posted_at, l.first_seen_at) > NOW() - interval '24 hours') AS new_24h
            FROM sources s ORDER BY s.platform, s.name"""
+
+
+def _facebook_block(fb: list[dict], now: datetime) -> tuple[list[str], bool]:
+    """Facebook özeti (21.10.2026): kaç grup, kaçı haber veriyor, kaçı ilk günlerinde denemede (gölge: yalnız ölçülür), son 24 saatteki yeni
+    ilan ve OKUYUCUNUN kendi durumu (selfwatch: sunucudaki durum dosyası; yalnız VPS'te). Okuyucu durmuş/susuyor/fren/hata ise ⚠️ ve True."""
+    green = [r for r in fb if r["alert_level"] == "yesil"]
+    new24 = sum(r["new_24h"] or 0 for r in fb)
+    part, bad = None, False
+    try:
+        data = selfwatch.read_social() if selfwatch.on_vps() else None
+        view = selfwatch.judge_social(data, now) if data is not None else None
+        if view is not None:
+            p = next((x for x in view.platforms if x.key == "facebook"), None)
+            if view.stale is not None:
+                part, bad = f"⚠️ sosyal okuyucu durmuş görünüyor (son yazım {selfwatch._span(view.stale)} önce)", True
+            elif p is not None:
+                part, bad = p.part, p.state in ("susuyor", "fren", "hata")
+    except Exception:  # okuyucu durumu okunamazsa satır yine yazılır, yalnız durum kısmı olmadan
+        part = None
+    mark = "⚠️" if bad else "✅"
+    head = (f"{mark} Facebook: {len(fb)} grup, sunucudaki sosyal okuyucu okuyor · {len(green)} grup haber veriyor"
+            + (f", {len(fb) - len(green)} grup ilk günlerinde denemede (yalnız ölçülüyor)" if len(fb) > len(green) else "")
+            + f" · son 24 saatte {new24} yeni ilan")
+    return [head + (f"\n   Okuyucu: {part}" if part else "")], bad
 
 
 def build_status(repo: Repository, now: datetime | None = None) -> str:
     now = now or datetime.now(timezone.utc)
     rows = repo.conn.execute(_SOURCE_SQL).fetchall()
-    paused = feed_switch.paused_platforms(repo, now)
+    # Facebook'u sunucudaki sosyal okuyucu okur (21.10.2026; sahip /durum'u gönderip "Anlık bu şekilde sebebi nedir? Çalışmayan kısımlar hala
+    # mı var?" diye sordu): eski Apify anahtarı 07.10'dan beri kapalı (feed_switch.LEGACY_APIFY) olduğu için rapor Facebook'u "📴 duraklatıldı /
+    # bakmıyorum, alarm da vermiyorum" gösteriyordu; oysa 'yesil' grupların fırsatları anında gidiyor. Facebook artık duraklatılmış sayılmaz,
+    # tek blokta özetlenir (_facebook_block); gruplar tek tek yazılmaz (37 satır mesajı taşırırdı).
+    reader = set() if feed_switch.LEGACY_APIFY else {"facebook"}
+    paused = {p: why for p, why in feed_switch.paused_platforms(repo, now).items() if p not in reader}
     scanned_all = [r for r in rows if r["status"] in ("aktif", "deneme")]
     paused_n = [r for r in scanned_all if r["platform"] in paused]  # duraklatılmış sosyal kaynaklar: tek satırda özetlenir
-    scanned = [r for r in scanned_all if r["platform"] not in paused]
+    fb = [r for r in scanned_all if r["platform"] in reader]
+    scanned = [r for r in scanned_all if r["platform"] not in paused and r["platform"] not in reader]
     open_n = [r for r in scanned if r["alert_level"] == "yesil"]
     shadow_n = [r for r in scanned if r["alert_level"] != "yesil"]
     quiet = feed_switch.quiet_platforms(repo, now)
@@ -77,18 +109,19 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
     fb_n = repo.conn.execute(f"SELECT count(*) AS n FROM feedback f WHERE f.action NOT LIKE 'audit_%' AND {OWNER_VOTE_SQL}").fetchone()["n"]
     last_tick = repo.get_state("tick:last")
 
+    fb_lines, fb_bad = _facebook_block(fb, now) if fb else ([], False)
     lines = [f"📊 Sistem raporu — {to_kktc(now):%d.%m %H:%M}", ""]
-    if late:
-        lines.append(f"⚠️ {len(late)} yerde gecikme var (aşağıda işaretli).")
+    if late or fb_bad:
+        lines.append(f"⚠️ {len(late) + fb_bad} yerde gecikme ya da arıza var (aşağıda işaretli).")
     else:
         lines.append("✅ Sistem çalışıyor, her yere zamanında bakılıyor.")
-    if paused:
+    if paused and paused_n:  # yalnız gerçekten duraklatılmış kaynak varsa (bugün: hiçbiri; Instagram sahibin kararıyla bırakıldı, kaynakları pasif)
         lines.append(feed_switch.pause_text(paused))
     if last_tick:
         lines.append(f"Son kontrol saat {to_kktc(datetime.fromisoformat(last_tick)):%H:%M}. Her 15 dakikada bir tekrar bakılır.")
 
-    lines += ["", f"📣 SANA HABER VEREN YERLER ({len(open_n)})", "Burada iyi bir fırsat görürsem hemen yazarım."]
-    lines += [_source_line(r, quiet) for r in open_n]
+    lines += ["", f"📣 SANA HABER VEREN YERLER ({len(open_n) + (1 if fb_lines else 0)})", "Burada iyi bir fırsat görürsem hemen yazarım."]
+    lines += [_source_line(r, quiet) for r in open_n] + fb_lines
     if shadow_n:
         lines += ["", f"🗒 BİLDİRİM VERMEYENLER ({len(shadow_n)})",
                   "Buralara bakıyorum ama haber vermiyorum, sadece ölçüyorum (sen kapattın ya da çok yanlış fiyat çıktığı için ben düşürdüm)."]
@@ -131,10 +164,10 @@ def build_status(repo: Repository, now: datetime | None = None) -> str:
         f"• Facebook'ta bu ay {fun['gonderi']} gönderiye baktım: {fun.get('ilan', 0)} araç ilanı çıktı. Ayıklananlar: "
         f"{fun.get('fiyat_yok', 0)} araç gönderisi fiyat yazmıyor, {fun.get('yil_yok', 0)} yıl yazmıyor, "
         f"{fun.get('marka_yok', 0) + fun.get('arac_degil', 0)} araba değil.",
-    ] if fun.get("gonderi") else []) + ([
+    ] if fun.get("gonderi") and not reader else []) + ([
         f"• Bu ay Apify'a harcanan: Facebook ${_money(repo, 'fb_spend', now):.2f} (sınır {FB_BUDGET:.0f}$), "
         f"Instagram ${_money(repo, 'ig_spend', now):.2f} (sınır {IG_BUDGET:.0f}$).",
-    ] if len(paused) < len(feed_switch.PLATFORMS) else []) + [
+    ] if len(paused) < len(feed_switch.PLATFORMS) and not reader else []) + [  # Apify emekli (07.10.2026): harcama satırı yalnız eski yolda
         "",
         "ℹ️ 'Güncel ilan' = son 60 günde yayınlanıp hâlâ satışta görünenler. Daha eski ilanları fiyat karşılaştırmasına katmıyorum.",
     ]
