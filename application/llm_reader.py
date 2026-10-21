@@ -37,6 +37,21 @@ ACCOUNT_FIX = {"http 402": "Çözüm: openrouter.ai → Credits sayfasından kre
                "http 403": "Çözüm: OpenRouter hesabının ve anahtarın durumuna bakılmalı."}
 
 
+# Geçici hata (22.10.2026): ağ hatası ve zaman aşımı (httpx istisna adı: "ReadTimeout", "ConnectError"…), "http 429" (istek sınırı), "http 408"
+# ve "http 5xx". Kalıcı: model cevap verdi ama işe yarar çıktı yok (ANSWERED_ERRORS), hesap hatası (ACCOUNT_ERRORS: sahibe ayrı uyarı) ve öbür 4xx.
+ANSWERED_ERRORS = frozenset({"json yok", "json bozuk", "yanıt kesildi", "yanıt biçimi"})
+
+
+def transient_error(err: str | None) -> bool:
+    """Çağrı hatası geçici mi (aynı soru biraz sonra cevap alabilir)? Hata yoksa False."""
+    if not err or err in ANSWERED_ERRORS or err in ACCOUNT_ERRORS:
+        return False
+    if err.startswith("http "):
+        code = err[5:]
+        return code in ("408", "429") or code.startswith("5")
+    return True  # httpx istisna adı (openrouter: ağ hatası, zaman aşımı)
+
+
 def account_alarm(repo, err: str | None) -> None:
     """Yapay zekâ çağrısının hatası hesap sorunuysa (ACCOUNT_ERRORS) sahibe 24 saatte bir uyarı. Hiçbir hata yukarı fırlamaz."""
     if err not in ACCOUNT_ERRORS:
@@ -206,13 +221,16 @@ def _cached_note(raw: str) -> dict | None:
 def deal_notes(repo: Repository, evs: list[Evaluated], api_key: str, model: str, call=openrouter.check_deal, now=None) -> dict:
     """🟢 mesajına eklenen kısa "fırsat notu" (openrouter.MODEL; mesaja yalnız ⚠️ ekler, 🟢'yi düşürmez). Dönen: {ilan_id: not}.
     - Okuyucuyla AYNI günlük bütçeden düşer (DAILY_BUDGET_USD, `llm_spend:<gün>`); bütçe doluysa soru sorulmaz.
-    - Her (ilan, fiyat) için en çok BİR kez sorulur: sonuç (not ya da hata/boş = 'null') bot_state'e yazılır. Gönderilemeyen 🟢 36 saat
-      bekleyebilir; eskiden her 15 dakikalık turda yeniden soruluyordu.
+    - Her (ilan, fiyat) için en çok BİR kez sorulur: cevap (not ya da kalıcı "not yok" = 'null': model cevap verdi ama not çıkmadı, hesap
+      hatası) bot_state'e yazılır. Gönderilemeyen 🟢 36 saat bekleyebilir; eskiden her 15 dakikalık turda yeniden soruluyordu.
+    - Geçici hata (`transient_error`: ağ, zaman aşımı, 429, 5xx) önbelleğe YAZILMAZ: sonraki turda yeniden sorulur (22.10.2026; eskiden 'null'
+      yazılıyor, not o ilan için hiç gelmiyordu). Fırtına olmasın diye geçici hatadan sonra o turda başka not sorulmaz (önbellekteki notlar yine gelir).
     - Bütçe doluysa, çağrı ya da veritabanı hata verirse o ilanın notu yok: bildirim notsuz gider (gönderim bu nota bağlı DEĞİL; hata
       yukarı fırlatılmaz)."""
     notes: dict = {}
     ledger = LlmReader(repo, api_key, model, now=now)  # yalnız harcama defteri: okuyucuyla aynı günlük anahtar
     budget_logged = False
+    stalled = False  # bu turda geçici hata alındı: kalan ilanlara soru sorulmaz
     for ev in evs:
         try:
             l, m = ev.listing, ev.market
@@ -222,6 +240,8 @@ def deal_notes(repo: Repository, evs: list[Evaluated], api_key: str, model: str,
                 note = _cached_note(cached)
                 if note is not None:
                     notes[l["id"]] = note
+                continue
+            if stalled:
                 continue
             spent = ledger.spent_today()
             if spent >= DAILY_BUDGET_USD:
@@ -237,11 +257,13 @@ def deal_notes(repo: Repository, evs: list[Evaluated], api_key: str, model: str,
             note = data if isinstance(data, dict) else None
             if note is not None:  # önce nota koy: aşağıdaki kayıt yazılamasa da bu turun mesajı notu taşısın
                 notes[l["id"]] = note
+            stalled = transient_error(err)
             if err:
-                print("LLM notu alınamadı:", err)
+                print("LLM notu alınamadı:", err + (" (geçici: sonraki turda yeniden sorulur, bu turda başka not sorulmaz)" if stalled else ""))
                 account_alarm(repo, err)
             repo.set_state(ledger._spend_key(), f"{spent + cost:.5f}")
-            repo.set_state(key, json.dumps(note, ensure_ascii=False))
+            if not stalled:  # geçici hata önbelleğe yazılmaz
+                repo.set_state(key, json.dumps(note, ensure_ascii=False))
         except Exception as e:  # yapay zekâ ya da veritabanı hatası bildirimi engellemesin
             print("LLM notu alınamadı:", type(e).__name__)
     return notes
