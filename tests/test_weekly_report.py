@@ -189,7 +189,7 @@ def test_all_voted_and_no_alerts_cases_have_no_buttons():
 
 
 # --- bildirilmemiş fırsatlar ---
-def test_unnotified_keeps_send_floor_and_freshness_rules():
+def test_unnotified_keeps_send_floor_and_freshness_rules(kaa_open):  # KibrisArabaAl satırı "kontrol edilebilir" biçimiyle (izin kapısı açık)
     rows = [strong_row(1, pct=40, n=5),  # emsal < 8: anlık mesajda da gitmezdi
             strong_row(2, pct=35, method="B"),  # 🟢 yöntem A ister
             strong_row(3, pct=33, first_seen=ago(hours=10)),  # taze: normal yoldan gider, burada görünmez
@@ -295,10 +295,16 @@ def test_liveness_failure_is_said_openly_and_report_still_goes():
     assert "kontrolü bu kez tamamlanamadı" in text and "/1-honda-fit/" in text and "/2-honda-fit/" in text
 
 
-def test_source_without_liveness_is_marked():
+def test_source_without_liveness_is_marked(kaa_open):
     ig = strong_row(1, url="https://www.instagram.com/p/abc/", platform="instagram", source="ARABA KIBRIS", posted=ago(days=4))
     text, _ = build(FakeRepo(strong=[ig, strong_row(2)]), recheck=keep_all)
     assert "Instagram (satıldı mı izlenemiyor)" in text and "  KibrisArabaAl · " in text
+
+
+def test_kibrisarabaal_is_not_said_checked_while_its_gate_is_closed():
+    """21.10.2026: izin kapısı kapalıyken KibrisArabaAl yeniden okunmaz: "kontrol ettim" sayılmasın, satırında açıkça yazsın."""
+    text, _ = build(FakeRepo(strong=[strong_row(2)]), recheck=keep_all)
+    assert "KibrisArabaAl (satıldı mı izlenemiyor)" in text
 
 
 # --- yakın kaçanlar ---

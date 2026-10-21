@@ -9,7 +9,6 @@ import pytest
 
 from application import collect_facebook as cf
 from application import collect_instagram as ci
-from application import collect_kibrisarabaal as ckaa
 from application import collect_kktcar as ckk
 from entrypoints import tick
 from infrastructure.collectors import apify_run, facebook_groups as fg, instagram_apify as ig
@@ -413,7 +412,7 @@ def test_kktcar_new_listing_timeout_counts_as_failed_and_read_rate_guard_still_t
         ckk.collect_kktcar(KkCollectRepo(), {"id": "S", "name": "KKTCar"})
 
 
-# ---------- KibrisArabaal: yenileme ve fiyatsız ilan ----------
+# ---------- KibrisArabaal: fiyatsız ilan (aktif ilan yenilemesi 21.10.2026'da kaldırıldı: tests/test_kaa_gate.py) ----------
 HTML = (Path(__file__).parent / "fixtures/kibrisarabaal_detail_demio.html").read_text()
 NO_PRICE_HTML = HTML.replace('"price":"7450.00","priceCurrency":"GBP"',
                              '"priceSpecification":{"@type":"UnitPriceSpecification","price":"0","priceCurrency":"TRY",'
@@ -424,50 +423,3 @@ def test_price_on_request_listing_has_no_price_by_design():
     # canlı sayfa (02.10.2026): fiyatı gizleyen satıcılar JSON-LD'ye price "0" yazar: parse boşluğu değil, ilanın kendisi fiyatsız
     d = parse_detail(NO_PRICE_HTML)
     assert d["price_amount"] is None and d["urgency_signals"] == ["fiyatsiz"] and d["brand"] == "Mazda"
-
-
-class KaaRepo:
-    def __init__(self, n=3):
-        self.rows = [dict(id=f"id{i}", url=f"https://kibrisarabaal.com/ilan/{i}-x", source_item_id=str(i)) for i in range(n)]
-        self.touched, self.applied = [], []
-
-    def stale_active(self, sid, hours, limit):
-        return self.rows[:limit]
-
-    def touch(self, i):
-        self.touched.append(i)
-
-    def apply_refresh(self, i, row, data):
-        self.applied.append((i, data.get("price_gbp"), data.get("is_active")))
-        return "fiyat" if data.get("price_gbp") == 100.0 else "pasif" if data.get("is_active") is False else None
-
-
-def test_kaa_refresh_updates_price_deactivates_and_survives_errors(monkeypatch):
-    seq = iter([{"price_amount": 100.0, "currency": "GBP"}, {"is_active": False, "urgency_signals": ["kaldirildi"]},
-                httpx.ReadTimeout("x")])
-
-    def fetch_detail(client, entry):
-        v = next(seq)
-        if isinstance(v, Exception):
-            raise v
-        return v
-
-    monkeypatch.setattr(ckaa.kibrisarabaal, "fetch_detail", fetch_detail)
-    monkeypatch.setattr(ckaa.kibrisarabaal, "polite_sleep", lambda: None)
-    monkeypatch.setattr(ckaa, "gbp_rate", lambda c: 1.0)
-    repo, stats = KaaRepo(), ckaa.KaaStats()
-    ckaa.refresh_active(repo, {"id": "S"}, None, stats)
-    assert stats.refreshed == 3 and stats.price_changes == 1 and stats.went_inactive == 1 and stats.refresh_failed == 1
-    assert repo.touched == ["id2"]  # okunamayan: kaldırıldı SAYILMAZ, yalnızca sırası kayar
-
-
-def test_kaa_refresh_stops_at_time_limit_and_limit(monkeypatch):
-    monkeypatch.setattr(ckaa.kibrisarabaal, "fetch_detail", lambda c, e: {"price_amount": 5.0, "currency": "GBP"})
-    monkeypatch.setattr(ckaa.kibrisarabaal, "polite_sleep", lambda: None)
-    monkeypatch.setattr(ckaa, "gbp_rate", lambda c: 1.0)
-    stats = ckaa.KaaStats()
-    ckaa.refresh_active(KaaRepo(30), {"id": "S"}, None, stats, limit=25)
-    assert stats.refreshed == 25
-    stats = ckaa.KaaStats()
-    ckaa.refresh_active(KaaRepo(30), {"id": "S"}, None, stats, max_seconds=-1)
-    assert stats.refreshed == 0  # süre dolmuşsa tur uzamaz

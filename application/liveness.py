@@ -1,5 +1,7 @@
 """Bildirimden hemen önce ilanın hâlâ yayında ve fiyatın aynı olduğunu kontrol eder (KKTCar ve KibrisArabaAl; yalnız bildirime aday ilanlar,
-tek sayfa isteği, sitelerin kendi nazik hızıyla). Diğer kaynaklarda (Instagram, KKTCarabam, Mezunum ...) satıldı bilgisi izlenemez: atlanır."""
+tek sayfa isteği, sitelerin kendi nazik hızıyla). Diğer kaynaklarda (Instagram, KKTCarabam, Mezunum ...) satıldı bilgisi izlenemez: atlanır.
+KibrisArabaAl yalnız izin kapısı açıkken okunur (application/kaa_gate: izin, robots.txt, kota, aralık); kapalıyken istek YOK, ilan kontrolsüz geçer."""
+from application import kaa_gate
 from application.collect_kibrisarabaal import _gbp as _kaa_gbp
 from application.collect_kktcar import _gbp
 from application.evaluate import Evaluated
@@ -17,8 +19,9 @@ def _is_kaa(listing: dict) -> bool:
 
 
 def can_check(listing: dict) -> bool:
-    """Bu ilan gönderimden önce yeniden okunabiliyor mu (satıldı/kalktı/fiyat değişti)? Yalnız KKTCar ve KibrisArabaAl."""
-    return _is_kktcar(listing) or _is_kaa(listing)
+    """Bu ilan gönderimden önce yeniden okunabiliyor mu (satıldı/kalktı/fiyat değişti)? KKTCar; KibrisArabaAl yalnız izin kapısı açıkken
+    (kapalıyken "kontrol ettim" denmesin: haftalık rapor "satıldı mı izlenemiyor" yazar)."""
+    return _is_kktcar(listing) or (_is_kaa(listing) and kaa_gate.gate_open())
 
 
 def _old(l: dict) -> dict:
@@ -54,27 +57,38 @@ def _recheck_kktcar(repo: Repository, todo: list[Evaluated], client) -> set:
 
 
 def _recheck_kaa(repo: Repository, todo: list[Evaluated], client) -> set:
-    """KibrisArabaAl: sayfa OutOfStock (satıldı) / kaldırılmış (404, ana sayfaya yönlenme) ya da fiyatı değişmişse gönderilmez.
-    Okunamayan sayfa (None: geçici hata/şablon) engellemez."""
-    own = client is None
-    client = client or kibrisarabaal.new_client()
+    """KibrisArabaAl: sayfa OutOfStock (satıldı) / kaldırılmış (404, başka yere yönlenme) ya da fiyatı değişmişse gönderilmez.
+    Okunamayan sayfa (None: geçici hata/şablon), robots.txt yasağı, kota ve kapalı kapı engellemez (doğrulanamadı diye fırsat kaçmasın).
+    403/429/503: kontrol hemen durur, 24 saat istek yok (kaa_gate.on_blocked)."""
+    if kaa_gate.idle_reason(repo) is not None:  # izin yok / engel beklemesi: siteye istek YOK
+        return set()
     drop = set()
     try:
-        for ev in todo:
-            l = ev.listing
-            try:
-                data = kibrisarabaal.fetch_detail(client, kibrisarabaal.Entry(l["url"], str(l["source_item_id"]), None))
+        with kaa_gate.open_client(repo, client=client) as web:
+            for ev in todo:
+                l = ev.listing
+                try:
+                    data = kibrisarabaal.fetch_detail(web, kibrisarabaal.Entry(l["url"], str(l["source_item_id"]), None))
+                except kibrisarabaal.Blocked as e:
+                    kaa_gate.on_blocked(repo, e)
+                    break
+                except kaa_gate.Disallowed:
+                    continue
+                except kaa_gate.Deferred as e:  # kota/aralık/robots.txt okunamadı: kalanlar kontrolsüz geçer
+                    print("canlılık kontrolü ertelendi (KibrisArabaAl):", e)
+                    break
+                except Exception as e:  # tek ilanın okunamaması gönderimi durdurmasın
+                    print("canlılık kontrolü yapılamadı (KibrisArabaAl):", type(e).__name__)
+                    if isinstance(e, kaa_gate.RobotsUnavailable):
+                        break
+                    continue
                 if data:
                     if data.get("is_active") is not False:
                         data["price_gbp"] = _kaa_gbp(data)
                     if repo.apply_refresh(l["id"], _old(l), data) is not None:  # pasif ('pasif') ya da fiyat değişti ('fiyat')
                         drop.add(l["id"])
-            except Exception as e:  # tek ilanın okunamaması gönderimi durdurmasın
-                print("canlılık kontrolü yapılamadı (KibrisArabaAl):", type(e).__name__)
-            kibrisarabaal.polite_sleep()
-    finally:
-        if own:
-            client.close()
+    except kaa_gate.Deferred as e:  # kapı arada kapandı
+        print("canlılık kontrolü yapılmadı (KibrisArabaAl):", e)
     return drop
 
 

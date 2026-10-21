@@ -22,7 +22,7 @@ DAY_KKTC = range(8, 24)  # gündüz = KKTC yerel saatiyle 08:00–24:00 (yaz-kı
 # iş -> (gündüz aralığı dk, gece aralığı dk)
 SCHEDULE = {
     "kktcar": (15, 30),
-    "kibrisarabaal": (15, 30),
+    "kibrisarabaal": (30, 120),  # izin kapısı (application/kaa_gate) kapalıyken iş siteye istek atmadan biter; açılınca harita + yeni ilanlar
     "mezunum": (30, 60),  # küçük site; 3 sn aralıklı nazik tarama
     "kibriscars": (30, 60),  # durgun site (ayda birkaç ilan); 3 sn aralıklı nazik tarama
     "pazarkibris": (30, 60),  # liste sayfası başına tek istek (veri sayfaya gömülü)

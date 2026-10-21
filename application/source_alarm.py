@@ -4,7 +4,7 @@ Sayaç: bot_state 'fail:<kaynak adı>' = üst üste hatalı tur sayısı (başar
 normal sınırdan uzun süredir başarılı tarama yok)."""
 import re
 
-from application import feed_switch
+from application import feed_switch, kaa_gate
 from application.health import notify_owner, source_limit_hours
 from infrastructure.config import redact
 from infrastructure.db.repository import Repository
@@ -77,8 +77,12 @@ def check_source_alarms(repo: Repository) -> int:
     """Her tur çalışır. Gönderilen mesaj sayısını döner (alarm + düzelme)."""
     paused = feed_switch.paused_platforms(repo)  # duraklatılmış sosyal kaynaklar arıza sayılmaz
     quiet = feed_switch.quiet_platforms(repo)  # + duraklamadan yeni çıkıp henüz toplanmamışlar: kaynak başına "taranamıyor" uyarısı yok
-    sources = {s["name"]: s for s in repo.alarm_sources() if s["platform"] not in quiet}
-    alarms, ok = source_alarms(repo, sources, skip=frozenset(feed_switch.COLLECTIVE[p] for p in paused))
+    rows = repo.alarm_sources()
+    sources = {s["name"]: s for s in rows if s["platform"] not in quiet}
+    skip = {feed_switch.COLLECTIVE[p] for p in paused}
+    if kaa_gate.idle_reason(repo) is not None:  # KibrisArabaAl bilerek okunmuyor (izin kapısı kapalı / engel beklemesi): ne alarm ne "düzeldi"
+        skip |= {s["name"] for s in rows if kaa_gate.is_kaa_url(s.get("url"))}
+    alarms, ok = source_alarms(repo, sources, skip=frozenset(skip))
     sent = 0
     for name, text in alarms:
         if repo.get_state(f"srcalarm:{name}"):

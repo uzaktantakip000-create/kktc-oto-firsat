@@ -2,7 +2,7 @@
 import os
 from datetime import datetime, timedelta, timezone
 
-from application import feed_switch
+from application import feed_switch, kaa_gate
 from application.notify import TelegramError, api
 from domain.kktc_time import kktc_hour, to_kktc
 from infrastructure.config import redact
@@ -43,15 +43,18 @@ def source_limit_hours(source: dict) -> int:
         return 12  # gündüz 2 saatte bir, gece 8 saatte bir
     if source["platform"] == "instagram":
         return 6  # gündüz 30 dk, gece 2 saatte bir
-    return 3  # kktcar, kibrisarabaal: 15-30 dakikada bir
+    if "kibrisarabaal" in source["url"]:
+        return 6  # gündüz 30 dk, gece 120 dk (21.10.2026: izin kapısıyla seyreldi); kapı kapalıyken hiç gecikme sayılmaz (kaa_gate)
+    return 3  # kktcar: 15-30 dakikada bir
 
 
 def source_problems(repo: Repository) -> list[tuple[str, str]]:
     """(anahtar, mesaj) listesi: uzun süredir kontrol edilmeyen veya haftadır yeni ilan getirmeyen kaynaklar."""
     problems = []
     quiet = feed_switch.quiet_platforms(repo)  # duraklatılmış (ya da yeni devam eden, henüz toplanmamış) sosyal kaynak uyarı vermez
+    kaa_idle = kaa_gate.idle_reason(repo) is not None  # KibrisArabaAl bilerek okunmuyor (izin kapısı kapalı / engel beklemesi): uyarı yok
     for s in repo.stale_sources():
-        if s["platform"] in quiet:
+        if s["platform"] in quiet or (kaa_idle and kaa_gate.is_kaa_url(s.get("url"))):
             continue
         limit_h = source_limit_hours(s)
         if s["hours_since_check"] > limit_h:
@@ -79,7 +82,10 @@ def volume_problems(repo: Repository, now: datetime | None = None) -> list[tuple
         return []
     day_start = to_kktc(now).replace(hour=VOLUME_DAY_START, minute=0, second=0, microsecond=0)
     out = []
+    kaa_idle = kaa_gate.idle_reason(repo, now) is not None
     for s in repo.source_volume():
+        if kaa_idle and kaa_gate.is_kaa_url(s.get("url")):
+            continue  # izin kapısı kapalıyken KibrisArabaAl'dan yeni ilan gelmemesi beklenen durum
         last, per_day = s["last_new"], s["per_day"] or 0
         if (repo.get_state(f"fail:{s['name']}", "0") or "0") != "0":  # tarama hata veriyor: kaynak alarmı (source_alarm) söyler; burada
             continue  # "tarama çalışıyor görünüyor" demek yanlış olur (10.10.2026: KibrisArabaAl Cloudflare 403)

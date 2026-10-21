@@ -897,14 +897,14 @@ class Repository:
 
     def source_volume(self) -> list[dict]:
         """Anlık bildirim veren web kaynakları: son 7 günün (bugünden önceki 24 saat hariç) günlük ortalama yeni ilan sayısı ve son yeni ilan anı
-        (hacim alarmı: health.volume_problems). Kopyalar da sayılır: sitenin kendi yayın akışı ölçülür."""
+        (hacim alarmı: health.volume_problems; url: izin kapısı kapalı KibrisArabaAl atlanır). Kopyalar da sayılır: sitenin kendi yayın akışı ölçülür."""
         return self.conn.execute(
-            """SELECT s.id, s.name,
+            """SELECT s.id, s.name, s.url,
                       count(l.id) FILTER (WHERE l.first_seen_at BETWEEN NOW() - interval '8 days' AND NOW() - interval '1 day')::float8 / 7 AS per_day,
                       max(l.first_seen_at) AS last_new
                FROM sources s LEFT JOIN listings l ON l.source_id = s.id AND l.first_seen_at > NOW() - interval '8 days'
                WHERE s.platform = 'web' AND s.status = 'aktif' AND s.alert_level = 'yesil'
-               GROUP BY s.id, s.name"""
+               GROUP BY s.id, s.name, s.url"""
         ).fetchall()
 
     def sources_failing_feedback(self, window: int = 10, max_bad: int = 3) -> list[dict]:

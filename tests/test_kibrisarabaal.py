@@ -29,16 +29,17 @@ def test_not_a_listing_page():
 
 
 class _Resp:
-    def __init__(self, status, url, text=""):
-        self.status_code, self.url, self.text = status, url, text
+    def __init__(self, status, url, text="", headers=None):
+        self.status_code, self.url, self.text, self.headers = status, url, text, headers or {}
 
 
 class _Client:
-    def __init__(self, resp):
-        self.resp = resp
+    def __init__(self, *resps):
+        self.resps, self.urls = list(resps), []
 
     def get(self, url, timeout=30):
-        return self.resp
+        self.urls.append(url)
+        return self.resps[0] if len(self.resps) == 1 else self.resps.pop(0)
 
 
 def _entry():
@@ -57,7 +58,33 @@ def test_template_change_is_unreadable_not_gone():
     same = "https://kibrisarabaal.com/ilan/12345-mazda-demio"
     assert fetch_detail(_Client(_Resp(200, same, "<html><body>yeni tasarım</body></html>")), _entry()) is None  # tekrar denenir
     assert fetch_detail(_Client(_Resp(200, same, HTML)), _entry())["brand"] == "Mazda"
-    assert fetch_detail(_Client(_Resp(503, same)), _entry()) is None
+    assert fetch_detail(_Client(_Resp(500, same)), _entry()) is None  # sunucu hatası: okunamadı (21.10.2026'ya kadar 503 de buradaydı)
+
+
+def test_block_codes_raise_blocked_with_retry_after():
+    """21.10.2026: 403/429/503 artık "okunamadı" değil Blocked: tur durur, 24 saat istek yok (application/kaa_gate)."""
+    from datetime import timedelta
+
+    import pytest
+
+    from infrastructure.collectors.kibrisarabaal import Blocked, fetch_detail
+    same = "https://kibrisarabaal.com/ilan/12345-mazda-demio"
+    for code in (403, 429, 503):
+        with pytest.raises(Blocked) as e:
+            fetch_detail(_Client(_Resp(code, same, headers={"Retry-After": "7200"})), _entry())
+        assert e.value.status == code and e.value.retry_after == timedelta(hours=2)
+
+
+def test_redirect_away_from_the_listing_is_gone_without_requesting_the_target():
+    """Kaldırılan ilan ana sayfaya yönlenir: hedef (ana sayfa) hiç istenmez (her istek sayılır ve aralıklanır)."""
+    from infrastructure.collectors.kibrisarabaal import fetch_detail
+    c = _Client(_Resp(301, _entry().url, headers={"location": "/"}))
+    assert fetch_detail(c, _entry())["urgency_signals"] == ["kaldirildi"] and len(c.urls) == 1
+    own = _entry().url + "/"  # ilanın kendi adresine (sondaki /) yönlenme izlenir
+    c = _Client(_Resp(301, _entry().url, headers={"location": own}), _Resp(200, own, HTML))
+    assert fetch_detail(c, _entry())["brand"] == "Mazda" and c.urls == [_entry().url, own]
+    c = _Client(_Resp(302, _entry().url, headers={"location": "https://baska-site.example/ilan/12345-x"}))
+    assert fetch_detail(c, _entry())["is_active"] is False and len(c.urls) == 1  # başka siteye: izlenmez
 
 
 def test_baslik_yili_ile_alan_yili_celisirse_eski_yil_alinir():

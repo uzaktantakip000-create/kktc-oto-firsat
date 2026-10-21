@@ -1,7 +1,7 @@
 """Adım 2a: KibrisArabaAl'da toplu "satıldı/kaldırıldı" koruması. Site yönlendirmeyi/şablonu değiştirir ya da botu engellerse okunan
-ilanların çoğu aynı anda "kapalı" görünür; bu ilanlar pasifleştirilirse "satıldı" işareti emsale girer. Yarısı kapanıyorsa hiçbiri yazılmaz."""
-from contextlib import nullcontext
-
+ilanların çoğu aynı anda "kapalı" görünür; bu ilanlar pasifleştirilirse "satıldı" işareti emsale girer. Yarısı kapanıyorsa hiçbiri yazılmaz.
+(21.10.2026: aktif ilanların yeniden okunması (refresh_active) kaldırıldı; koruma yeni ilanlarda sürüyor. Testler izin kapısı açık, sahte
+istemciyle: siteye istek yok.)"""
 import pytest
 
 from application import collect_kibrisarabaal as kaa
@@ -14,19 +14,9 @@ OPEN = {"price_amount": 9000.0, "currency": "GBP"}
 
 
 class Repo:
-    def __init__(self, stale=(), known=()):
-        self.stale, self.known = list(stale), set(known)
-        self.applied, self.touched, self.upserts, self.checked, self.state = [], [], [], [], {}
-
-    def stale_active(self, source_id, hours, limit):
-        return self.stale
-
-    def apply_refresh(self, listing_id, old, data):
-        self.applied.append(listing_id)
-        return "pasif" if data.get("is_active") is False else None
-
-    def touch(self, listing_id):
-        self.touched.append(listing_id)
+    def __init__(self, known=()):
+        self.known = set(known)
+        self.upserts, self.checked, self.state, self.missing = [], [], {}, []
 
     def known_item_ids(self, source_id):
         return self.known
@@ -48,14 +38,24 @@ class Repo:
         self.state[key] = value
 
     def deactivate_missing(self, source_id, present):
+        self.missing.append(set(present))
         return 0
 
 
+class NoNetwork:
+    """Sahte istemci: toplayıcının site fonksiyonları sahte olduğundan hiç çağrılmamalı."""
+
+    def get(self, *a, **k):
+        raise AssertionError("siteye istek atılmamalıydı")
+
+
 @pytest.fixture(autouse=True)
-def offline(monkeypatch):
-    monkeypatch.setattr(site, "polite_sleep", lambda: None)
+def offline(monkeypatch, kaa_open):
     monkeypatch.setattr(kaa, "gbp_rate", lambda currency: 1.0)
-    monkeypatch.setattr(site, "new_client", lambda: nullcontext())
+
+
+def collect(repo, **kw):
+    return kaa.collect_kibrisarabaal(repo, SOURCE, client=NoNetwork(), sleep=lambda s: None, **kw)
 
 
 def test_thresholds():
@@ -64,38 +64,12 @@ def test_thresholds():
     assert "bu ilanlar pasifleştirilmedi" in removed_message("KAA", 10, 6)
 
 
-def rows(n):
-    return [dict(id=f"r{i}", url=f"https://x/{i}", source_item_id=str(i)) for i in range(n)]
-
-
 def detail(closed_ids):
     return lambda client, entry: dict(GONE) if entry.item_id in closed_ids else dict(OPEN)
 
 
-def test_refresh_mass_removal_writes_nothing_for_the_closed_ones(monkeypatch):
-    monkeypatch.setattr(site, "fetch_detail", detail({"0", "1", "2", "3", "4", "5"}))  # 10 okunan ilanın 6'sı "kapalı"
-    repo, stats = Repo(rows(10)), kaa.KaaStats()
-    kaa.refresh_active(repo, SOURCE, None, stats)
-    assert repo.applied == ["r6", "r7", "r8", "r9"]  # yalnız açık görünenler işlendi; kapalı görünenlere dokunulmadı
-    assert stats.went_inactive == 0 and len(stats.suspect) == 1 and "10 ilandan 6'i" in stats.suspect[0]
-
-
-def test_refresh_few_removals_are_applied_as_before(monkeypatch):
-    monkeypatch.setattr(site, "fetch_detail", detail({"2", "7"}))  # 10 ilanın 2'si gerçekten kapanmış
-    repo, stats = Repo(rows(10)), kaa.KaaStats()
-    kaa.refresh_active(repo, SOURCE, None, stats)
-    assert len(repo.applied) == 10 and stats.went_inactive == 2 and stats.suspect == []
-
-
-def test_refresh_too_few_samples_are_not_blocked(monkeypatch):
-    monkeypatch.setattr(site, "fetch_detail", detail({"0", "1", "2", "3"}))  # 4 ilan, hepsi kapalı: örnek küçük
-    repo, stats = Repo(rows(4)), kaa.KaaStats()
-    kaa.refresh_active(repo, SOURCE, None, stats)
-    assert stats.went_inactive == 4 and stats.suspect == []
-
-
 def entries(n):
-    return [site.Entry(f"https://x/{i}", str(i), None) for i in range(1, n + 1)]
+    return [site.Entry(f"https://kibrisarabaal.com/ilan/{i}-x", str(i), None) for i in range(1, n + 1)]
 
 
 def test_new_entries_mass_removal_is_not_recorded_and_the_round_fails_after_everything_else(monkeypatch):
@@ -103,7 +77,7 @@ def test_new_entries_mass_removal_is_not_recorded_and_the_round_fails_after_ever
     monkeypatch.setattr(site, "fetch_detail", detail({"1", "2", "3", "4", "5", "6"}))  # 10 yeni ilanın 6'sı kapalı görünüyor
     repo = Repo()
     with pytest.raises(RuntimeError, match="satıldı/kaldırıldı"):
-        kaa.collect_kibrisarabaal(repo, SOURCE)
+        collect(repo)
     assert sorted(i for i, active in repo.upserts) == ["10", "7", "8", "9"] and all(a is None for _, a in repo.upserts)  # kapalılar yazılmadı
     assert repo.checked == [1]  # kaynak "kontrol edildi" olarak işaretlendi (bayat alarmı yerine gerçek hata mesajı)
 
@@ -112,33 +86,27 @@ def test_new_entries_few_removals_recorded_as_before(monkeypatch):
     monkeypatch.setattr(site, "fetch_sitemap", lambda client: entries(10))
     monkeypatch.setattr(site, "fetch_detail", detail({"3", "9"}))
     repo = Repo()
-    stats = kaa.collect_kibrisarabaal(repo, SOURCE)
+    stats = collect(repo)
     assert stats.deactivated == 2 and stats.new == 8 and sorted(a for _, a in repo.upserts if a is False) == [False, False]
 
 
-def test_cloudflare_block_pauses_requests_for_two_hours_and_still_counts_as_failure(monkeypatch):
-    """10.10.2026: site haritası 403 (Cloudflare "you have been blocked"). Engel sürerken her 15 dakikada istek atılmaz; tur yine hata sayılır."""
-    import httpx
-    from datetime import datetime, timedelta, timezone
-    now = datetime(2026, 10, 10, 20, 5, tzinfo=timezone.utc)
-    calls = []
+def test_removals_come_from_the_sitemap_not_from_rereading_active_listings(monkeypatch):
+    """Satılan/kaldırılan ilan: haritadan düşünce deactivate_missing (bilinen ilanlar yeniden İSTENMEZ)."""
+    monkeypatch.setattr(site, "fetch_sitemap", lambda client: entries(600))
+    asked = []
+    monkeypatch.setattr(site, "fetch_detail", lambda client, entry: asked.append(entry.item_id) or dict(OPEN))
+    repo = Repo(known={str(i) for i in range(1, 601)})  # hepsi zaten kayıtlı
+    stats = collect(repo)
+    assert asked == [] and stats.fetched == 0  # aktif ilanlar yeniden okunmuyor (eski refresh_active günde ~2.000 istek)
+    assert repo.missing == [{str(i) for i in range(1, 601)}]  # haritadakiler dışındakiler pasifleşir
 
-    def blocked(client):
-        calls.append(1)
-        raise httpx.HTTPStatusError("403", request=httpx.Request("GET", "https://x"), response=httpx.Response(403))
 
-    monkeypatch.setattr(site, "fetch_sitemap", blocked)
+def test_unreadable_new_listing_is_tried_at_most_twice(monkeypatch):
+    """Her ilan bir kez okunur; okunamayan (5xx/şablon) yalnız bir kez daha denenir, sonra bir daha istenmez."""
+    monkeypatch.setattr(site, "fetch_sitemap", lambda client: entries(1))
+    asked = []
+    monkeypatch.setattr(site, "fetch_detail", lambda client, entry: asked.append(entry.item_id))
     repo = Repo()
-    with pytest.raises(httpx.HTTPStatusError):
-        kaa.collect_kibrisarabaal(repo, SOURCE, now=now)
-    assert repo.state[kaa.BLOCK_KEY] == (now + timedelta(hours=2)).isoformat()
-    with pytest.raises(RuntimeError, match="403"):  # beklerken: istek yok, hata mesajında 403 (kaynak alarmı nedeni)
-        kaa.collect_kibrisarabaal(repo, SOURCE, now=now + timedelta(minutes=15))
-    assert len(calls) == 1
-    with pytest.raises(httpx.HTTPStatusError):  # 2 saat sonra yeniden denenir
-        kaa.collect_kibrisarabaal(repo, SOURCE, now=now + timedelta(hours=2, minutes=1))
-    assert len(calls) == 2
-    repo.state[kaa.BLOCK_KEY] = "bozuk"
-    monkeypatch.setattr(site, "fetch_sitemap", lambda client: [])
-    monkeypatch.setattr(kaa, "refresh_active", lambda *a, **k: None)
-    kaa.collect_kibrisarabaal(repo, SOURCE, now=now)  # bozuk kayıt beklemez
+    for _ in range(4):
+        collect(repo)
+    assert asked == ["1", "1"]
