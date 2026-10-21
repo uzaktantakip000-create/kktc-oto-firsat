@@ -61,9 +61,17 @@ def _day(dt: datetime) -> str:
     return f"{to_kktc(dt):%d.%m}"
 
 
+def last_alive(r: dict) -> datetime | None:
+    """İlanın kaynakta en son CANLI görüldüğü an (22.10.2026): `last_alive_at` (migration 019: KKTCar ilan sayfası aktif okununca, KKTCarabam/
+    Mezunum listede yeniden görülünce). `last_seen_at` tek başına yanıltıyordu: Mezunum/KKTCarabam'da listede yeniden görülen bilinen ilanda
+    güncellenmez (canlıda Mezunum'un 13 aktif ilanının 12'si bugün listede ama last_seen_at eski: "bilemiyorum" yazıyordu), KKTCar/KibrisArabaAl'da
+    sayfa okunamasa da (touch) güncellenir. `last_alive_at` boşsa (019 öncesi satır) last_seen_at."""
+    return r.get("last_alive_at") or r.get("last_seen_at")
+
+
 def status_line(r: dict, now: datetime) -> str:
-    """Bugünkü durum, yalnız veritabanından (siteye istek yok)."""
-    seen = r.get("last_seen_at")
+    """Bugünkü durum, yalnız veritabanından (siteye istek yok). "Son görülme" = kaynakta canlı görüldüğü son an (`last_alive`)."""
+    seen = last_alive(r)
     if r.get("platform") in SOCIAL_NOTE:
         return f"❔ {SOCIAL_NOTE[r['platform']]} (paylaşım {_day(r['posted_at'] or r['first_seen_at'])})"
     for host, why in BLOCKED_SOURCES.items():

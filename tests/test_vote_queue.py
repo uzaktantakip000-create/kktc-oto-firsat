@@ -73,6 +73,21 @@ def test_status_line_says_only_what_the_database_knows(over, expected):
     assert vq.status_line(row(**over), NOW) == expected
 
 
+@pytest.mark.parametrize("over,expected", [
+    # Mezunum/KKTCarabam: bilinen ilan listede yeniden görülünce yalnız last_alive_at güncellenir (canlıda Mezunum 13 ilanın 12'si böyle)
+    ({"last_seen_at": NOW - timedelta(days=5), "last_alive_at": NOW - timedelta(hours=2)}, "✅ Hâlâ ilanda (son görülme 20.10)"),
+    # KKTCar: sayfa okunamadı (touch) → last_seen_at yeni ama canlı görülmedi: "ilanda" denmez
+    ({"last_seen_at": NOW - timedelta(hours=1), "last_alive_at": NOW - timedelta(days=5)}, "❔ Hâlâ ilanda mı bilemiyorum (son görülme 15.10)"),
+    # KibrisArabaAl: son canlı görülme gösterilir (sonraki okunamayan "touch" değil)
+    ({"source_url": "https://kibrisarabaal.com/", "last_seen_at": NOW - timedelta(days=10), "last_alive_at": NOW - timedelta(days=11)},
+     "❔ KibrisArabaAl 10.10'dan beri bizi engelliyor: hâlâ ilanda mı bilemiyorum (son görülme 09.10)"),
+    ({"last_alive_at": None}, "✅ Hâlâ ilanda (son görülme 20.10)"),  # 019 öncesi satır: last_seen_at
+])
+def test_status_line_uses_when_the_listing_was_last_seen_alive(over, expected):
+    """22.10.2026: durum satırı `last_seen_at`'e bakıyordu; ilanın kaynakta canlı görüldüğü an `last_alive_at`'tir (migration 019)."""
+    assert vq.status_line(row(**over), NOW) == expected
+
+
 def test_message_shows_price_change_median_date_source_and_link():
     text = vq.message(row(price_gbp=4200.0, price_amount=4200.0), 2, 7, NOW)
     lines = text.splitlines()
@@ -163,6 +178,7 @@ def test_the_best_tier_and_the_price_at_send_time_are_returned(db):
     alert(db, lid, OWNER, "guclu", days=1)
     [r] = db.owner_vote_queue(OWNER, [str(lid)])  # ⚡ hafızasında da olsa alerts satırı varken ikinci satır yok
     assert r["tier"] == "guclu" and r["price_sent"] == 6000 and r["canon"] == lid
+    assert "last_alive_at" in r and "last_seen_at" in r  # durum satırı canlı görülme anını kullanır (vote_queue.last_alive)
 
 
 def test_a_suspicious_km_is_marked():

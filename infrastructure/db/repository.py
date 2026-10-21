@@ -1016,7 +1016,8 @@ class Repository:
                       AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.tier = ANY(%(tiers)s) AND a.chat_id = %(chat)s))
                 SELECT l.id, COALESCE(l.duplicate_of, l.id) AS canon, x.tier, x.sent_at, x.price_sent::float8 AS price_sent,
                        l.year, l.brand, l.model, l.brand_norm, l.model_norm, l.km, l.price_gbp::float8 AS price_gbp,
-                       l.price_amount::float8 AS price_amount, l.currency, l.url, l.seller_phone, l.last_seen_at, l.posted_at, l.first_seen_at,
+                       l.price_amount::float8 AS price_amount, l.currency, l.url, l.seller_phone, l.last_seen_at, l.last_alive_at, l.posted_at,
+                       l.first_seen_at,
                        s.name AS source_name, s.url AS source_url, s.platform,
                        COALESCE((SELECT e.market_median_gbp FROM evaluations e WHERE e.id = x.ev_id),
                                 (SELECT e.market_median_gbp FROM evaluations e WHERE e.listing_id = l.id AND e.evaluated_at <= x.sent_at + interval '1 hour'
