@@ -54,14 +54,15 @@ def _source_line(r: dict, quiet: set | frozenset = frozenset(), kaa_idle: str | 
     return f"{mark} {kind}: {r['name']} · {_ago(r['hours_since_check'])} · {r['fresh_n']} güncel ilan, bugün {r['new_24h']} yeni"
 
 
-# kopya ilan (duplicate_of: aynı aracın yeniden paylaşımı/başka sitedeki ikizi) sayılmaz (21.10.2026): Facebook'ta bir araç 10 gruba atılınca
-# "10 yeni ilan" görünüyordu
-_SOURCE_SQL = """SELECT s.name, s.platform, s.url, s.status, s.alert_level,
+# "Yeni ilan"ın TEK tanımı: /durum (kaynak satırları, Facebook bloğu) ve sabah nabzı aynı sayar. Son 24 saatte yayınlanan (tarihi yoksa ilk
+# görülen), hâlâ satışta görünen ve KOPYA OLMAYAN ilan. Kopya (duplicate_of: aynı aracın yeniden paylaşımı/başka sitedeki ikizi) sayılmaz:
+# Facebook'ta bir araç 10 gruba atılınca "10 yeni ilan" görünüyordu (/durum 21.10.2026; sabah nabzı 22.10.2026: 1.195 derken tekil ~440).
+NEW_24H_SQL = "l.is_active AND l.duplicate_of IS NULL AND COALESCE(l.posted_at, l.first_seen_at) > NOW() - interval '24 hours'"
+_SOURCE_SQL = f"""SELECT s.name, s.platform, s.url, s.status, s.alert_level,
                   EXTRACT(EPOCH FROM (NOW() - s.last_checked_at)) / 3600 AS hours_since_check,
                   (SELECT count(*) FROM listings l WHERE l.source_id = s.id AND l.is_active AND l.duplicate_of IS NULL
                       AND COALESCE(l.posted_at, l.first_seen_at) > NOW() - interval '60 days') AS fresh_n,
-                  (SELECT count(*) FROM listings l WHERE l.source_id = s.id AND l.is_active AND l.duplicate_of IS NULL
-                      AND COALESCE(l.posted_at, l.first_seen_at) > NOW() - interval '24 hours') AS new_24h
+                  (SELECT count(*) FROM listings l WHERE l.source_id = s.id AND {NEW_24H_SQL}) AS new_24h
            FROM sources s ORDER BY s.platform, s.name"""
 
 
@@ -239,13 +240,14 @@ def build_heartbeat(repo: Repository, now: datetime | None = None) -> str:
     """Günlük "sistem çalışıyor" nabzı (sahibin kararı 03.10.2026: sabah durumu kalktı; ayrıntı /durum'da). Arıza varsa ayrıca haber gider
     (check_sources, kaynak alarmı); burada yalnız gecikme sayısı + son 24 saat sayıları + öz-izleme satırları (application/selfwatch)."""
     now = now or datetime.now(timezone.utc)
-    new_n = repo.conn.execute("SELECT count(*) AS n FROM listings WHERE first_seen_at > NOW() - interval '24 hours'").fetchone()["n"]
+    new_n = repo.conn.execute(f"SELECT count(*) AS n FROM listings l WHERE {NEW_24H_SQL}").fetchone()["n"]  # /durum ile aynı tanım
     # 🟢 ve 🟠 ayrı sayılır; ⚡ ("acil", 20.10.2026) satırları FILTER ile bilerek dışarıda: nabızdaki sayılar 🟢/🟠 ölçüsüdür
     sent = repo.conn.execute(
         "SELECT count(DISTINCT listing_id) FILTER (WHERE tier='guclu') AS strong, count(DISTINCT listing_id) FILTER (WHERE tier='tahmini') AS est "
         "FROM alerts WHERE sent_at > NOW() - interval '24 hours'").fetchone()
     late = late_sources(repo, now)
-    text = f"✅ Sistem çalışıyor · son 24 saatte {new_n} yeni ilan tarandı, {sent['strong'] or 0} 🟢 ve {sent['est'] or 0} 🟠 gönderildi."
+    text = (f"✅ Sistem çalışıyor · son 24 saatte {new_n} yeni ilan tarandı (kopyalar hariç), {sent['strong'] or 0} 🟢 ve {sent['est'] or 0} 🟠 "
+            "gönderildi.")
     if late:
         text += f"\n⚠️ {len(late)} yerde gecikme var (ayrıntı: /durum)."
     for line in selfwatch.morning_lines(repo, now):  # en çok 3 satır: taramalar nerede + yedek sağlığı, son yedek, sosyal okuyucu (kayıt/dosya yoksa satır yok; hata sabah mesajını bozmaz)

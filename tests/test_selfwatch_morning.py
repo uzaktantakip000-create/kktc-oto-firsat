@@ -166,14 +166,14 @@ def test_a_failing_resource_measurement_drops_only_the_resource_part(monkeypatch
 # --- sabah nabzı (build_heartbeat / send_morning_status) ------------------------------------------------------------------------
 def test_heartbeat_is_unchanged_when_there_are_no_records():
     text = status.build_heartbeat(FakeRepo([src("KKTCar")]), NOW)
-    assert text == "✅ Sistem çalışıyor · son 24 saatte 3 yeni ilan tarandı, 2 🟢 ve 1 🟠 gönderildi." and len(text.splitlines()) == 1
+    assert text == "✅ Sistem çalışıyor · son 24 saatte 3 yeni ilan tarandı (kopyalar hariç), 2 🟢 ve 1 🟠 gönderildi." and len(text.splitlines()) == 1
 
 
 def test_heartbeat_appends_the_new_lines_after_the_delay_warning():
     repo = FakeRepo([src("KKTCar"), src("Yeni", hours=None)])
     repo.state.update({VPS_TICK_KEY: ago(4, NOW), GH_TICK: ago(9, NOW), BACKUP: ago(60 * 24 * 3, NOW)})
     assert status.build_heartbeat(repo, NOW).splitlines() == [
-        "✅ Sistem çalışıyor · son 24 saatte 3 yeni ilan tarandı, 2 🟢 ve 1 🟠 gönderildi.",
+        "✅ Sistem çalışıyor · son 24 saatte 3 yeni ilan tarandı (kopyalar hariç), 2 🟢 ve 1 🟠 gönderildi.",
         "⚠️ 1 yerde gecikme var (ayrıntı: /durum).",
         "Taramalar: sunucuda ✅ (son tur 4 dk önce) · yedek GitHub ✅",
         "Son veritabanı yedeği: 3 gün önce",
@@ -188,7 +188,7 @@ def test_heartbeat_keeps_its_first_line_even_when_every_selfwatch_read_fails():
             return super().get_state(k, default)
 
     text = status.build_heartbeat(Flaky([src("KKTCar")]), NOW)
-    assert text == "✅ Sistem çalışıyor · son 24 saatte 3 yeni ilan tarandı, 2 🟢 ve 1 🟠 gönderildi."  # sabah mesajı gene gider
+    assert text == "✅ Sistem çalışıyor · son 24 saatte 3 yeni ilan tarandı (kopyalar hariç), 2 🟢 ve 1 🟠 gönderildi."  # sabah mesajı gene gider
 
 
 def test_the_morning_message_carries_the_new_lines_and_is_still_sent_once(monkeypatch):

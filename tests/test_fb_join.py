@@ -156,8 +156,12 @@ def test_public_groups_are_read_without_joining_closed_ones_wait_in_line(sent, i
     assert fb_join.discover(repo, data, NOW, log=lambda _: None) == (3, 1)
     assert inserted == [("fb:333", "KKTC Araba Pazarı", "aktif", 2), ("fb:555", "Kıbrıs Araç Alım", "aday", 2),
                         ("fb:444", "Girne Oto", "aday", 4)]  # var olan 111/222'ye dokunulmaz
+    assert sent == []  # öğlen: akşam özetine kaldı
+    assert fb_join.send_digest(repo, EVENING) is True
     ((key, text),) = sent
-    assert "1 açık grup okunmaya başladı (katılmadan): KKTC Araba Pazarı" in text and "2 kapalı grup katılma sırasına girdi" in text
+    assert key == "fb_kesif_20261014"
+    assert "1 açık grup okunmaya başladı (katılmadan): KKTC Araba Pazarı" in text
+    assert "2 kapalı grup katılma sırasına girdi: Kıbrıs Araç Alım, Girne Oto" in text
 
 
 def test_discovery_daily_caps_and_full_limit(sent, inserted, monkeypatch):
@@ -192,19 +196,23 @@ def test_a_public_group_that_needs_membership_goes_back_in_line(sent):
 
 # --- gölge süresi (sahip 11.10.2026: okuyucunun bulduğu grup ilk 3 gün gölgede) ---
 class PromoRepo(Repo):
-    def __init__(self, rows, mix=(10, 0)):
+    def __init__(self, rows, mix=(10, 0), texts=()):
         super().__init__(rows)
-        self.mix, self.levels = mix, []
+        self.mix, self.levels, self.texts, self.text_calls = mix, [], list(texts), []
 
     def currency_mix(self, source_id, days):
         return self.mix
+
+    def priced_texts(self, source_id, days):
+        self.text_calls.append((source_id, days))
+        return self.texts
 
     def set_alert_level(self, source_id, level):
         self.levels.append((source_id, level))
 
 
 def test_a_found_group_joins_in_shadow_and_goes_live_after_three_days(sent):
-    repo = PromoRepo([src(7, "111", "aday", "Bulunan") | {"alert_level": "golge"}])
+    repo = PromoRepo([src(7, "111", "aday", "Girne Oto") | {"alert_level": "golge"}])
     fb_join.check(repo, status(("fb:111", "uye")), NOW, log=lambda _: None)
     assert "İlk 3 gün gölgede okunur" in sent[0][1] and repo.state[fb_join.SHADOW_KEY.format("fb:111")] == NOW.isoformat()
     repo.rows[0]["status"] = "aktif"
@@ -226,7 +234,7 @@ def test_a_shadow_group_without_any_priced_listing_stays_in_shadow_and_is_quiet(
     """22.10.2026: keşfin açtığı yabancı gruplar (Bristol Uni Students, Ole Miss bilet grubu…) 3 günde hiç ilan getirmedi; eski kod onları
     "✅ … sorunsuz okundu (0 fiyatlı ilan). Artık fırsatları anında gelecek." diye yeşile alıyordu. Ölçülecek ilan yoksa gölge sürer, mesaj yok;
     fiyatlı ilan gelince (euro kontrolüyle) yeşile geçer."""
-    empty = PromoRepo([src(9, "555", "aktif", "Bristol Uni Students") | {"alert_level": "golge"}], mix=(0, 0))
+    empty = PromoRepo([src(9, "555", "aktif", "KKTC Oto Pazarı") | {"alert_level": "golge"}], mix=(0, 0))
     fb_join.start_shadow(empty, "fb:555", NOW)
     assert fb_join.promote(empty, NOW + timedelta(days=5), log=lambda _: None) == 0 and empty.levels == [] and sent == []
     empty.mix = (2, 0)  # gölgede okunmaya devam etti, fiyatlı ilan geldi
@@ -234,11 +242,133 @@ def test_a_shadow_group_without_any_priced_listing_stays_in_shadow_and_is_quiet(
     assert "(2 fiyatlı ilan)" in sent[-1][1]
 
 
+# --- KKTC kapısı (22.10.2026, spec §24.38): £ yazan İngiltere/ABD grubu herkese yanlış 🟢 getirebilirdi ---
+UK = [{"raw_text": "2014 Toyota Vitz £5200 Bristol, collection BS1", "location": None, "seller_phone": None}] * 6
+KKTC = [{"raw_text": "2014 Toyota Vitz 5200 stg Girne", "location": None, "seller_phone": None}] * 4
+
+
+def shadow_group(name, texts=(), mix=(6, 0)):
+    repo = PromoRepo([src(9, "555", "aktif", name) | {"alert_level": "golge"}], mix=mix, texts=texts)
+    fb_join.start_shadow(repo, "fb:555", NOW)
+    return repo
+
+
+def test_a_pound_priced_foreign_group_stays_in_shadow_and_the_owner_is_told_once(sent):
+    repo = shadow_group("Bristol Uni Students - buy, sell and free stuff", texts=UK)
+    for days in (4, 5, 6):  # her turda yeniden ölçülür, mesaj bir kez
+        assert fb_join.promote(repo, NOW + timedelta(days=days), log=lambda _: None) == 0
+    assert repo.levels == [] and [k for k, _ in sent] == ["fb_golge_kktc_fb:555"]
+    text = sent[0][1]
+    assert "\"Bristol Uni Students - buy, sell and free stuff\" Facebook grubu KKTC grubu olarak tanınmadı" in text
+    assert "Gölgede bıraktım (bildirim yok)" in text and "/kaynak_seviye" in text and "/kaynaklar" in text
+    assert repo.text_calls == [(9, fb_join.SHADOW_DAYS + 1)] * 3  # ölçüm penceresi currency_mix'inkiyle aynı
+
+
+def test_a_group_whose_listings_are_mostly_kktc_goes_live_even_if_its_name_does_not_say_so(sent):
+    """Ders §24.37: ad her şeyi söylemez, ölçüme bakılır. Ad tanımasa da ilanlarının en az üçte ikisi KKTC'yi anıyorsa yeşile geçer."""
+    repo = shadow_group("TÜRKİYE İskele Kiralama Alım Satım Mantolama", texts=UK)
+    assert fb_join.promote(repo, NOW + timedelta(days=4), log=lambda _: None) == 0 and sent[-1][0] == "fb_golge_kktc_fb:555"
+    repo.texts = KKTC * 2 + UK[:2]  # 8 ilanın 6'sı Girne: sonraki turda yeşil
+    assert fb_join.promote(repo, NOW + timedelta(days=5), log=lambda _: None) == 1 and repo.levels == [(9, "yesil")]
+    assert sent[-1][0] == "fb_golge_bitti_fb:555"
+
+
+@pytest.mark.parametrize("name", ["KKTC ARABAM", "SAHIBINDEN AL SAT (KIBRIS)", "North Cyprus Online Market !!!", "GİRNE 2.EL INGILIZ PAZARI",
+                                  "SATILIK ÜRÜNLER İSKELE", "İkinci El Pazarı Mağusa (Second Hand Market Famagusta )", "MEZUNUM SATIYORUM KKTC",
+                                  "kktc motosiklet alim satim"])
+def test_a_group_named_after_kktc_goes_live_without_reading_its_listings(sent, name):
+    repo = shadow_group(name, texts=UK)  # ad yeter: ilan metnine bakılmaz
+    assert fb_join.promote(repo, NOW + timedelta(days=4), log=lambda _: None) == 1 and repo.levels == [(9, "yesil")] and repo.text_calls == []
+
+
+@pytest.mark.parametrize("name", ["Bristol Uni Students - buy, sell and free stuff", "OLE MISS SEASON/REGULAR TICKETS",
+                                  "Buy and Sell Student's Products", "TÜRKİYE İskele Kiralama Alım Satım Mantolama"])
+def test_foreign_or_turkey_named_groups_with_foreign_listings_stay_in_shadow(sent, name):
+    repo = shadow_group(name, texts=UK)
+    assert fb_join.promote(repo, NOW + timedelta(days=4), log=lambda _: None) == 0 and repo.levels == []
+
+
+def test_green_groups_and_euro_groups_are_not_touched_by_the_kktc_gate(sent):
+    green = PromoRepo([src(9, "555", "aktif", "Bristol Uni Students") | {"alert_level": "yesil"}], texts=UK)
+    fb_join.start_shadow(green, "fb:555", NOW)
+    assert fb_join.promote(green, NOW + timedelta(days=4)) == 0 and green.levels == [] and green.text_calls == [] and sent == []
+    euro = shadow_group("Bristol Uni Students", texts=UK, mix=(10, 5))  # euro kontrolü önce: eski mesaj, KKTC mesajı yok
+    assert fb_join.promote(euro, NOW + timedelta(days=4)) == 0 and [k for k, _ in sent] == ["fb_golge_euro_fb:555"]
+
+
 def test_a_discovered_public_group_starts_its_shadow_clock(sent, inserted):
     repo = Repo([])
     fb_join.discover(repo, kesif(("fb:333", "KKTC Araba Pazarı", 20000, "acik", 30), ("fb:444", "Girne Oto", 800, "kapali", 2)), NOW, log=lambda _: None)
     assert fb_join.SHADOW_KEY.format("fb:333") in repo.state and fb_join.SHADOW_KEY.format("fb:444") not in repo.state
+    fb_join.send_digest(repo, EVENING)
     assert "İlk 3 gün gölgede okunur" in sent[0][1]
+
+
+# --- keşif özeti: günde en çok bir mesaj (22.10.2026; dakikalık anahtar 72 saatte 7 mesaj, §24.35'ten beri her aboneye) ---
+EVENING = datetime(2026, 10, 14, 17, 5, tzinfo=timezone.utc)  # KKTC 20:05 (yaz saati, UTC+3)
+
+
+def test_a_days_discoveries_go_out_as_one_evening_message(sent, inserted):
+    repo = Repo([])
+    for i, hours in enumerate((0, 3, 6)):  # KKTC 12:00, 15:00, 18:00: üç ayrı keşif turu
+        fb_join.discover(repo, kesif((f"fb:{i}1", f"Açık {i}", 20000, "acik", 9), (f"fb:{i}2", f"Kapalı {i}", 900, "kapali", 1)),
+                         NOW + timedelta(hours=hours), log=lambda _: None)
+    assert sent == []
+    fb_join.discover(repo, None, EVENING, log=lambda _: None)  # 20:00'den sonraki ilk tur (keşifsiz de olsa) özeti yollar
+    ((key, text),) = sent
+    assert key == "fb_kesif_20261014" and text.startswith("🔎 Okuyucu Facebook'ta yeni araç grupları buldu (günün özeti).")
+    assert "3 açık grup okunmaya başladı (katılmadan): Açık 0, Açık 1, Açık 2" in text
+    assert "3 kapalı grup katılma sırasına girdi: Kapalı 0, Kapalı 1, Kapalı 2" in text and "/kaynaklar" in text
+    for minutes in (15, 30, 120):  # aynı akşamın sonraki turları: mesaj yok
+        fb_join.discover(repo, None, EVENING + timedelta(minutes=minutes), log=lambda _: None)
+    assert len(sent) == 1 and repo.state[fb_join.DIGEST_KEY] == ""
+
+
+def test_after_the_evening_message_new_finds_wait_for_the_next_evening(sent, inserted):
+    repo = Repo([])
+    fb_join.discover(repo, kesif(("fb:11", "Gündüz", 20000, "acik", 9)), NOW, log=lambda _: None)
+    fb_join.discover(repo, None, EVENING, log=lambda _: None)  # akşam özeti gitti
+    fb_join.discover(repo, kesif(("fb:22", "Gece", 20000, "kapali", 9)), EVENING + timedelta(hours=1), log=lambda _: None)
+    assert [k for k, _ in sent] == ["fb_kesif_20261014"] and "Gündüz" in sent[0][1] and "Gece" not in sent[0][1]
+    fb_join.send_digest(repo, NOW + timedelta(days=1))  # ertesi gün öğlen: henüz değil
+    assert len(sent) == 1
+    fb_join.send_digest(repo, EVENING + timedelta(days=1))
+    assert [k for k, _ in sent] == ["fb_kesif_20261014", "fb_kesif_20261015"] and "1 kapalı grup katılma sırasına girdi: Gece" in sent[1][1]
+
+
+def test_a_day_without_an_evening_turn_loses_nothing_and_a_failed_send_is_retried(sent, monkeypatch, inserted):
+    out, fail = [], [True]
+
+    def notify(repo, key, text, repeat_hours=24, **extra):
+        if fail[0]:
+            return False  # Telegram hatası: gönderilmedi
+        out.append((key, text))
+        return True
+    monkeypatch.setattr(fb_join, "notify_owner", notify)  # `sent`in sahte gönderimi yerine
+    repo = Repo([])
+    fb_join.discover(repo, kesif(("fb:11", "Pazartesi", 20000, "acik", 9)), NOW, log=lambda _: None)  # o akşam tur yok
+    fb_join.discover(repo, kesif(("fb:22", "Salı", 20000, "kapali", 9)), NOW + timedelta(days=1), log=lambda _: None)
+    assert fb_join.send_digest(repo, EVENING + timedelta(days=1)) is False and out == []  # gitmedi: liste durur
+    fail[0] = False
+    assert fb_join.send_digest(repo, EVENING + timedelta(days=1, minutes=15)) is True
+    ((key, text),) = out
+    assert key == "fb_kesif_20261015" and "1 açık grup okunmaya başladı (katılmadan): Pazartesi" in text and "Salı" in text
+
+
+def test_digest_text_shows_ten_names_and_counts_the_rest():
+    p = {"acik": [f"G{i}" for i in range(12)], "n_acik": 14, "sira": [], "n_sira": 0}
+    text = fb_join.digest_text(p)
+    assert "14 açık grup okunmaya başladı (katılmadan): G0, G1, G2, G3, G4, G5, G6, G7, G8, G9 ve 4 grup daha" in text
+    assert "kapalı grup" not in text
+
+
+@pytest.mark.parametrize("raw", [None, "", "bozuk", "[1, 2]", '{"acik": "x", "n_acik": "3"}', '{"acik": ["A", 5], "n_acik": 0}'])
+def test_a_broken_pending_record_is_read_safely(raw):
+    repo = Repo([])
+    if raw is not None:
+        repo.state[fb_join.DIGEST_KEY] = raw
+    p = fb_join._pending(repo)
+    assert p["n_acik"] == len(p["acik"]) and p["n_sira"] == 0 and all(isinstance(x, str) for x in p["acik"])
 
 
 
