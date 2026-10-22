@@ -95,6 +95,17 @@ def test_keys_of_stored_urls():
     assert key_of_url("instagram", "https://www.facebook.com/groups/1/") is None
 
 
+def test_keys_of_stored_facebook_pages():
+    """Facebook sayfası (22.10.2026): kayıtlı sayfa satırı "fbp:<ad>" (küçük harf); profil, gönderi, izleme vb. sayfa sayılmaz."""
+    assert key_of_url("facebook", "https://www.facebook.com/KIBRISARABA/") == "fbp:kibrisaraba"
+    assert key_of_url("facebook", "https://www.facebook.com/496128133870951/") == "fbp:496128133870951"
+    assert key_of_url("facebook", "https://www.facebook.com/kibrisaraba/posts/123/") is None
+    assert key_of_url("facebook", "https://www.facebook.com/profile.php?id=1") is None
+    assert key_of_url("facebook", "https://www.facebook.com/watch/") is None
+    assert key_of_url("facebook", "https://www.facebook.com/Yalinc-Oto-Cyprus-1/") is None  # tire okuyucunun sayfa kalıbında yok: kimlikle yazılır
+    assert key_of_url("instagram", "https://www.facebook.com/kibrisaraba/") is None
+
+
 def test_reader_registry_matches_collectors_and_schedule():
     assert set(source_readers.WEB_READERS) == set(cron_collect.WEB_COLLECTORS)
     assert set(source_readers.WEB_READERS) <= set(cron_collect.JOBS)

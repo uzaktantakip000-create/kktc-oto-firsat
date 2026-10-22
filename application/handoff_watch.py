@@ -126,9 +126,12 @@ def history_alerts(samples: list[dict], names: dict[str, str]) -> list[tuple[str
     for key, n in sorted(today.get("gruplar", {}).items()):
         past = [s["gruplar"][key] for s in before if isinstance(s.get("gruplar"), dict) and isinstance(s["gruplar"].get(key), int)]
         if n == 0 and len(past) >= QUIET_MIN_DAYS and sum(past) / len(past) >= QUIET_MIN_AVG:
-            name = names.get(key, "bir Facebook grubu")
-            out.append((f"social_facebook_grup_sessiz_{key[3:][:40]}", f"⚠️ Facebook: \"{name}\" grubunda son 24 saatte hiç yeni gönderi görülmedi "
-                        f"(önceki günler ortalama {sum(past) / len(past):.0f}). Üyelik düşmüş ya da grup gizlenmiş olabilir."))
+            page = key.startswith("fbp:")  # Facebook sayfası (22.10.2026): katılım yok, "üyelik düşmüş" denmez
+            name = names.get(key, "bir Facebook sayfası" if page else "bir Facebook grubu")
+            out.append((f"social_facebook_grup_sessiz_{key.split(':', 1)[-1][:40]}",
+                        f"⚠️ Facebook: \"{name}\" {'sayfasında' if page else 'grubunda'} son 24 saatte hiç yeni gönderi görülmedi "
+                        f"(önceki günler ortalama {sum(past) / len(past):.0f}). "
+                        + ("Sayfa paylaşımı durdurmuş ya da gizlenmiş olabilir." if page else "Üyelik düşmüş ya da grup gizlenmiş olabilir.")))
 
     def high(s: dict) -> bool:
         return isinstance(s.get("kesik"), int) and s.get("gonderi", 0) >= CUT_MIN_POSTS and s["kesik"] / s["gonderi"] > CUT_RATIO

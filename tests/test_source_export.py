@@ -25,6 +25,13 @@ def test_export_build_keeps_closed_rows_and_skips_bad_ones():
     assert items[1]["kullanici"] == "kibris.car" and items[1]["oncelik"] == 11
 
 
+def test_facebook_pages_are_written_with_the_page_key_and_address():
+    """Facebook sayfası (22.10.2026, sosyal oturum 0be07c6): "fbp:<ad>" anahtarı, "sayfa" alanı ve sayfa adresi."""
+    items = source_export.build([src("p1", "facebook", "KIBRISARABA", "https://www.facebook.com/KIBRISARABA/", priority=5)])
+    assert items == [{"anahtar": "fbp:kibrisaraba", "platform": "facebook", "sayfa": "kibrisaraba", "url": "https://www.facebook.com/kibrisaraba/",
+                      "ad": "KIBRISARABA", "oncelik": 5, "durum": "aktif"}]
+
+
 def test_facebook_candidates_are_written_for_the_reader_to_join_but_never_closed_or_excluded_ones():
     """11.10.2026: okuyucu "aday" Facebook gruplarına kendisi katılır (application/fb_join). Aynı grubun kapalı satırı adayı ezer;
     dışarıda tutulan/erişilemeyen grup aday yazılmaz, "disari" yazılır (12.10.2026: okuyucu onu keşifte yeniden bildirmesin);

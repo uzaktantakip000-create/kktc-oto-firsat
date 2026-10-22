@@ -2,7 +2,7 @@
 yönde, sosyal oturumla anlaşılan sözleşme). Tek doğru liste veritabanındaki `sources`tır (bot oradan yönetir); sosyal okuyucu veritabanına
 bağlanmaz, bu dosyayı okur. Dosya yoksa/bozuksa okuyucu kendi son iyi listesiyle devam eder.
 
-Biçim (surum 1): {"surum": 1, "yazildi_utc": ISO, "kaynaklar": [{"anahtar": "ig:<kullanıcı>" | "fb:<grup>", "platform", "kullanici" | "grup",
+Biçim (surum 1): {"surum": 1, "yazildi_utc": ISO, "kaynaklar": [{"anahtar": "ig:<kullanıcı>" | "fb:<grup>" | "fbp:<sayfa>", "platform", "kullanici" | "grup" | "sayfa",
 "url", "ad", "oncelik", "durum": "aktif" | "pasif" | "aday" | "disari"}]}. Kapatılan kaynak "pasif" olarak listede KALIR (okuyucu "okuma"
 bilgisini açıkça alır). "aday" (11.10.2026, sahip: "gruba katılma senin kararınla olsun"): okuyucunun KATILABİLECEĞİ Facebook grubu; okunmaz.
 Katılınca sonuç durum dosyasından gelir ve bot grubu açar (application/fb_join). Sahibin kapattığı/dışarıda tuttuğu grup aday yazılmaz;
@@ -43,8 +43,10 @@ def build(rows: list[dict]) -> list[dict]:
         if key is None or (r["status"] == CANDIDATE and key in never):
             continue
         handle = key.split(":", 1)[1]
-        item = {"anahtar": key, "platform": r["platform"], ("kullanici" if r["platform"] == "instagram" else "grup"): handle,
-                "url": (f"https://www.instagram.com/{handle}/" if r["platform"] == "instagram" else f"https://www.facebook.com/groups/{handle}/"),
+        page = key.startswith("fbp:")  # Facebook sayfası (22.10.2026): okuyucu katılmaz, keşifte aramaz; "aday" sayfa okunmaz
+        item = {"anahtar": key, "platform": r["platform"], ("kullanici" if r["platform"] == "instagram" else "sayfa" if page else "grup"): handle,
+                "url": (f"https://www.instagram.com/{handle}/" if r["platform"] == "instagram" else f"https://www.facebook.com/{handle}/" if page
+                        else f"https://www.facebook.com/groups/{handle}/"),
                 "ad": r["name"], "oncelik": r["priority"] if type(r["priority"]) is int else 99,
                 "durum": "aktif" if r["status"] in OPEN else CANDIDATE if r["status"] == CANDIDATE else OUT if r["status"] in NEVER else "pasif"}
         if key not in out or RANK[item["durum"]] > RANK[out[key]["durum"]]:

@@ -4,7 +4,7 @@ satırları okur, anahtarı sources satırına eşler, gönderileri sosyal ayrı
 collect_facebook.listing_data -> parse_freetext; ikinci bir ayrıştırma yok) ve Repository.upsert_listing ile yazar. Okuyucuya veritabanı
 şifresi verilmez, güvenlik duvarı açılmaz.
 
-Satır (surum 1): {"surum", "platform", "anahtar": "fb:<grup>", "gonderi", "url", "metin", "paylasim_utc", "goruldu_utc", "foto_url"}; isteğe bağlı
+Satır (surum 1): {"surum", "platform", "anahtar": "fb:<grup>" | "fbp:<sayfa>", "gonderi", "url", "metin", "paylasim_utc", "goruldu_utc", "foto_url"}; isteğe bağlı
 (satıcı radarı, 10.10.2026; eski satırlarda yok): "satici_gonderi_14g" (telefonun 14 günde geçtiği FARKLI gönderi sayısı) ve "satici_grup_14g".
 Radar sayısı ilanın seller_type'ına çevrilir (social_ingest.seller_kind); telefon satırda yoktur.
 İsteğe bağlı "ilk_gonderi" (20.10.2026): aynı metnin okuyucunun gördüğü ilk gönderisi; aktarımdan sonra bu ilan o gönderinin ilanının kopyası
@@ -44,6 +44,7 @@ FUTURE_SLACK = timedelta(minutes=10)  # paylaşım saati görülme anından bund
 MAX_RADAR = 10_000  # satıcı radarı sayısının makul üst sınırı (bozuk değer yok sayılır)
 _FILE = re.compile(r"^facebook-\d{8}\.jsonl$")
 _GROUP = re.compile(r"^[a-z0-9._-]{1,64}$")  # kaynaklar.json grup anahtarı (social_files._FB_GROUP ile aynı)
+_PAGE = re.compile(r"^[a-z0-9.]{1,64}$")  # "fbp:<sayfa>" (domain.source_links.FB_PAGE; okuyucunun sayfa kalıbı)
 _POST_ID = re.compile(r"^(?:\d{5,25}|pfbid[A-Za-z0-9]{10,})$")  # facebook_browser._PID_OK ile aynı
 _CDN = re.compile(r"^https://scontent[^/\s]*\.fbcdn\.net/\S+$", re.I)
 # Fotoğraf devri (sosyal oturum 43bba41; sahip onayı 11.10.2026 "fotoğraftan fiyat okuma: evet"): okuyucu fiyatı yazmayan araç gönderisinin
@@ -156,9 +157,15 @@ def parse_line(line: str) -> tuple[str, SocialPost] | str:
     if doc.get("platform") != PLATFORM:
         return "platform"
     key, pid, text = doc.get("anahtar"), doc.get("gonderi"), doc.get("metin")
+    page = key[4:] if isinstance(key, str) and key.startswith("fbp:") else ""
     group = key[3:] if isinstance(key, str) and key.startswith("fb:") else ""
-    if not (_GROUP.match(group) and isinstance(pid, str) and _POST_ID.match(pid) and isinstance(text, str)):
+    if not ((_GROUP.match(group) or _PAGE.match(page)) and isinstance(pid, str) and _POST_ID.match(pid) and isinstance(text, str)):
         return "alan"
+    if page:  # Facebook sayfası (sosyal oturum 0be07c6): bağlantı yine anahtar + kimlikten kurulur; reel yalnız dosyadaki adres tam bu biçimse
+        reel = f"https://www.facebook.com/{page}/reel/{pid}/"
+        url = reel if doc.get("url") == reel else f"https://www.facebook.com/{page}/posts/{pid}/"
+    else:
+        url = f"https://www.facebook.com/groups/{group}/posts/{pid}/"
     photo, radar, photo_file = doc.get("foto_url"), doc.get("satici_gonderi_14g"), doc.get("foto_dosya")
     image = photo if isinstance(photo, str) and _CDN.match(photo) else None
     if isinstance(photo_file, str) and photo_file == f"foto/{pid}.jpg" and _PHOTO_FILE.match(photo_file):
@@ -166,7 +173,7 @@ def parse_line(line: str) -> tuple[str, SocialPost] | str:
     posted, seen = _parse_time(doc.get("paylasim_utc")), _parse_time(doc.get("goruldu_utc"))
     if posted and seen and posted > seen + FUTURE_SLACK:
         posted = None  # gelecekte paylaşılmış olamaz: saat dilimi/okuma hatası (14.10.2026: okuyucu zamanı Facebook yazısından okumaya başladı)
-    post = SocialPost(platform=PLATFORM, source_key=group, post_id=pid, url=f"https://www.facebook.com/groups/{group}/posts/{pid}/",
+    post = SocialPost(platform=PLATFORM, source_key=page or group, post_id=pid, url=url,
                       posted_at=posted or seen, text=text[:MAX_TEXT], image_url=image, dated=posted is not None,
                       seller_posts_14d=radar if type(radar) is int and 1 <= radar <= MAX_RADAR else None,
                       extra_text=_extra_text(doc.get("ek_metin")),
@@ -244,7 +251,7 @@ def import_facebook(repo, devir_dir: Path | str, *, limit: int = MAX_LINES, log:
         reader = make_reader(repo)
     for key, posts in by_key.items():
         row = sources[key]
-        source = SocialSource(platform=PLATFORM, key=key[3:], url=row["url"], alias=key, source_id=row["id"],
+        source = SocialSource(platform=PLATFORM, key=key.split(":", 1)[1], url=row["url"], alias=key, source_id=row["id"],
                               default_steering=group_default_steering(row))
         st = ingest_facebook(posts, source, repo, reader=reader, fetch_image=lambda url: read_photo(devir_dir, url), budget=budget,
                              priceless=True, text_llm=False)
