@@ -202,8 +202,8 @@ def test_page_lines_are_read_with_a_link_built_from_the_page_key():
     key, post = si.parse_line(json.dumps(doc))
     assert key == "fbp:kibrisaraba" and post.source_key == "kibrisaraba"
     assert post.url == "https://www.facebook.com/kibrisaraba/posts/2000000001/"
-    reel = doc | {"url": "https://www.facebook.com/kibrisaraba/reel/2000000001/"}
-    assert si.parse_line(json.dumps(reel))[1].url == reel["url"]
+    for raw in ("https://www.facebook.com/reel/2000000001/", "https://www.facebook.com/kibrisaraba/reel/2000000001/"):
+        assert si.parse_line(json.dumps(doc | {"url": raw}))[1].url == "https://www.facebook.com/reel/2000000001/"
     assert si.parse_line(json.dumps(doc | {"anahtar": "fbp:Kibris-Araba"})) == "alan"
     rows = [{"id": "p1", "platform": "facebook", "url": "https://www.facebook.com/KIBRISARABA/", "status": "aktif"}]
     assert set(si.source_map(rows)) == {"fbp:kibrisaraba"}

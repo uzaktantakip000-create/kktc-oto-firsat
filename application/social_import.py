@@ -161,9 +161,9 @@ def parse_line(line: str) -> tuple[str, SocialPost] | str:
     group = key[3:] if isinstance(key, str) and key.startswith("fb:") else ""
     if not ((_GROUP.match(group) or _PAGE.match(page)) and isinstance(pid, str) and _POST_ID.match(pid) and isinstance(text, str)):
         return "alan"
-    if page:  # Facebook sayfası (sosyal oturum 0be07c6): bağlantı yine anahtar + kimlikten kurulur; reel yalnız dosyadaki adres tam bu biçimse
-        reel = f"https://www.facebook.com/{page}/reel/{pid}/"
-        url = reel if doc.get("url") == reel else f"https://www.facebook.com/{page}/posts/{pid}/"
+    if page:  # Facebook sayfası (sosyal oturum 0be07c6): bağlantı yine anahtar + kimlikten kurulur; reel yalnız dosyadaki adres tam reel biçimiyse
+        reel = f"https://www.facebook.com/reel/{pid}/"  # Facebook'un kendi reel bağlantısı (okuyucu kimliği href="/reel/<kimlik>/"den alır)
+        url = reel if doc.get("url") in (reel, f"https://www.facebook.com/{page}/reel/{pid}/") else f"https://www.facebook.com/{page}/posts/{pid}/"
     else:
         url = f"https://www.facebook.com/groups/{group}/posts/{pid}/"
     photo, radar, photo_file = doc.get("foto_url"), doc.get("satici_gonderi_14g"), doc.get("foto_dosya")
