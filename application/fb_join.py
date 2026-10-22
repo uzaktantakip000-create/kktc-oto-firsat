@@ -19,6 +19,7 @@ from application import sources_cmd
 from application.health import notify_owner
 from application.social_import import ALL_STATUSES, PLATFORM
 from domain.kktc_region import kktc_listings, kktc_named
+from domain.kktc_time import kktc_hour, to_kktc
 from domain.source_links import key_of_url
 
 ONCE_H = 24 * 365  # (grup, durum) mesajı bir kez: tekrar eden dosya okuması yeniden yazmaz
@@ -166,6 +167,13 @@ DISCOVER_PER_DAY = 10
 DISCOVER_OPEN_PER_DAY = 5
 DISCOVER_DAY_KEY = "fb_kesif:gun:{}"  # bot_state: o UTC gününde eklenen {"n": toplam, "acik": açılan}
 _NAME_BAD = re.compile(r"[\x00-\x1f\x7f]")
+# Keşif mesajı günde en çok bir kez (22.10.2026): her keşif turu ayrı "🔎 … buldu" yazıyordu (72 saatte 7 mesaj, §24.35'ten beri her aboneye).
+# Gün içinde bulunanlar DIGEST_KEY'de birikir; KKTC DIGEST_HOUR_KKTC'den sonraki ilk turda tek özet gider (anahtar fb_kesif_<KKTC günü>).
+# O gün o saatten sonra tur olmazsa birikenler kaybolmaz, ertesi günün özetine girer; özetten sonra bulunanlar da ertesi güne kalır.
+DIGEST_KEY = "fb_kesif:bekleyen"  # bot_state: {"acik": [ad], "sira": [ad], "n_acik": sayı, "n_sira": sayı}; gönderilince boşaltılır
+DIGEST_HOUR_KKTC = 20
+DIGEST_SHOW = 10  # özette en çok bu kadar ad (her bölüm); fazlası "ve N grup daha"
+DIGEST_KEEP = 50  # saklanan ad sınırı (Telegram uzun süre yoksa liste büyümesin; sayılar yine doğru)
 
 
 def discovery_priority(members, posts_per_day, kind: str | None = "arac") -> int:
@@ -209,7 +217,67 @@ def _insert_discovered(repo, key: str, name: str, status: str, priority: int) ->
 
 
 def discover(repo, data: dict | None, now: datetime, log=print) -> tuple[int, int]:
-    """Keşif listesindeki yeni grupları ekler; (eklenen, okumaya açılan)."""
+    """Keşif listesindeki yeni grupları ekler; (eklenen, okumaya açılan). Sahibe anında değil, günde bir özetle yazılır (`send_digest`)."""
+    result = _add_discovered(repo, data, now, log)
+    send_digest(repo, now)
+    return result
+
+
+def _pending(repo) -> dict:
+    try:
+        raw = json.loads(repo.get_state(DIGEST_KEY) or "{}")
+    except ValueError:
+        raw = {}
+    raw = raw if isinstance(raw, dict) else {}
+    out = {}
+    for part in ("acik", "sira"):
+        names = raw.get(part)
+        out[part] = [x for x in names if isinstance(x, str)] if isinstance(names, list) else []
+        n = raw.get(f"n_{part}")
+        out[f"n_{part}"] = n if type(n) is int and n >= len(out[part]) else len(out[part])
+    return out
+
+
+def _queue(repo, opened: list[str], waiting: list[str]) -> None:
+    """Bulunanları günün özetine ekler."""
+    p = _pending(repo)
+    for part, names in (("acik", opened), ("sira", waiting)):
+        p[part] = (p[part] + names)[:DIGEST_KEEP]
+        p[f"n_{part}"] += len(names)
+    repo.set_state(DIGEST_KEY, json.dumps(p, ensure_ascii=False))
+
+
+def _names(names: list[str], total: int) -> str:
+    shown = names[:DIGEST_SHOW]
+    return ", ".join(shown) + (f" ve {total - len(shown)} grup daha" if total > len(shown) else "")
+
+
+def digest_text(p: dict) -> str:
+    """Saf: günün keşif özeti (eski anlık mesajın içeriği: açılan ve sıraya giren grupların sayısı ve adları)."""
+    parts = []
+    if p["n_acik"]:
+        parts.append(f"{p['n_acik']} açık grup okunmaya başladı (katılmadan): " + _names(p["acik"], p["n_acik"]))
+    if p["n_sira"]:
+        parts.append(f"{p['n_sira']} kapalı grup katılma sırasına girdi: " + _names(p["sira"], p["n_sira"]))
+    return ("🔎 Okuyucu Facebook'ta yeni araç grupları buldu (günün özeti).\n" + "\n".join(parts)
+            + f"\n{SHADOW_TEXT} İstemediğini /kaynaklar'dan kapatabilirsin.")
+
+
+def send_digest(repo, now: datetime) -> bool:
+    """Biriken keşifleri KKTC DIGEST_HOUR_KKTC'den sonra tek mesajla yazar (KKTC günü başına en çok bir mesaj). Gitmezse (Telegram hatası, o
+    günün özeti zaten gitti) birikenler durur: sonraki turda ya da ertesi akşam yeniden denenir. Gittiyse biriken liste boşaltılır."""
+    if kktc_hour(now) < DIGEST_HOUR_KKTC:
+        return False
+    p = _pending(repo)
+    if not (p["n_acik"] or p["n_sira"]):
+        return False
+    if not notify_owner(repo, f"fb_kesif_{to_kktc(now):%Y%m%d}", digest_text(p), repeat_hours=ONCE_H):
+        return False
+    repo.set_state(DIGEST_KEY, "")
+    return True
+
+
+def _add_discovered(repo, data: dict | None, now: datetime, log=print) -> tuple[int, int]:
     found = discoveries(data)
     if not found:
         return 0, 0
@@ -243,13 +311,7 @@ def discover(repo, data: dict | None, now: datetime, log=print) -> tuple[int, in
     repo.set_state(day_key, json.dumps({"n": added, "acik": opened}))
     if done_open or done_wait:
         log(f"facebook keşif: {len(done_open)} açık grup okumaya açıldı, {len(done_wait)} grup katılma sırasına girdi")
-        parts = []
-        if done_open:
-            parts.append(f"{len(done_open)} açık grup okunmaya başladı (katılmadan): " + ", ".join(done_open[:5]))
-        if done_wait:
-            parts.append(f"{len(done_wait)} kapalı grup katılma sırasına girdi: " + ", ".join(done_wait[:5]))
-        notify_owner(repo, f"fb_kesif_{now:%Y%m%d%H%M}", "🔎 Okuyucu Facebook'ta yeni araç grupları buldu.\n" + "\n".join(parts)
-                     + f"\n{SHADOW_TEXT} İstemediğini /kaynaklar'dan kapatabilirsin.", repeat_hours=1)
+        _queue(repo, done_open, done_wait)  # sahibe akşam tek özet (send_digest)
     return len(done_open) + len(done_wait), len(done_open)
 
 

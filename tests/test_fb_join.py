@@ -156,8 +156,12 @@ def test_public_groups_are_read_without_joining_closed_ones_wait_in_line(sent, i
     assert fb_join.discover(repo, data, NOW, log=lambda _: None) == (3, 1)
     assert inserted == [("fb:333", "KKTC Araba Pazarı", "aktif", 2), ("fb:555", "Kıbrıs Araç Alım", "aday", 2),
                         ("fb:444", "Girne Oto", "aday", 4)]  # var olan 111/222'ye dokunulmaz
+    assert sent == []  # öğlen: akşam özetine kaldı
+    assert fb_join.send_digest(repo, EVENING) is True
     ((key, text),) = sent
-    assert "1 açık grup okunmaya başladı (katılmadan): KKTC Araba Pazarı" in text and "2 kapalı grup katılma sırasına girdi" in text
+    assert key == "fb_kesif_20261014"
+    assert "1 açık grup okunmaya başladı (katılmadan): KKTC Araba Pazarı" in text
+    assert "2 kapalı grup katılma sırasına girdi: Kıbrıs Araç Alım, Girne Oto" in text
 
 
 def test_discovery_daily_caps_and_full_limit(sent, inserted, monkeypatch):
@@ -296,7 +300,75 @@ def test_a_discovered_public_group_starts_its_shadow_clock(sent, inserted):
     repo = Repo([])
     fb_join.discover(repo, kesif(("fb:333", "KKTC Araba Pazarı", 20000, "acik", 30), ("fb:444", "Girne Oto", 800, "kapali", 2)), NOW, log=lambda _: None)
     assert fb_join.SHADOW_KEY.format("fb:333") in repo.state and fb_join.SHADOW_KEY.format("fb:444") not in repo.state
+    fb_join.send_digest(repo, EVENING)
     assert "İlk 3 gün gölgede okunur" in sent[0][1]
+
+
+# --- keşif özeti: günde en çok bir mesaj (22.10.2026; dakikalık anahtar 72 saatte 7 mesaj, §24.35'ten beri her aboneye) ---
+EVENING = datetime(2026, 10, 14, 17, 5, tzinfo=timezone.utc)  # KKTC 20:05 (yaz saati, UTC+3)
+
+
+def test_a_days_discoveries_go_out_as_one_evening_message(sent, inserted):
+    repo = Repo([])
+    for i, hours in enumerate((0, 3, 6)):  # KKTC 12:00, 15:00, 18:00: üç ayrı keşif turu
+        fb_join.discover(repo, kesif((f"fb:{i}1", f"Açık {i}", 20000, "acik", 9), (f"fb:{i}2", f"Kapalı {i}", 900, "kapali", 1)),
+                         NOW + timedelta(hours=hours), log=lambda _: None)
+    assert sent == []
+    fb_join.discover(repo, None, EVENING, log=lambda _: None)  # 20:00'den sonraki ilk tur (keşifsiz de olsa) özeti yollar
+    ((key, text),) = sent
+    assert key == "fb_kesif_20261014" and text.startswith("🔎 Okuyucu Facebook'ta yeni araç grupları buldu (günün özeti).")
+    assert "3 açık grup okunmaya başladı (katılmadan): Açık 0, Açık 1, Açık 2" in text
+    assert "3 kapalı grup katılma sırasına girdi: Kapalı 0, Kapalı 1, Kapalı 2" in text and "/kaynaklar" in text
+    for minutes in (15, 30, 120):  # aynı akşamın sonraki turları: mesaj yok
+        fb_join.discover(repo, None, EVENING + timedelta(minutes=minutes), log=lambda _: None)
+    assert len(sent) == 1 and repo.state[fb_join.DIGEST_KEY] == ""
+
+
+def test_after_the_evening_message_new_finds_wait_for_the_next_evening(sent, inserted):
+    repo = Repo([])
+    fb_join.discover(repo, kesif(("fb:11", "Gündüz", 20000, "acik", 9)), NOW, log=lambda _: None)
+    fb_join.discover(repo, None, EVENING, log=lambda _: None)  # akşam özeti gitti
+    fb_join.discover(repo, kesif(("fb:22", "Gece", 20000, "kapali", 9)), EVENING + timedelta(hours=1), log=lambda _: None)
+    assert [k for k, _ in sent] == ["fb_kesif_20261014"] and "Gündüz" in sent[0][1] and "Gece" not in sent[0][1]
+    fb_join.send_digest(repo, NOW + timedelta(days=1))  # ertesi gün öğlen: henüz değil
+    assert len(sent) == 1
+    fb_join.send_digest(repo, EVENING + timedelta(days=1))
+    assert [k for k, _ in sent] == ["fb_kesif_20261014", "fb_kesif_20261015"] and "1 kapalı grup katılma sırasına girdi: Gece" in sent[1][1]
+
+
+def test_a_day_without_an_evening_turn_loses_nothing_and_a_failed_send_is_retried(sent, monkeypatch, inserted):
+    out, fail = [], [True]
+
+    def notify(repo, key, text, repeat_hours=24, **extra):
+        if fail[0]:
+            return False  # Telegram hatası: gönderilmedi
+        out.append((key, text))
+        return True
+    monkeypatch.setattr(fb_join, "notify_owner", notify)  # `sent`in sahte gönderimi yerine
+    repo = Repo([])
+    fb_join.discover(repo, kesif(("fb:11", "Pazartesi", 20000, "acik", 9)), NOW, log=lambda _: None)  # o akşam tur yok
+    fb_join.discover(repo, kesif(("fb:22", "Salı", 20000, "kapali", 9)), NOW + timedelta(days=1), log=lambda _: None)
+    assert fb_join.send_digest(repo, EVENING + timedelta(days=1)) is False and out == []  # gitmedi: liste durur
+    fail[0] = False
+    assert fb_join.send_digest(repo, EVENING + timedelta(days=1, minutes=15)) is True
+    ((key, text),) = out
+    assert key == "fb_kesif_20261015" and "1 açık grup okunmaya başladı (katılmadan): Pazartesi" in text and "Salı" in text
+
+
+def test_digest_text_shows_ten_names_and_counts_the_rest():
+    p = {"acik": [f"G{i}" for i in range(12)], "n_acik": 14, "sira": [], "n_sira": 0}
+    text = fb_join.digest_text(p)
+    assert "14 açık grup okunmaya başladı (katılmadan): G0, G1, G2, G3, G4, G5, G6, G7, G8, G9 ve 4 grup daha" in text
+    assert "kapalı grup" not in text
+
+
+@pytest.mark.parametrize("raw", [None, "", "bozuk", "[1, 2]", '{"acik": "x", "n_acik": "3"}', '{"acik": ["A", 5], "n_acik": 0}'])
+def test_a_broken_pending_record_is_read_safely(raw):
+    repo = Repo([])
+    if raw is not None:
+        repo.state[fb_join.DIGEST_KEY] = raw
+    p = fb_join._pending(repo)
+    assert p["n_acik"] == len(p["acik"]) and p["n_sira"] == 0 and all(isinstance(x, str) for x in p["acik"])
 
 
 
