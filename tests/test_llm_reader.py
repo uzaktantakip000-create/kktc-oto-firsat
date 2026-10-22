@@ -220,11 +220,13 @@ def test_deal_note_budget_exhausted_no_call_and_the_alert_still_goes(monkeypatch
     assert lr.deal_notes(repo, [green()], "k", "m", call=call, now=tomorrow) == {1: SUSPICIOUS}  # ertesi gün yeni bütçe: sorulur
 
 
-def test_deal_note_failure_is_asked_once_and_never_raises():
-    repo, call = FakeRepo(), deal_call(note=None, err="http 500", cost=0.0)
+@pytest.mark.parametrize("err", ["json yok", "json bozuk", "yanıt kesildi", "http 402", "http 400"])
+def test_deal_note_permanent_failure_is_asked_once_and_never_raises(err):
+    """Model cevap verdi ama not çıkmadı ya da hesap/istek hatası (kalıcı): 'null' yazılır, bu fiyatla bir daha sorulmaz."""
+    repo, call = FakeRepo(), deal_call(note=None, err=err, cost=0.0)
     assert lr.deal_notes(repo, [green()], "k", "m", call=call, now=DAY) == {}
     assert repo.state["deal_note:1:t5000"] == "null"
-    assert lr.deal_notes(repo, [green()], "k", "m", call=call, now=DAY) == {} and len(call.seen) == 1  # hata da "soruldu" sayılır
+    assert lr.deal_notes(repo, [green()], "k", "m", call=call, now=DAY) == {} and len(call.seen) == 1  # kalıcı hata "soruldu" sayılır
     boom = deal_call(note=RuntimeError("model yok"))
     assert lr.deal_notes(FakeRepo(), [green()], "k", "m", call=boom, now=DAY) == {}  # çağrı patlarsa: not yok, hata fırlamaz
 
@@ -233,6 +235,30 @@ def test_deal_note_failure_is_asked_once_and_never_raises():
             raise RuntimeError("veritabanı yok")
 
     assert lr.deal_notes(DeadRepo(), [green()], "k", "m", call=call, now=DAY) == {}
+
+
+@pytest.mark.parametrize("err", ["http 429", "http 500", "http 503", "ReadTimeout", "ConnectError"])
+def test_deal_note_transient_failure_is_not_cached_and_is_asked_again_next_round(err, capsys):
+    """22.10.2026: geçici hata (429, 5xx, zaman aşımı, ağ) 'null' olarak önbelleğe yazılıyordu: o ilanın notu hiç gelmiyordu. Artık yazılmaz,
+    sonraki turda yeniden sorulur; o turda başka ilana soru sorulmaz (fırtına yok), önbellekteki not yine gelir."""
+    repo, fail = FakeRepo(), deal_call(note=None, err=err, cost=0.0)
+    second, cached = green(), green()
+    second.listing["id"], cached.listing["id"] = 2, 3
+    repo.state["deal_note:3:t5000"] = '{"gercek_firsat_mi": true}'  # önceki turdan notu olan ilan
+    assert lr.deal_notes(repo, [green(), second, cached], "k", "m", call=fail, now=DAY) == {3: {"gercek_firsat_mi": True}}
+    assert len(fail.seen) == 1  # ilk geçici hatadan sonra bu turda soru yok
+    assert sorted(k for k in repo.state if k.startswith("deal_note:")) == ["deal_note:3:t5000"]  # geçici hata önbelleğe yazılmadı
+    assert f"LLM notu alınamadı: {err} (geçici: sonraki turda yeniden sorulur" in capsys.readouterr().out
+    ok = deal_call()
+    assert lr.deal_notes(repo, [green(), second, cached], "k", "m", call=ok, now=DAY) == {1: SUSPICIOUS, 2: SUSPICIOUS,
+                                                                                          3: {"gercek_firsat_mi": True}}
+    assert len(ok.seen) == 2 and repo.state["deal_note:1:t5000"] == repo.state["deal_note:2:t5000"] != "null"  # sonraki tur: soruldu, yazıldı
+
+
+def test_transient_error_classification():
+    assert all(lr.transient_error(e) for e in ("http 429", "http 408", "http 500", "http 502", "ReadTimeout", "ConnectError"))
+    assert not any(lr.transient_error(e) for e in (None, "", "http 400", "http 402", "http 401", "http 403", "http 404", "json yok",
+                                                   "json bozuk", "yanıt kesildi", "yanıt biçimi"))
 
 
 def test_check_deal_caps_tokens_masks_phone_and_returns_cost(monkeypatch):

@@ -97,3 +97,13 @@ def test_apify_item_keeps_only_listing_fields():
     p = parse_item(item)
     assert (p.post_id, p.group_url) == ("123", GROUP) and not hasattr(p, "user")
     assert parse_item({**item, "text": ""}) is None  # metinsiz gönderi
+
+
+def test_masked_km_listing_is_marked_as_a_lower_bound():
+    """22.10.2026: "192***KM" -> km 192.000 ve urgency_signals "km_alt_sinir" (fiyatsız ilanda "fiyatsiz"in yanında). İşaretsiz ilan değişmez."""
+    post = lambda text: RawGroupPost(post_id="p1", url=GROUP + "/posts/p1/", posted_at=NOW, text=text, group_url=GROUP)  # noqa: E731
+    data = cf.listing_data(post("Suzuki Swift 2008 192***KM 2.300 stg"), {})
+    assert data["km"] == 192000 and data["urgency_signals"] == ["km_alt_sinir"]
+    assert "urgency_signals" not in cf.listing_data(post("Suzuki Swift 2008 192.000 km 2.300 stg"), {})
+    priceless = cf.priceless_data(post("Suzuki Swift 2008 85xxx km fiyat sorunuz"), {})
+    assert priceless["km"] == 85000 and priceless["urgency_signals"] == ["fiyatsiz", "km_alt_sinir"]

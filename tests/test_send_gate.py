@@ -238,9 +238,10 @@ GOLDEN_GATE_TRACE = [
 
 def note_trace(i, n, spent_after):
     """Fırsat notu (05.10.2026'dan beri: okuyucuyla aynı günlük bütçe + (ilan, fiyat) önbelleği): önbellek bakılır, bütçe okunur, sorulur,
-    harcama ve sonuç yazılır."""
+    429 serisine bakılır (22.10.2026: cevap geldi, seri yoksa yazılmaz), harcama ve sonuç yazılır."""
     return [("repo.get_state", f"deal_note:{i}:t5000.0"), ("repo.get_state", SPEND),
             ("check_deal", f"ilan {i}", f"İlanın fiyatı ≈ £5000. Emsal: {n} ilan, medyan £8000, aralık £7000–£9000"),
+            ("repo.get_state", llm_reader.RATE_KEY),
             ("repo.set_state", SPEND, spent_after), ("repo.set_state", f"deal_note:{i}:t5000.0", '{"gercek_firsat_mi": true}')]
 
 

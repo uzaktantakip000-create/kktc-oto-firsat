@@ -37,6 +37,8 @@ DATE_UNSURE = "tarih_belirsiz"  # listings.urgency_signals: Facebook gönderisin
 # application/notify.is_fresh: anlık bildirim yok, emsal olur)
 DATE_SEEN = "tarih_gorulme"  # listings.urgency_signals: Facebook gönderisinin paylaşım saati okunamadı, posted_at = ilk görülme (14.10.2026;
 # mesaj "N saat önce paylaşıldı" demez: application/notify.posted_age_text)
+KM_LOWER = "km_alt_sinir"  # listings.urgency_signals: km son haneleri gizlenerek yazılmış ("192***KM"), kayıttaki km ALT SINIRdır (192.000;
+# domain.freetext_parser, 22.10.2026). Kurallar km'yi olduğu gibi kullanır (effective_km değişmedi); mesaj "192.000+ km" yazar (notify.km_text)
 GAP_LABELS.update(MISMATCH_LABELS)
 
 
