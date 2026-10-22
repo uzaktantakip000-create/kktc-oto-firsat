@@ -50,9 +50,10 @@ _KM_SERVICE_MAX = 20_000
 # Gizli haneli km (22.10.2026): Facebook'ta km çoğu zaman son haneleri gizlenerek yazılır ("192***KM", "192.***km", "85xxx km", "192 *** km";
 # 30 günde 78 ilan / 40 araç). Eskiden km bilinmiyor okunuyordu (21.10 ⚡ 2008 Swift km'siz değerlendi). Gizli haneler 0 sayılır: değer km'nin
 # ALT SINIRIdır (192*** -> 192.000, 85xxx -> 85.000; ayraçtan sonra tam üç gizli hane: 192.*** -> 192.000) ve ilan KM_LOWER işareti alır.
+# En az üç gizli hane: "192**" hem 19.200 hem 192.xxx olabilir; düşük okumak aracı olduğundan iyi gösterir (yanlış 🟢), bilinmiyor kalır.
 # Yalnız km biriminin hemen önünde ya da km etiketinin hemen arkasında okunur; fiyat ve yıl maskesiz metinden okunur (bu yol onlara dokunmaz).
 # Önünde rakam/harf olan parça (telefon "0533 xxx", yıl "2008") ve arkasında ikinci gizli grup olan dizi ("533 xxx xx xx") km sayılmaz.
-_KM_MASK = r"(?<![\w.,*])(?:(?P<th>\d{1,3})[^\S\n]?[.,][^\S\n]?[*x]{3}|(?P<head>\d{1,3})[^\S\n]?(?P<mask>[*x]{2,4}))(?![*x\d])"
+_KM_MASK = r"(?<![\w.,*])(?:(?P<th>\d{1,3})[^\S\n]?[.,][^\S\n]?[*x]{3}|(?P<head>\d{1,3})[^\S\n]?(?P<mask>[*x]{3,4}))(?![*x\d])"
 _KM_MASK_UNIT = re.compile(_KM_MASK + r"(?=[^\S\n]*km\b)", re.I)
 _KM_MASK_LABEL = re.compile(r"(?P<label>\b(?:km|kilometre(?:si)?|kilometer|mileage)(?:[^\S\n]*[:\-]\s*|[^\S\n]*))" + _KM_MASK
                             + r"(?![^\S\n]*[*x]{2})", re.I)

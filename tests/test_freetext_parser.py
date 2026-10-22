@@ -203,6 +203,7 @@ def test_masked_km_is_read_as_its_lower_bound(text, km):
     ("Suzuki Swift 2008 99xxxx km 2.300 stg", None),  # 990.000 km: aralık dışı, bilinmiyor
     ("Suzuki Swift 2008 85xxxxx km 2.300 stg", None),  # 5 gizli hane: belirsiz
     ("Suzuki Swift 2008 192.** km 2.300 stg", None),  # ayraçtan sonra üç gizli hane değil: belirsiz
+    ("Suzuki Swift 2008 192** km 2.300 stg", None),  # iki gizli hane: 19.200 mü 192.xxx mi belirsiz (düşük okumak yanlış 🟢 riski)
     ("Suzuki Swift 2008 85xxx mil 2.300 stg", None),  # mil km'ye çevrilmez
     ("Suzuki Swift 2008 85xxx km'de motor takıldı 2.300 stg", None),  # parça km'si (yazılı sayıyla aynı kural)
     ("Suzuki Swift 2008 150.000 km, motoru 85xxx km'de değişti 2.300 stg", 150000),  # ilk ve açık km
