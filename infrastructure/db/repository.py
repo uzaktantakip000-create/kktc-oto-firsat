@@ -1144,6 +1144,14 @@ class Repository:
                WHERE source_id = %s AND price_gbp IS NOT NULL AND first_seen_at > NOW() - make_interval(days => %s)""", (source_id, days)).fetchone()
         return row["n"], row["eur"]
 
+    def priced_texts(self, source_id, days: int, limit: int = 200) -> list[dict]:
+        """`currency_mix` ile aynı ilanların (son `days` günde ilk kez görülen fiyatlılar, en yenisi önce) metni, konumu ve satıcı numarası:
+        adı KKTC'yi anmayan FB grubunun KKTC'den olup olmadığı ölçülür (domain/kktc_region.kktc_listings; spec §24.38)."""
+        return self.conn.execute(
+            """SELECT raw_text, location, seller_phone FROM listings
+               WHERE source_id = %s AND price_gbp IS NOT NULL AND first_seen_at > NOW() - make_interval(days => %s)
+               ORDER BY first_seen_at DESC LIMIT %s""", (source_id, days, limit)).fetchall()
+
     def set_alert_level(self, source_id, level: str) -> None:
         self.conn.execute("UPDATE sources SET alert_level=%s WHERE id=%s", (level, source_id))
 

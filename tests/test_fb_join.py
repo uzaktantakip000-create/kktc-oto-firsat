@@ -192,19 +192,23 @@ def test_a_public_group_that_needs_membership_goes_back_in_line(sent):
 
 # --- gölge süresi (sahip 11.10.2026: okuyucunun bulduğu grup ilk 3 gün gölgede) ---
 class PromoRepo(Repo):
-    def __init__(self, rows, mix=(10, 0)):
+    def __init__(self, rows, mix=(10, 0), texts=()):
         super().__init__(rows)
-        self.mix, self.levels = mix, []
+        self.mix, self.levels, self.texts, self.text_calls = mix, [], list(texts), []
 
     def currency_mix(self, source_id, days):
         return self.mix
+
+    def priced_texts(self, source_id, days):
+        self.text_calls.append((source_id, days))
+        return self.texts
 
     def set_alert_level(self, source_id, level):
         self.levels.append((source_id, level))
 
 
 def test_a_found_group_joins_in_shadow_and_goes_live_after_three_days(sent):
-    repo = PromoRepo([src(7, "111", "aday", "Bulunan") | {"alert_level": "golge"}])
+    repo = PromoRepo([src(7, "111", "aday", "Girne Oto") | {"alert_level": "golge"}])
     fb_join.check(repo, status(("fb:111", "uye")), NOW, log=lambda _: None)
     assert "İlk 3 gün gölgede okunur" in sent[0][1] and repo.state[fb_join.SHADOW_KEY.format("fb:111")] == NOW.isoformat()
     repo.rows[0]["status"] = "aktif"
@@ -226,12 +230,66 @@ def test_a_shadow_group_without_any_priced_listing_stays_in_shadow_and_is_quiet(
     """22.10.2026: keşfin açtığı yabancı gruplar (Bristol Uni Students, Ole Miss bilet grubu…) 3 günde hiç ilan getirmedi; eski kod onları
     "✅ … sorunsuz okundu (0 fiyatlı ilan). Artık fırsatları anında gelecek." diye yeşile alıyordu. Ölçülecek ilan yoksa gölge sürer, mesaj yok;
     fiyatlı ilan gelince (euro kontrolüyle) yeşile geçer."""
-    empty = PromoRepo([src(9, "555", "aktif", "Bristol Uni Students") | {"alert_level": "golge"}], mix=(0, 0))
+    empty = PromoRepo([src(9, "555", "aktif", "KKTC Oto Pazarı") | {"alert_level": "golge"}], mix=(0, 0))
     fb_join.start_shadow(empty, "fb:555", NOW)
     assert fb_join.promote(empty, NOW + timedelta(days=5), log=lambda _: None) == 0 and empty.levels == [] and sent == []
     empty.mix = (2, 0)  # gölgede okunmaya devam etti, fiyatlı ilan geldi
     assert fb_join.promote(empty, NOW + timedelta(days=6), log=lambda _: None) == 1 and empty.levels == [(9, "yesil")]
     assert "(2 fiyatlı ilan)" in sent[-1][1]
+
+
+# --- KKTC kapısı (22.10.2026, spec §24.38): £ yazan İngiltere/ABD grubu herkese yanlış 🟢 getirebilirdi ---
+UK = [{"raw_text": "2014 Toyota Vitz £5200 Bristol, collection BS1", "location": None, "seller_phone": None}] * 6
+KKTC = [{"raw_text": "2014 Toyota Vitz 5200 stg Girne", "location": None, "seller_phone": None}] * 4
+
+
+def shadow_group(name, texts=(), mix=(6, 0)):
+    repo = PromoRepo([src(9, "555", "aktif", name) | {"alert_level": "golge"}], mix=mix, texts=texts)
+    fb_join.start_shadow(repo, "fb:555", NOW)
+    return repo
+
+
+def test_a_pound_priced_foreign_group_stays_in_shadow_and_the_owner_is_told_once(sent):
+    repo = shadow_group("Bristol Uni Students - buy, sell and free stuff", texts=UK)
+    for days in (4, 5, 6):  # her turda yeniden ölçülür, mesaj bir kez
+        assert fb_join.promote(repo, NOW + timedelta(days=days), log=lambda _: None) == 0
+    assert repo.levels == [] and [k for k, _ in sent] == ["fb_golge_kktc_fb:555"]
+    text = sent[0][1]
+    assert "\"Bristol Uni Students - buy, sell and free stuff\" Facebook grubu KKTC grubu olarak tanınmadı" in text
+    assert "Gölgede bıraktım (bildirim yok)" in text and "/kaynak_seviye" in text and "/kaynaklar" in text
+    assert repo.text_calls == [(9, fb_join.SHADOW_DAYS + 1)] * 3  # ölçüm penceresi currency_mix'inkiyle aynı
+
+
+def test_a_group_whose_listings_are_mostly_kktc_goes_live_even_if_its_name_does_not_say_so(sent):
+    """Ders §24.37: ad her şeyi söylemez, ölçüme bakılır. Ad tanımasa da ilanlarının en az üçte ikisi KKTC'yi anıyorsa yeşile geçer."""
+    repo = shadow_group("TÜRKİYE İskele Kiralama Alım Satım Mantolama", texts=UK)
+    assert fb_join.promote(repo, NOW + timedelta(days=4), log=lambda _: None) == 0 and sent[-1][0] == "fb_golge_kktc_fb:555"
+    repo.texts = KKTC * 2 + UK[:2]  # 8 ilanın 6'sı Girne: sonraki turda yeşil
+    assert fb_join.promote(repo, NOW + timedelta(days=5), log=lambda _: None) == 1 and repo.levels == [(9, "yesil")]
+    assert sent[-1][0] == "fb_golge_bitti_fb:555"
+
+
+@pytest.mark.parametrize("name", ["KKTC ARABAM", "SAHIBINDEN AL SAT (KIBRIS)", "North Cyprus Online Market !!!", "GİRNE 2.EL INGILIZ PAZARI",
+                                  "SATILIK ÜRÜNLER İSKELE", "İkinci El Pazarı Mağusa (Second Hand Market Famagusta )", "MEZUNUM SATIYORUM KKTC",
+                                  "kktc motosiklet alim satim"])
+def test_a_group_named_after_kktc_goes_live_without_reading_its_listings(sent, name):
+    repo = shadow_group(name, texts=UK)  # ad yeter: ilan metnine bakılmaz
+    assert fb_join.promote(repo, NOW + timedelta(days=4), log=lambda _: None) == 1 and repo.levels == [(9, "yesil")] and repo.text_calls == []
+
+
+@pytest.mark.parametrize("name", ["Bristol Uni Students - buy, sell and free stuff", "OLE MISS SEASON/REGULAR TICKETS",
+                                  "Buy and Sell Student's Products", "TÜRKİYE İskele Kiralama Alım Satım Mantolama"])
+def test_foreign_or_turkey_named_groups_with_foreign_listings_stay_in_shadow(sent, name):
+    repo = shadow_group(name, texts=UK)
+    assert fb_join.promote(repo, NOW + timedelta(days=4), log=lambda _: None) == 0 and repo.levels == []
+
+
+def test_green_groups_and_euro_groups_are_not_touched_by_the_kktc_gate(sent):
+    green = PromoRepo([src(9, "555", "aktif", "Bristol Uni Students") | {"alert_level": "yesil"}], texts=UK)
+    fb_join.start_shadow(green, "fb:555", NOW)
+    assert fb_join.promote(green, NOW + timedelta(days=4)) == 0 and green.levels == [] and green.text_calls == [] and sent == []
+    euro = shadow_group("Bristol Uni Students", texts=UK, mix=(10, 5))  # euro kontrolü önce: eski mesaj, KKTC mesajı yok
+    assert fb_join.promote(euro, NOW + timedelta(days=4)) == 0 and [k for k, _ in sent] == ["fb_golge_euro_fb:555"]
 
 
 def test_a_discovered_public_group_starts_its_shadow_clock(sent, inserted):

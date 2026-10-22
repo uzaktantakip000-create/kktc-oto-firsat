@@ -419,6 +419,21 @@ def test_expire_unverifiable_closes_old_social_but_not_web_listings(db):
     assert c.execute("SELECT inactive_reason FROM listings WHERE source_item_id='old_fb'").fetchone()["inactive_reason"] == "belirsiz"
 
 
+def test_priced_texts_reads_the_same_window_as_currency_mix(db):
+    """FB grubunun KKTC ölçümü (spec §24.38) currency_mix'in ilanlarına bakar: o kaynağın son N günde ilk görülen fiyatlı ilanları."""
+    c = db.conn
+    fb, other = add_source(c, "fb", "facebook"), add_source(c, "fb2", "facebook")
+    add_listing(c, fb, "new", raw_text="2014 Vitz 5200 stg Girne", location="Girne", seller_phone="905330000001")
+    add_listing(c, fb, "eur", raw_text="2014 Vitz 6000 eur", currency="EUR")
+    add_listing(c, fb, "unpriced", raw_text="fiyat sorunuz", price_gbp=None)
+    add_listing(c, fb, "old", raw_text="eski", first_seen_at=ago(days=10))
+    add_listing(c, other, "x", raw_text="başka grup")
+    got = db.priced_texts(fb, days=4)
+    assert sorted(r["raw_text"] for r in got) == ["2014 Vitz 5200 stg Girne", "2014 Vitz 6000 eur"]
+    assert db.currency_mix(fb, days=4) == (len(got), 1)
+    assert {(r["location"], r["seller_phone"]) for r in got} == {("Girne", "905330000001"), (None, None)}
+
+
 def test_kibrisarabaal_listings_expire_only_while_the_site_is_not_read(db):
     """Sahip onayı 22.10.2026: KibrisArabaAl 10.10'dan beri okunamıyor; 30 günlük kural ona da uygulanır. Okunurken (son kontrol taze) uygulanmaz."""
     c = db.conn

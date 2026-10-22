@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 from application import sources_cmd
 from application.health import notify_owner
 from application.social_import import ALL_STATUSES, PLATFORM
+from domain.kktc_region import kktc_listings, kktc_named
 from domain.source_links import key_of_url
 
 ONCE_H = 24 * 365  # (grup, durum) mesajı bir kez: tekrar eden dosya okuması yeniden yazmaz
@@ -35,6 +36,8 @@ TEXTS = {
     "kapali": "🚫 \"{name}\" Facebook grubuna katılınamıyor (grup kapalı ya da gizli); okuyucu atladı.",
     "reddedildi": ("🚫 \"{name}\" Facebook grubuna katılma isteği kabul edilmedi (grup yöneticisi onaylamadı ya da istek düştü); okuyucu yeniden "
                    "istemez. İstersen kendin katılabilirsin: {url}"),
+    "kktc_degil": ("⚠️ \"{name}\" Facebook grubu KKTC grubu olarak tanınmadı: adından anlaşılmıyor, ilanlarının çoğunda da KKTC yeri ya da "
+                   "telefonu yok. Gölgede bıraktım (bildirim yok). İstersen /kaynak_seviye ile aç ya da /kaynaklar'dan kapat."),
 }
 
 
@@ -49,9 +52,17 @@ def start_shadow(repo, key: str, now: datetime) -> None:
     repo.set_state(SHADOW_KEY.format(key), now.isoformat())
 
 
+def kktc_group(repo, row: dict) -> bool:
+    """KKTC grubu mu (domain/kktc_region; spec §24.38): adı KKTC'yi anıyor ya da gölgedeki fiyatlı ilanlarının açık çoğunluğu KKTC'yi anıyor/
+    KKTC telefonu taşıyor. Ad yeterse veritabanına bakılmaz."""
+    return kktc_named(row.get("name")) or kktc_listings(repo.priced_texts(row["id"], days=SHADOW_DAYS + 1))
+
+
 def promote(repo, now: datetime, log=print) -> int:
     """Gölge süresi dolan (SHADOW_KEY kaydı olan) aktif FB grubunu yeşile alır ve sahibe bir kez yazar. Sahibin elle gölgeye aldığı grup
-    (kaydı yok) değişmez. Euro fiyatlı ilan payı FOREIGN_SHARE'i aşarsa (Güney Kıbrıs olabilir) gölgede kalır, sahibe bir kez sorulur."""
+    (kaydı yok) değişmez. Euro fiyatlı ilan payı FOREIGN_SHARE'i aşarsa (Güney Kıbrıs olabilir) gölgede kalır, sahibe bir kez sorulur.
+    KKTC grubu olarak tanınmazsa (`kktc_group`; 22.10.2026: £ yazan İngiltere/ABD öğrenci grubu herkese yanlış 🟢 getirebilirdi) gölgede kalır,
+    sahibe bir kez söylenir; sonraki turlarda yeniden ölçülür (ilanlar KKTC'yi anmaya başlarsa yeşile geçer). Yeşil gruba dokunulmaz."""
     n = 0
     for key, rows in _by_key(repo.sources(PLATFORM, sources_cmd.OPEN)).items():
         r = rows[0]
@@ -73,6 +84,9 @@ def promote(repo, now: datetime, log=print) -> int:
             notify_owner(repo, f"fb_golge_euro_{key}", f"⚠️ \"{r['name']}\" Facebook grubundaki ilanların %{euro * 100 // priced} kadarı euro fiyatlı: "
                          "Güney Kıbrıs grubu olabilir. Gölgede bıraktım (bildirim yok). İstersen /kaynak_seviye ile aç ya da /kaynaklar'dan kapat.",
                          repeat_hours=ONCE_H)
+            continue
+        if not kktc_group(repo, r):
+            notify_owner(repo, f"fb_golge_kktc_{key}", TEXTS["kktc_degil"].format(name=r["name"]), repeat_hours=ONCE_H)
             continue
         repo.set_alert_level(r["id"], "yesil")
         n += 1
