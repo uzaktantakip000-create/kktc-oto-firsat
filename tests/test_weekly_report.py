@@ -517,7 +517,33 @@ def test_one_subscriber_failing_does_not_stop_the_others_and_logs_masked(monkeyp
         sub_sent.append(kw)
     monkeypatch.setattr(report, "api", flaky)
     subs = [{"chat_id": "1", "is_owner": True}, {"chat_id": "123456722", "is_owner": False}, {"chat_id": "33", "is_owner": False}]
-    assert report.send_weekly_report(FakeRepo(subs=subs), now=NOW) is True
+    repo = FakeRepo(subs=subs)
+    repo.conn = Conn()
+    assert report.send_weekly_report(repo, now=NOW) is True
     assert [m["chat_id"] for m in sub_sent] == ["33"]
     out = capsys.readouterr().out
     assert "haftalık rapor gönderilemedi (chat …722): 403" in out and "123456722" not in out  # log'a kimlik tam yazılmaz
+    # botu engelleyen abone durdurulur (22.10.2026; notify.send_to_subscribers gibi): haftaya yeniden denenmez
+    assert repo.conn.sql == [("UPDATE subscribers SET status='durduruldu' WHERE chat_id=%s", ("123456722",))]
+
+
+class Conn:
+    def __init__(self):
+        self.sql = []
+
+    def execute(self, sql, params=None):
+        self.sql.append((sql, params))
+
+
+@pytest.mark.parametrize("status_code", [400, 429, 500])
+def test_other_telegram_errors_do_not_stop_the_subscriber(monkeypatch, status_code):
+    owner_sent, sub_sent, _ = sending(monkeypatch)
+
+    def flaky(*a, **kw):
+        if kw["chat_id"] == "22":
+            raise report.TelegramError("sendMessage", status_code, "geçici")
+        sub_sent.append(kw)
+    monkeypatch.setattr(report, "api", flaky)
+    repo = FakeRepo(subs=SUBS)
+    repo.conn = Conn()
+    assert report.send_weekly_report(repo, now=NOW) is True and [m["chat_id"] for m in sub_sent] == ["33"] and repo.conn.sql == []

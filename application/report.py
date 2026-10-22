@@ -354,7 +354,8 @@ def weekly_report_text(repo: Repository, recheck=None, now: datetime | None = No
 def send_weekly_report(repo: Repository, recheck=None, now: datetime | None = None) -> bool:
     """Haftada bir herkese: önce sahibe, sonra onaylı abonelere (her biri kendi oy listesiyle). Zamanı gelmeden rapor KURULMAZ (eskiden her
     tick'te kuruluyordu: gereksiz sorgu; artık canlılık isteği de var). Sahibe gitmezse abonelere de gitmez: sonraki turda hepsi birlikte
-    yeniden denenir (aboneye çift rapor gitmesin). Aboneye gidemeyen rapor yeniden denenmez (log'a maskeli yazılır)."""
+    yeniden denenir (aboneye çift rapor gitmesin). Aboneye gidemeyen rapor yeniden denenmez (log'a maskeli yazılır); botu engelleyen (403)
+    abone `durduruldu` olur, bir abonenin hatası öbürlerini durdurmaz."""
     token, owner_chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not owner_chat or repo.alert_recent(REPORT_KEY, REPEAT_HOURS):
         return False
@@ -374,4 +375,6 @@ def send_weekly_report(repo: Repository, recheck=None, now: datetime | None = No
             api(token, "sendMessage", chat_id=chat, text=redact(text)[:MAX_UNITS], **_extra(keyboard))
         except TelegramError as e:
             print(f"haftalık rapor gönderilemedi ({mask_chat(chat)}): {e.status}")
+            if e.status == 403:  # kullanıcı botu engellemiş: bir daha denenmesin (notify.send_to_subscribers gibi; 22.10.2026)
+                repo.conn.execute("UPDATE subscribers SET status='durduruldu' WHERE chat_id=%s", (sub["chat_id"],))
     return True
