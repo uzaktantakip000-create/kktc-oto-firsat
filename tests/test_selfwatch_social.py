@@ -371,7 +371,7 @@ def test_a_failing_social_line_never_hides_the_other_lines_and_logs_only_the_err
 def test_the_heartbeat_carries_the_social_line_and_the_first_line_is_unchanged_without_a_file(social):
     now = datetime(2026, 10, 2, 9, 5, tzinfo=timezone.utc)  # KKTC 12:05
     repo = FakeRepo([src("KKTCar")])
-    first = "✅ Sistem çalışıyor · son 24 saatte 3 yeni ilan tarandı, 2 🟢 ve 1 🟠 gönderildi."
+    first = "✅ Sistem çalışıyor · son 24 saatte 3 yeni ilan tarandı (kopyalar hariç), 2 🟢 ve 1 🟠 gönderildi."
     assert status.build_heartbeat(repo, now) == first  # dosya yok: tek satır
     social(doc({"instagram": plat(last=now - 2 * H, new=3)}, now))
     assert status.build_heartbeat(repo, now).splitlines() == [first, "Sosyal: Instagram ✅ (son tur 2 saat önce, 3 yeni)"]

@@ -434,6 +434,23 @@ def test_priced_texts_reads_the_same_window_as_currency_mix(db):
     assert {(r["location"], r["seller_phone"]) for r in got} == {("Girne", "905330000001"), (None, None)}
 
 
+def test_morning_message_and_status_count_new_listings_the_same_way_without_copies(db):
+    """22.10.2026: sabah nabzı Facebook kopyalarını da sayıyordu (1.195 derken tekil ~440). Artık /durum'la aynı tanım (status.NEW_24H_SQL)."""
+    from application import status
+    c = db.conn
+    fb, web = add_source(c, "fbgrup", "facebook"), add_source(c, "KKTCar", "web")
+    first = add_listing(c, fb, "a")
+    add_listing(c, fb, "copy1", duplicate_of=first)  # aynı aracın başka gruptaki paylaşımı
+    add_listing(c, web, "copy2", duplicate_of=first)  # başka sitedeki ikizi
+    add_listing(c, web, "b", posted_at=ago(hours=5))
+    add_listing(c, web, "old_post", posted_at=ago(days=3))  # bugün ilk görüldü ama 3 günlük ilan: yeni değil
+    add_listing(c, web, "gone", is_active=False)
+    assert "son 24 saatte 2 yeni ilan tarandı (kopyalar hariç)" in status.build_heartbeat(db)
+    assert sum(r["new_24h"] for r in c.execute(status._SOURCE_SQL).fetchall()) == 2
+    # haftalık rapordaki "7 günde N yeni ilan tarandı" da kopyasız (ilk görülme penceresi; satılıp kalkan da taranmıştır)
+    assert db.listing_counts(7) == {"new_n": 4, "active_n": 3}
+
+
 def test_kibrisarabaal_listings_expire_only_while_the_site_is_not_read(db):
     """Sahip onayı 22.10.2026: KibrisArabaAl 10.10'dan beri okunamıyor; 30 günlük kural ona da uygulanır. Okunurken (son kontrol taze) uygulanmaz."""
     c = db.conn
@@ -1281,7 +1298,7 @@ def test_disappeared_counts_split_by_reason_and_listing_counts(db):
     add_listing(c, sid, "live_old", first_seen_at=ago(days=10))
     got = {r["reason"]: (r["n"], r["alerted"]) for r in db.disappeared_counts(7)}
     assert got == {"satildi": (1, 1), "belirsiz": (2, 0), "kaldirildi": (1, 0)}
-    assert dict(db.listing_counts(7)) == {"new_n": 8, "active_n": 2}
+    assert dict(db.listing_counts(7)) == {"new_n": 7, "active_n": 2}  # kopya (dup) yeni sayılmaz (22.10.2026)
 
 
 # --- yeniden çıkmış eski KKTCarabam ilanı (Repository.resurfaced_kktcarabam): sitenin "en yeni" listesine geri ittiği eski ilan ---

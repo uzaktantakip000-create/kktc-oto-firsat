@@ -1096,9 +1096,10 @@ class Repository:
             (UNKNOWN, SENT_ONCE_TIERS, days)).fetchall()
 
     def listing_counts(self, days: int = 7) -> dict:
-        """Son 'days' günde ilk görülen ilan sayısı ve şu an aktif (kopya olmayan) ilan sayısı: {new_n, active_n}."""
+        """Son 'days' günde ilk görülen (kopya olmayan) ilan sayısı ve şu an aktif (kopya olmayan) ilan sayısı: {new_n, active_n}. Kopya
+        (duplicate_of) 22.10.2026'dan beri sayılmaz: Facebook'ta bir araç 10 gruba atılınca 10 yeni ilan sayılıyordu (sabah nabzıyla aynı düzeltme)."""
         return self.conn.execute(
-            """SELECT count(*) FILTER (WHERE first_seen_at > NOW() - make_interval(days => %s)) AS new_n,
+            """SELECT count(*) FILTER (WHERE first_seen_at > NOW() - make_interval(days => %s) AND duplicate_of IS NULL) AS new_n,
                       count(*) FILTER (WHERE is_active AND duplicate_of IS NULL) AS active_n
                FROM listings""", (days,)).fetchone()
 
