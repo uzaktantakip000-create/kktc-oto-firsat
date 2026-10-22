@@ -419,6 +419,19 @@ def test_expire_unverifiable_closes_old_social_but_not_web_listings(db):
     assert c.execute("SELECT inactive_reason FROM listings WHERE source_item_id='old_fb'").fetchone()["inactive_reason"] == "belirsiz"
 
 
+def test_kibrisarabaal_listings_expire_only_while_the_site_is_not_read(db):
+    """Sahip onayı 22.10.2026: KibrisArabaAl 10.10'dan beri okunamıyor; 30 günlük kural ona da uygulanır. Okunurken (son kontrol taze) uygulanmaz."""
+    c = db.conn
+    kaa = c.execute("UPDATE sources SET last_checked_at = NOW() - interval '12 days' WHERE url LIKE '%kibrisarabaal.com%' RETURNING id").fetchone()["id"]
+    add_listing(c, kaa, "kaa_old", posted_at=ago(days=40))
+    add_listing(c, kaa, "kaa_new", posted_at=ago(days=10))
+    assert db.expire_unverifiable() == 1
+    assert c.execute("SELECT inactive_reason FROM listings WHERE source_item_id='kaa_old'").fetchone()["inactive_reason"] == "belirsiz"
+    c.execute("UPDATE sources SET last_checked_at=NOW() WHERE id=%s", (kaa,))  # izinle yeniden okunuyor
+    add_listing(c, kaa, "kaa_read", posted_at=ago(days=40))
+    assert db.expire_unverifiable() == 0
+
+
 def test_a_listing_is_sent_once_across_green_and_orange_but_the_digest_record_spends_no_right(db):
     """'Bir kez gider': 🟢 ve 🟠 aynı ilan için tek hak paylaşır (🟠'den sonra 🟢 ikinci mesaj üretmez); 🟡 özet kaydı hak harcamaz.
     (alerts benzersiz indeksi hâlâ ilan+sohbet+seviye: kural kodda, 019b'de `kind` ile genişleyecek.)"""

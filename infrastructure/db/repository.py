@@ -34,6 +34,7 @@ SENT_ONCE_TIERS = ["guclu", "tahmini"]
 URGENT_TIER = "acil"
 VOTED_TIERS = [*SENT_ONCE_TIERS, URGENT_TIER]  # oy/gözden geçirme ekranlarının seviyeleri; sıra = ilan iki seviyede de gittiyse gösterilecek olan
 RETRACTED = "geri_cekildi"  # alerts.kind: mesajı sonradan silinen yanlış bildirim (10.10.2026 Auris): oylanmaz ama "gitti" sayılır, yeniden gönderilmez
+FROZEN_AFTER_DAYS = 2  # KibrisArabaAl bu kadar gündür okunmadıysa (izin kapısı kapalı / engel) ilanları izlenemeyen kaynak sayılır (expire_unverifiable)
 
 
 def _tiers_blocking(tier: str) -> list[str]:
@@ -336,14 +337,18 @@ class Repository:
                JOIN LATERAL (SELECT rules_version AS rv FROM evaluations e WHERE e.listing_id=l.id ORDER BY evaluated_at DESC LIMIT 1) last_ev ON TRUE
                WHERE l.is_active AND last_ev.rv IS DISTINCT FROM %s""", (rules_version,)).fetchone()["n"]
 
-    def expire_unverifiable(self, days: int = 30) -> int:
+    def expire_unverifiable(self, days: int = 30, frozen_after_days: int = FROZEN_AFTER_DAYS) -> int:
         """Satıldı/silindi bilgisi izlenemeyen kaynaklarda (Instagram, Facebook, kktcarabam, Mezunum) eski ilanı pasifleştirir.
-        Facebook eskiden listede yoktu: ilanlar hiç pasifleşmediği için telefonları saklama temizliğine (yalnız pasif ilan) hiç girmiyordu."""
+        Facebook eskiden listede yoktu: ilanlar hiç pasifleşmediği için telefonları saklama temizliğine (yalnız pasif ilan) hiç girmiyordu.
+        KibrisArabaAl (sahip onayı 22.10.2026): site 10.10.2026'dan beri bizi engelliyor, izin kapısı kapalı (application/kaa_gate); ilanları
+        "ilanda" sayılıp emsal havuzunun %42'sini tutuyordu. Kaynak `frozen_after_days` gündür okunmadıysa (last_checked_at) aynı 30 gün
+        kuralı ona da uygulanır; izinle okuma yeniden başlarsa kural kendiliğinden kalkar (okunan site satılanı zaten kapatır)."""
         cur = self.conn.execute(
             """UPDATE listings l SET is_active=FALSE, inactive_at=NOW(), inactive_reason=%s FROM sources s
-               WHERE s.id=l.source_id AND l.is_active AND (s.platform IN ('instagram', 'facebook') OR s.url LIKE '%%kktcarabam.com%%' OR s.url LIKE '%%mezunumsatiyorumkibris%%')
+               WHERE s.id=l.source_id AND l.is_active AND (s.platform IN ('instagram', 'facebook') OR s.url LIKE '%%kktcarabam.com%%' OR s.url LIKE '%%mezunumsatiyorumkibris%%'
+                      OR (s.url LIKE '%%kibrisarabaal.com%%' AND s.last_checked_at < NOW() - make_interval(days => %s)))
                  AND COALESCE(l.posted_at, l.first_seen_at) < NOW() - make_interval(days => %s)""",
-            (UNKNOWN, days),
+            (UNKNOWN, frozen_after_days, days),
         )
         return cur.rowcount
 
