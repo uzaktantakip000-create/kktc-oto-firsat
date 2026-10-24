@@ -60,6 +60,15 @@ def test_tr_plate_caps_at_yellow():
     assert ev_.profit.tier is Tier.NEGOTIABLE and "plaka_uyari" in repo.saved[0][1]["red_flags"]
 
 
+def test_unquantified_cost_caps_at_yellow_but_minor_cost_does_not():
+    """24.10.2026: "ARACIN MASRAFLARI VARDIR" (tutarı yok) 06.10'da 🟢 olarak gitmişti; artık en fazla 🟡. "ufak tefek" masraf 🟢 kalır (uyarıyla)."""
+    repo = FakeRepo([car("t", 5000, raw_text="ARACIN MASRAFLARI VARDIR. FİYAT PAZARLIKSIZDIR.")], POOL)
+    (ev_,) = evaluate_new(repo)
+    assert ev_.profit.tier is Tier.NEGOTIABLE and "masraf_belirsiz" in repo.saved[0][1]["red_flags"]
+    (minor,) = evaluate_new(FakeRepo([car("t", 5000, raw_text="ufak tefek masrafları vardır")], POOL))
+    assert minor.profit.tier is Tier.STRONG
+
+
 # --- USD/EUR: satıcı STG yerine yanlış para birimi seçmiş olabilir (10.10.2026 yanlış 🟢: 2014 Auris "10.500 USD", aynı araç başka sitede £10.500) ---
 USD_RATE, EUR_RATE = 0.7564, 0.8691
 

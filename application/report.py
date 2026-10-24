@@ -50,7 +50,7 @@ NEAR_SKIP = ("fiyat_asiri_dusuk", "okuma_satildi", "model_belirsiz", "para_birim
 SHORT_REASON = {"km_yuksek": "km yüksek", "tl_fiyat": "fiyat TL (TL ilanlar ucuz görünür)", "emsal_yili_yeni": "emsaller daha yeni model",
                 "ucuz_ceyrek_degil": "benzerlerin en ucuz çeyreğinde değil", "para_birimi_tahmin": "para birimi yazmıyor", "para_birimi_supheli": "USD/EUR yazıyor, STG olabilir",
                 "fiyat_gurultu": "fiyat farkı olağan dağınıklık içinde", "km_temkinli": "km yok, yüksek km'yle fırsat değil",
-                "model_yok": "model okunamadı", "plaka_uyari": "TR/yabancı plaka", "sessiz_model": "sessize aldığın model",
+                "model_yok": "model okunamadı", "plaka_uyari": "TR/yabancı plaka", "masraf_belirsiz": "masrafı var (tutarı yok)", "sessiz_model": "sessize aldığın model",
                 "deger_supheli": "değer tablosu yeni değişti", "llm_okudu": "yapay zekâ okudu",
                 "fiyat_alani": "fiyat yalnız FB satış kutusunda"}
 PLATFORM_NAMES = {"instagram": "Instagram", "facebook": "Facebook"}

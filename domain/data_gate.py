@@ -26,6 +26,7 @@ GAP_LABELS = {
     "ucuz_ceyrek_degil": "fiyat benzer araçların en ucuz çeyreğinde değil",
     "emsal_yili_yeni": "benzer araçların model yılı bu araçtan daha YENİ ağırlıklı (yeni model pahalı): fiyat kıyası güvenilmez",
     "plaka_uyari": "TR/yabancı plaka yazıyor",
+    "masraf_belirsiz": "satıcı aracın masrafı olduğunu yazıyor ama ne kadar olduğunu yazmıyor: düşük fiyat masrafın karşılığı olabilir",
     "sessiz_model": "bu modele 3 kez 'pas' dedin (özete alındı)",
     "deger_supheli": "değer tablosu bu modelde yeni değişti, bekleniyor",
     "tahmini_az_emsal": "az emsal: değer tablosu eğrisinden tahmin",

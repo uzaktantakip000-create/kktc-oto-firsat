@@ -138,4 +138,6 @@ Tek karar noktası: `domain/decision.py::decide()` (otomatik tarama, "ilanı bot
   - **Temkinli km** (`km_temkinli`; sahip onayı 11.10, 04.10 kararını daraltır): km'si yazmayan/şüpheli ve en az 5 yaşındaki ilan, km = emsal km medyanı + 45.000 varsayılınca da %20 ucuz kalmalı (`unknown_km_check`, `unknown_km_extra`, `unknown_km_min_age`).
   - Ölçüm (11.10 anlık görüntü, 2.823 aktif ilan): 🟢 19 → 14 (gürültü) → 9 (temkinli km). Bir abonenin "yanlış" işaretlediği 10 bildirimin hiçbiri 🟢 kalmadı.
 
+- **Tutarı yazmayan masraf** (`masraf_belirsiz`; RULES_VERSION "2026-10-24"): metin "aracın masraf(lar)ı var(dır)/mevcut" diyor ve öncesindeki 25 karakterde küçültücü/tanımlayıcı (ufak, tefek, küçük, az, biraz, kozmetik, kaporta, boya, lastik, ön düzen, rakam) yoksa 🟢 en fazla 🟡 (`red_flags.cost_unknown`). Düşük fiyat masrafın karşılığı olabilir. Ders: 06.10'da "ARACIN MASRAFLARI VARDIR" diyen 2013 C180 £8.500 %37 kârla 🟢 gitti (eski uyarı kalıbı yalnız "masrafı var"ı tanıyordu). Ölçüm: son 30 günün 36 🟢 ilanından yalnız bu biri etkilenir.
+
 Mesaj: 🟢 FIRSAT ya da 🟠 KONTROL ET; araç, fiyat, yer/kaynak/km/vites, piyasa ortası + emsal sayısı + masraf düşüldü, tek satır "neden", uyarılar (varsa), ilan tarihi, link; düğmeler: 👍 İşe yarar / 👎 Yanlış (+ telefon biliniyorsa 📲 WhatsApp); 10 oydan önce öğrenme (otomatik kaynak düşürme/kara liste) yok.

@@ -19,7 +19,7 @@ from domain.data_gate import (KM_UNKNOWN_WARNING, below_cheap_quartile, data_gap
 from domain.model_ambiguity import model_ambiguous
 from domain.price_book import STATUS_SUSPECT, Estimate, PriceBook, estimate_from_book
 from domain.profit import Confidence, ProfitResult, Tier, buy_ceiling, evaluate_profit
-from domain.red_flags import blocking_flags, plate_flags, warning_flags
+from domain.red_flags import blocking_flags, cost_unknown, plate_flags, warning_flags
 from domain.settings import Settings
 
 
@@ -89,6 +89,8 @@ def _market_assessment(listing: dict, market: Market, price: float, text: str, b
             gaps = gaps + ["emsal_yili_yeni"]  # emsaller hedeften YENİ model ağırlıklı (±1'de medyan bir yıl yeni; ±2 genişlemede biraz bile yeni): hedef ucuz görünür, 🟢 bekler
     if tier is Tier.STRONG and plate_flags(text):
         gaps = gaps + ["plaka_uyari"]
+    if tier is Tier.STRONG and cost_unknown(text):
+        gaps = gaps + ["masraf_belirsiz"]  # "masrafları vardır" (tutarı yok): düşük fiyat masrafın karşılığı olabilir (24.10.2026)
     if tier is Tier.STRONG and book is not None and listing.get("year"):
         row = book.row(listing.get("brand_norm"), listing.get("model_norm"), listing["year"], "")
         if row is not None and row.status == STATUS_SUSPECT:

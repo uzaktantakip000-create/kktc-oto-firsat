@@ -28,9 +28,15 @@ CUSTOMS_OK = r"g[üu]mr[üu]kl[üu]|g[üu]mr[üu][kğg][üu]?\s*([öo]dendi|tama
 # Sadece uyarır
 WARNING = {
     "değişen var": r"de[gğ]i[şs]en(i)? var|de[gğ]i[şs]enli",
-    "ufak masraf var": r"ufak (masraf|tamir)|k[üu][çc][üu]k (masraf|tamir)|masraf[ıi] var",
+    "ufak masraf var": r"ufak (tefek )?(masraf|tamir)|k[üu][çc][üu]k (masraf|tamir)|masraf[ıi] var",
     "modifiyeli": r"stage ?[123]|chip ?tuning|modifiye|\b\d{3}\+? ?hp\b",
 }
+# Tutarı/ne olduğu yazmayan masraf (24.10.2026): "ARACIN MASRAFLARI VARDIR. FİYAT PAZARLIKSIZDIR" diyen 2013 C180 £8.500 ilanı 06.10'da %37 kârla
+# 🟢 olarak herkese gitti; düşük fiyat masrafın karşılığı olabilir, aracı görmeden kâr hesabı güvenilmez. 🟢'yi en fazla 🟡 yapar
+# (decision: "masraf_belirsiz"). Öncesindeki 25 karakterde küçültücü/tanımlayıcı varsa ("ufak tefek", "kozmetik", "kaporta", "25000 tl gibi")
+# masraf küçük ya da belli sayılır: yalnız uyarı (WARNING) kalır.
+COST_UNKNOWN = r"masraf(?:[ıi]|lar[ıi])?\s+(?:var|mevcut)"
+COST_MINOR = r"ufak|tefek|k[üu][çc][üu]k|\baz\b|biraz|kozmetik|kaporta|boya|lastik|[öo]n d[üu]zen|\d"
 # Satıcının acelesi (11.10.2026 genişletildi; sahip: "insanlar acil satıyor, adadan ayrılmak için vs; en erken bulan kazanır"). KibrisArabaAl
 # satıcıları "İhtiyaçtan Acil" rozetini işaretleyebiliyor (yeni ilanların ~%20'si). Karar kurallarına girmez: mesajda gösterilir ve
 # "⚡ ACİL SATICI" bildirimini (application/urgent) tetikler. "pazarlık" aciliyet değildir, yalnız gösterilir.
@@ -55,6 +61,12 @@ def blocking_flags(text: str) -> list[str]:
 
 def warning_flags(text: str) -> list[str]:
     return _scan(WARNING, text)
+
+
+def cost_unknown(text: str) -> bool:
+    """Metin tutarı/ne olduğu belirsiz bir masraftan söz ediyor mu ("aracın masrafları vardır")? Küçültücü/tanımlayıcısı olan masraf hayır."""
+    t = tr_lower(text or "")
+    return any(not re.search(COST_MINOR, t[max(0, m.start() - 25):m.start()]) for m in re.finditer(COST_UNKNOWN, t))
 
 
 def urgency_signals(text: str) -> list[str]:
