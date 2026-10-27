@@ -12,8 +12,10 @@ burada yalnız şunlar var:
 - satış kutusu fiyatı gelmiyor: dünkü (KKTC) aktarımda en az 500 gönderi satırı var ama fiyatlı olanı %5'ten az (27.10.2026: 24.10'dan beri
   böyleydi, önceden günde ~900 satır, %24-35'i fiyatlıydı; kesinti sırasında bile gürültü satırları yüzünden %0,4-1,2 fiyatlı görünüyor, bu yüzden
   "hiç yok" değil oran sınırı; sayaç social_import.BOX_KEY; botun kendi sayacıdır, okuyucunun değil);
-- grup okunmadı: okuyucu çalışıyor (son turu 6 saatten yeni) ama son 7 günde ilan/araç görülmüş en az bir Facebook kaynağı 14 saattir okunmadı
-  (tek toplu uyarı, kaynak adlarıyla (ad bilinmiyorsa fb-NN); yalnız izleme, okuma sıklığı ya da kararlar değişmez).
+- grup okunmadı: okuyucu çalışıyor (son turu 6 saatten yeni) ama son 7 günde ilan/araç görülmüş en az bir Facebook kaynağı kendi okuma aralığını
+  (okuyucunun "okuma_siniri_saat"i) 8 saatten fazla aştı
+  (tek toplu uyarı, kaynak adlarıyla (ad bilinmiyorsa fb-NN); yalnız izleme, okuma sıklığı ya da kararlar değişmez);
+- okumalar sınırda bitiyor: dünkü (UTC, okuyucunun "sinir_gunluk"u) en az 20 okumanın %30'undan fazlası gönderi/kaydırma sınırında durdu.
 Günlük örnek (`SAMPLE_KEY`) KKTC 21:00'den sonraki ilk turda bir kez yazılır, son `SAMPLE_KEEP` gün tutulur."""
 import json
 from dataclasses import dataclass
@@ -44,7 +46,14 @@ CUT_RATIO, CUT_MIN_POSTS = 0.70, 20
 SCAN_DAYS = 3  # devir klasöründe yalnız son 3 günün dosyaları taranır (dosyalar 14 gün tutulur)
 BOX_MIN_LINES = 500  # satış kutusu: dün en az bu kadar satır okunduysa fiyatsız kutu tesadüf değildir
 BOX_MIN_RATIO = 0.05  # sağlıklı oran %24-35; kesintide %0,4-1,2 (27.10.2026): altı "fiyat gelmiyor" demektir
-UNREAD_AFTER = timedelta(hours=14)  # kaynak okunmadı: son_okuma_utc bundan eskiyse (olağan en uzun ~13 saat: gece boşluğu)
+# Kaynak okunmadı: okuyucunun o kaynak için verdiği en uzun okuma aralığı ("okuma_siniri_saat": 18, sessiz kaynakta 24; okuyucu b0da4fa,
+# 27.10.2026) + gece boşluğu ve bir tur payı. Alan yoksa/bozuksa UNREAD_DEFAULT (18 + 8).
+UNREAD_SLACK = timedelta(hours=8)
+UNREAD_DEFAULT = timedelta(hours=26)
+LIMIT_SANE_H = (1, 72)  # okuma_siniri_saat bu aralık dışındaysa bozuk sayılır
+# Okumaların sınırda bitmesi (okuyucu "sinir_gunluk", UTC günü): dün en az LIMIT_MIN_READS okumanın LIMIT_MAX_RATIO'dan fazlası gönderi/kaydırma
+# sınırında durduysa yeni gönderilerin bir kısmı okunmadan kalıyor demektir (27.10 ölçümü: 48 saatte %18).
+LIMIT_MIN_READS, LIMIT_MAX_RATIO = 20, 0.30
 READER_FRESH = timedelta(hours=6)  # okuyucunun kendisi çalışıyor sayılır: son_tur_utc bundan yeniyse (durmuşsa selfwatch.social_watch uyarır)
 UNREAD_LIST_MAX = 10  # mesajda sayılan takma adların en çok sayısı
 
@@ -94,7 +103,7 @@ def scan_handoff(folder: Path | str, cursor: tuple[str, int], window_end: dateti
 
 
 def unread_sources(fb: dict, now: datetime) -> list[tuple[str, str]]:
-    """Okuyucu çalışırken (son turu READER_FRESH'ten yeni) UNREAD_AFTER'dan uzun süredir okunmamış, son 7 günde ilan/araç görülmüş kaynaklar:
+    """Okuyucu çalışırken (son turu READER_FRESH'ten yeni) kendi okuma aralığı + UNREAD_SLACK'ten uzun süredir okunmamış, son 7 günde ilan/araç görülmüş kaynaklar:
     (kaynak anahtarı, takma ad "fb-NN" = durum dosyasındaki anahtarların sıralı sırası; mesajda kaynak adı bilinmiyorsa bu yazılır). Kaynak başına alan yok/bozuksa o kaynak atlanır; üyelik
     gerekenler okunamaz (başka neden), atlanır. Okuyucunun turu eskiyse ya da dosya biçimi bekleneni vermiyorsa boş."""
     last_round, rows = _time(fb.get("son_tur_utc")), fb.get("kaynaklar")
@@ -106,9 +115,26 @@ def unread_sources(fb: dict, now: datetime) -> list[tuple[str, str]]:
         row = rows[key]
         read = _time(row.get("son_okuma_utc"))
         active = (_int(row.get("yeni_ilan_7g")) or 0) > 0 or (_int(row.get("arac_7g")) or 0) > 0
-        if read is not None and active and row.get("uyelik_gerekli") is not True and now - read > UNREAD_AFTER:
+        limit_h = _int(row.get("okuma_siniri_saat"))
+        after = timedelta(hours=limit_h) + UNREAD_SLACK if limit_h is not None and LIMIT_SANE_H[0] <= limit_h <= LIMIT_SANE_H[1] else UNREAD_DEFAULT
+        if read is not None and active and row.get("uyelik_gerekli") is not True and now - read > after:
             out.append((key, f"fb-{n:02d}"))
     return out
+
+
+def limit_alert(fb: dict, now: datetime) -> tuple[str, str] | None:
+    """Dünkü (UTC) okumaların sınırda bitme oranı (okuyucu "sinir_gunluk": {gün: {okuma, gonderi_siniri, kaydirma_siniri}}). Alan yok/bozuksa None."""
+    days = fb.get("sinir_gunluk")
+    row = days.get((now.date() - timedelta(days=1)).isoformat()) if isinstance(days, dict) else None
+    if not isinstance(row, dict):
+        return None
+    reads, posts, scrolls = _int(row.get("okuma")), _int(row.get("gonderi_siniri")), _int(row.get("kaydirma_siniri"))
+    if reads is None or posts is None or scrolls is None or reads < LIMIT_MIN_READS or posts + scrolls > reads:
+        return None
+    if (posts + scrolls) / reads <= LIMIT_MAX_RATIO:
+        return None
+    return ("fb_okuma_sinirda", f"⚠️ Facebook: dün {reads} grup okumasının {posts + scrolls}'i sınırda bitti (önceki okumaya inemeden durdu); "
+            "aradaki gönderiler okunmamış olabilir. Sosyal okuyucu tarafında bakılmalı.")
 
 
 def handoff_alerts(fb: dict, scan: HandoffScan | None, now: datetime, names: dict[str, str] | None = None) -> list[tuple[str, str]]:
@@ -131,10 +157,12 @@ def handoff_alerts(fb: dict, scan: HandoffScan | None, now: datetime, names: dic
         if abs(gap) > max(COUNT_SLACK, COUNT_SLACK_PCT * posts):
             out.append(("social_facebook_devir_eksik", f"⚠️ Facebook: okuyucu son 24 saatte {posts} gönderi saydı, devir dosyasında {scan.window_lines} satır var. "
                         "Okuyucu ile bot arasında gönderi kayboluyor olabilir."))
+    limit = limit_alert(fb, now)
+    out += [limit] if limit is not None else []
     unread = [(names or {}).get(key) or alias for key, alias in unread_sources(fb, now)]
     if unread:
         shown = ", ".join(unread[:UNREAD_LIST_MAX]) + (f" ve {len(unread) - UNREAD_LIST_MAX} tane daha" if len(unread) > UNREAD_LIST_MAX else "")
-        out.append(("fb_grup_okunmadi", f"⚠️ Facebook: {len(unread)} kaynak {UNREAD_AFTER // timedelta(hours=1)} saatten uzun süredir okunmadı ({shown}); "
+        out.append(("fb_grup_okunmadi", f"⚠️ Facebook: {len(unread)} kaynak olağan okuma aralığını 8 saatten fazla aştı, okunmadı ({shown}); "
                     "okuyucu çalışıyor görünüyor. Bu kaynaklardan gelecek ilanlar gecikir; sosyal okuyucu tarafında kaynak sırasına bakılmalı."))
     if scan is not None and scan.stale_pending:
         out.append(("social_facebook_aktarim_geride", f"⚠️ Facebook: devir dosyasında 1 saatten eski {scan.stale_pending} gönderi henüz bota aktarılmadı. "

@@ -193,7 +193,7 @@ def test_sale_box_alert_stays_quiet_when_few_lines_or_only_today_or_corrupt():
 # --- kaynak okunmadı (27.10.2026: 40 kaynaktan 12'si 12-23 saat okunmuyordu) ---
 def srcs(**ages):
     """ages: anahtar sonu -> okunmadan geçen saat (None: son_okuma_utc yok). Hepsi son 7 günde ilan görmüş sayılır."""
-    return {f"fb:{k}": {"arac_7g": 20, "yeni_ilan_7g": 5, "hata": None, "uyelik_gerekli": False, "yeni_gonderi_24s": 3,
+    return {f"fb:{k}": {"arac_7g": 20, "yeni_ilan_7g": 5, "hata": None, "uyelik_gerekli": False, "yeni_gonderi_24s": 3, "okuma_siniri_saat": 18,
                        "son_okuma_utc": None if h is None else (NOW - h * H).isoformat()} for k, h in ages.items()}
 
 
@@ -204,34 +204,34 @@ def running(rows, round_ago=1.0):
     return f
 
 
-def test_sources_unread_for_more_than_14_hours_are_reported_once_as_a_group_with_aliases():
-    f = running(srcs(a=2, b=15, c=13.9, d=20))
+def test_sources_unread_beyond_their_limit_plus_8_hours_are_reported_once_as_a_group_with_aliases():
+    f = running(srcs(a=2, b=27, c=25.9, d=30))  # sınır 18 + 8 = 26 saat
     (k, text), = [a for a in hw.handoff_alerts(f, None, NOW) if a[0] == "fb_grup_okunmadi"]
     assert "2 kaynak" in text and "fb-02, fb-04" in text  # sıralı anahtarlara göre: a=01, b=02, c=03, d=04
     assert "fb:" not in text and "okunmadı" in text
 
 
 def test_unread_sources_alert_needs_a_running_reader_and_active_sources():
-    old = srcs(a=20)
+    old = srcs(a=30)
     assert keys(hw.handoff_alerts(running(old, round_ago=7), None, NOW)) == []  # okuyucu kendisi durmuş: başka alarm var
     assert keys(hw.handoff_alerts(running(old, round_ago=5.9), None, NOW)) == ["fb_grup_okunmadi"]
     no_round = running(old)
     del no_round["son_tur_utc"]
     assert hw.handoff_alerts(no_round, None, NOW) == []
     assert hw.handoff_alerts(running(old, round_ago=-1), None, NOW) == []  # ileri tarihli tur: güvenilmez
-    idle = srcs(a=20)
+    idle = srcs(a=30)
     idle["fb:a"].update(arac_7g=0, yeni_ilan_7g=0)  # son 7 günde hiçbir şey görülmemiş: ölü kaynak, ayrı konu
     assert hw.handoff_alerts(running(idle), None, NOW) == []
-    member = srcs(a=20)
+    member = srcs(a=30)
     member["fb:a"]["uyelik_gerekli"] = True
     assert hw.handoff_alerts(running(member), None, NOW) == []
-    car_only = srcs(a=20)
+    car_only = srcs(a=30)
     car_only["fb:a"]["yeni_ilan_7g"] = 0  # arac_7g > 0 yeter
     assert keys(hw.handoff_alerts(running(car_only), None, NOW)) == ["fb_grup_okunmadi"]
 
 
 def test_unread_sources_alert_ignores_missing_or_corrupt_fields():
-    rows = srcs(a=None, b=20)
+    rows = srcs(a=None, b=30)
     rows["fb:c"] = {"son_okuma_utc": "dün", "arac_7g": 5}
     rows["fb:d"] = "bozuk"
     rows["fb:e"] = {"son_okuma_utc": "2026-10-11T10:00:00", "arac_7g": 5}  # saat dilimsiz
@@ -245,13 +245,44 @@ def test_unread_sources_alert_ignores_missing_or_corrupt_fields():
 
 
 def test_unread_sources_message_lists_at_most_ten_aliases(sent, tmp_path):
-    f = running(srcs(**{f"g{i:02d}": 20 for i in range(12)}))
+    f = running(srcs(**{f"g{i:02d}": 30 for i in range(12)}))
     hw.watch(Repo(), {"platformlar": {"facebook": f}}, NOW, folder=tmp_path)
     (k, text), = sent
     assert k == "fb_grup_okunmadi" and "12 kaynak" in text and "fb-10" in text and "fb-11" not in text and "ve 2 tane daha" in text
 
 
 def test_unread_sources_message_uses_source_names_when_known():
-    f = running(srcs(a=20, b=2))
+    f = running(srcs(a=30, b=2))
     (k, text), = hw.handoff_alerts(f, None, NOW, {"fb:a": "Örnek Araba Grubu"})
     assert k == "fb_grup_okunmadi" and "Örnek Araba Grubu" in text and "fb-01" not in text
+
+
+def test_unread_limit_follows_the_readers_own_limit_per_source():
+    rows = srcs(a=30, b=30)
+    rows["fb:b"]["okuma_siniri_saat"] = 24  # sessiz kaynak: 24 + 8 = 32 saat
+    assert [k for k, _ in hw.unread_sources(running(rows), NOW)] == ["fb:a"]
+    rows["fb:a"]["okuma_siniri_saat"] = "18"  # bozuk alan: varsayılan 26 saat
+    assert [k for k, _ in hw.unread_sources(running(rows), NOW)] == ["fb:a"]
+    rows["fb:a"]["okuma_siniri_saat"] = 500  # akla aykırı: varsayılan
+    rows["fb:a"]["son_okuma_utc"] = (NOW - 25 * H).isoformat()
+    assert hw.unread_sources(running(rows), NOW) == []
+
+
+def limits(day, reads, posts, scrolls):
+    f = fb()
+    f["sinir_gunluk"] = {day: {"okuma": reads, "gonderi_siniri": posts, "kaydirma_siniri": scrolls}}
+    return f
+
+
+def test_reads_ending_at_the_limit_alert_on_yesterdays_utc_row():
+    y = (NOW.date() - timedelta(days=1)).isoformat()
+    (k, text), = [a for a in hw.handoff_alerts(limits(y, 80, 15, 10), None, NOW) if a[0] == "fb_okuma_sinirda"]
+    assert "80 grup okumasının 25'i" in text
+    assert hw.limit_alert(limits(y, 80, 12, 12), NOW) is None  # %30 tam sınır: susar
+    assert hw.limit_alert(limits(y, 19, 19, 0), NOW) is None  # az okuma
+    assert hw.limit_alert(limits(NOW.date().isoformat(), 80, 40, 40), NOW) is None  # bugünün yarım satırı sayılmaz
+    assert hw.limit_alert(limits(y, 80, 50, 50), NOW) is None  # sınırda biten okumadan fazla: bozuk
+    assert hw.limit_alert(limits(y, "80", 40, 0), NOW) is None
+    f = fb()
+    f["sinir_gunluk"] = ["x"]
+    assert hw.limit_alert(f, NOW) is None
