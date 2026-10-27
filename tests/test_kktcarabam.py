@@ -401,6 +401,32 @@ def test_a_fully_blocked_run_records_a_24_hour_pause_and_logs_one_extra_line(mon
                                                    "07.10 08:07 UTC'den sonraki ilk tur yeniden dener"]
 
 
+def test_pause_tells_the_owner_once_and_only_when_the_record_was_written(monkeypatch, capsys):
+    """Duraklatma kaydı yazılınca sahibe tek uyarı (anahtar kka_detail_pause, 24 saatte bir); kayıt yazılamazsa ya da duraklama sürerken uyarı
+    yok; uyarının kendi hatası turu bozmaz. Ek istek yok: açılan ilan sayfası sayısı aynı (3)."""
+    sent = []
+    monkeypatch.setattr(kka, "notify_owner", lambda repo, key, text, repeat_hours: sent.append((key, text, repeat_hours)))
+    cards = blocked_cards(6)
+    net, repo = Wire(monkeypatch, cards, {}), Repo()
+    kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)
+    assert len(net.opened) == 3 and sent == [("kka_detail_pause", kka.PAUSE_ALERT, 24)]
+    assert kka.PAUSE_ALERT == "⚠️ KKTCarabam ilan sayfaları engelli (403): 24 saat yalnız liste okunuyor; bu sürede km/tarih/satıcı yok."
+    kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW + timedelta(hours=1))  # duraklama sürüyor: yeni uyarı yok
+    assert len(sent) == 1
+    Wire(monkeypatch, cards, {})
+    kka.collect_kktcarabam(Repo(fail_write=RuntimeError("x")), SOURCE, now=PAUSE_NOW)  # kayıt yazılamadı: uyarı yok
+    assert len(sent) == 1
+
+    def boom(*a, **k):
+        raise RuntimeError("telegram yok")
+
+    monkeypatch.setattr(kka, "notify_owner", boom)
+    net, repo = Wire(monkeypatch, cards, {}), Repo()
+    stats = kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)  # fırlatmaz
+    assert stats.detail_pause_set and repo.checked == 1 and len(repo.upserts) == 6
+    assert "duraklatma uyarısı gönderilemedi (RuntimeError)" in capsys.readouterr().out
+
+
 def test_exactly_three_new_cards_all_blocked_also_pauses(monkeypatch):
     cards = blocked_cards(3)  # sınıra tam varıldı (3 üst üste hata), atlanan kart yok
     net, repo = Wire(monkeypatch, cards, {}), Repo()

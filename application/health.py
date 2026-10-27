@@ -26,7 +26,8 @@ def notify_owner(repo: Repository, key: str, text: str, repeat_hours: int = REPE
     body = redact(text)[:max_chars]
     try:
         api(token, "sendMessage", chat_id=chat, text=body, **extra)
-    except TelegramError:
+    except TelegramError as e:  # sessiz kalmasın: log'a anahtar + durum + açıklama (sohbet kimliği yazılmaz; açıklama maskeli)
+        print(f"sahibe uyarı gönderilemedi ({key}): {e.status} {redact(str(e.description or ''))[:200]}")
         return False
     repo.mark_alerted(key)
     if share:

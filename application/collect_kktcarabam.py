@@ -2,6 +2,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from application.health import notify_owner
 from infrastructure.collectors import kktcarabam
 from infrastructure.db.repository import Repository
 from infrastructure.fx.frankfurter import gbp_rate
@@ -12,6 +13,8 @@ MAX_DETAIL_FAILS_IN_A_ROW = 3  # üst üste bu kadar ilan sayfası okunamazsa en
 DETAIL_PAUSE_KEY = "kka_detail_paused_until"  # bot_state: ilan sayfaları bu ana kadar (UTC ISO) açılmaz; VPS ve GitHub turu aynı kaydı görür
 DETAIL_PAUSE = timedelta(hours=24)  # hiçbir ilan sayfası okunamayan (hepsi engelli) turdan sonra ilan sayfaları bu kadar süre denenmez
 _PAUSE_SKEW = timedelta(minutes=5)  # saat farkı payı: kayıt DETAIL_PAUSE + bu süreden fazla ilerideyse bozuk sayılır (sonsuza kadar duraklamasın)
+PAUSE_ALERT_KEY = "kka_detail_pause"  # sahibe duraklatma uyarısı (notify_owner tekrar sınırı: 24 saatte bir)
+PAUSE_ALERT = "⚠️ KKTCarabam ilan sayfaları engelli (403): 24 saat yalnız liste okunuyor; bu sürede km/tarih/satıcı yok."
 
 
 @dataclass
@@ -86,7 +89,7 @@ def _paused_until(repo: Repository, now: datetime) -> datetime | None:
 def _start_pause(repo: Repository, now: datetime, stats: KkaStats) -> None:
     """Hiçbir ilan sayfası okunamadı ve üst üste hata sınırına varıldı (engel): bu çalışma anından DETAIL_PAUSE sonrasına kadar ilan sayfaları
     açılmasın (her turda boşuna 3 engelli istek sunucunun IP'sini liste sayfasından da engellettirebilir). Yazılamazsa tur bozulmaz: sonraki tur
-    ilan sayfalarını eskisi gibi dener."""
+    ilan sayfalarını eskisi gibi dener (uyarı da gitmez). Yazılınca sahibe tek uyarı (24 saatte bir; yeni istek yok, süre değişmez)."""
     until = now + DETAIL_PAUSE
     try:
         repo.set_state(DETAIL_PAUSE_KEY, until.isoformat())
@@ -96,6 +99,10 @@ def _start_pause(repo: Repository, now: datetime, stats: KkaStats) -> None:
     stats.detail_pause_set = True
     print(f"KKTCarabam: ilan sayfaları {DETAIL_PAUSE // timedelta(hours=1)} saat duraklatıldı (hepsi engelli; sunucu zorlanmasın): "
           f"{until:%d.%m %H:%M} UTC'den sonraki ilk tur yeniden dener")
+    try:  # sahibe bir kez (24 saatte bir); uyarı gidemese de tur bozulmaz
+        notify_owner(repo, PAUSE_ALERT_KEY, PAUSE_ALERT, repeat_hours=24)
+    except Exception as e:
+        print(f"KKTCarabam: duraklatma uyarısı gönderilemedi ({type(e).__name__})")
 
 
 def _print_detail_summary(stats: KkaStats, paused_until: datetime | None = None) -> None:

@@ -4,7 +4,7 @@
 VPS'e kurulan küçük programlar şunları yapar:
 1. **Bot anında cevap:** Telegram'da bota yazdığınız komutlara (`/durum`, `/fiyat corolla 2014`, bir ilan göndermek...) birkaç saniyede cevap verir (eskiden 15-18 dakika sürüyordu).
 2. **Taramalar:** İlan sitelerini tarama, değerlendirme ve fırsat bildirimleri artık VPS'ten çalışır (`kktc-tick`: 15 dakikada bir, `kktc-browser`: 2 saatte bir, KKTCarabam için). Facebook hızlı şeridi (`kktc-fb-fast.path` → `kktc-fb-fast.service`): sosyal okuyucu yeni gönderi yazınca o gönderiler hemen değerlendirilir, 15 dakikalık turu beklemez (`journalctl -u kktc-fb-fast -n 50`: `hızlı şerit: yeni=…` satırları).
-3. **Haftalık yedek:** veritabanındaki tüm tablolar her Pazar gecesi CSV olarak sunucuya kaydedilir, son 4 yedek saklanır (`kktc-backup`; ayrıntı aşağıda "Haftalık yedek").
+3. **Haftalık yedek:** veritabanındaki tüm tablolar her Pazar gecesi CSV olarak sunucuya kaydedilir, son 28 günün yedekleri (en az son 4) saklanır (`kktc-backup`; ayrıntı aşağıda "Haftalık yedek").
 
 ## GitHub yedek olarak çalışmaya devam eder
 - VPS her tarama turu **başarıyla** bitince veritabanına "ben çalışıyorum" notu yazar. GitHub'ın kendi turu bu notu görünce o tur için hiçbir şey yapmadan kapanır. Böylece aynı işler iki kere yapılmaz (siteler ve veritabanı yorulmaz).
@@ -44,7 +44,7 @@ journalctl -u kktc-bot -n 50
 
 ## Haftalık yedek (veritabanı)
 Supabase ücretsiz planda kendiliğinden yedek/geri dönüş yok; bu yüzden sunucu her **Pazar 01:43 UTC** (KKTC saatiyle yazın 04:43, kışın 03:43; sessiz gece, gece bakımından sonra) tüm tabloları CSV olarak yedekler. Veritabanına yalnız okur (tek tutarlı anlık görüntü). Bitince `bot_state.backup_last_ok` alanına zamanı yazar (sabah durum mesajı buna bakar). Sunucu o gece kapalıysa açılınca bir yedek alır.
-- **Nerede:** `/var/lib/kktc-bot/backups/<tarih-saat>/` (örn. `20261011-014401`). Her klasörde 12 tablo için `.csv` ve satır sayılarını gösteren `manifest.json` vardır. **Son 4 yedek** saklanır; yenisi alınınca (başarılıysa) en eskisi silinir. Yalnız bu aracın kendi yazdığı yedek klasörleri silinir; başka bir dosyaya dokunulmaz.
+- **Nerede:** `/var/lib/kktc-bot/backups/<tarih-saat>/` (örn. `20261011-014401`). Her klasörde 12 tablo için `.csv` ve satır sayılarını gösteren `manifest.json` vardır. **Son 28 günün bütün yedekleri** (ve her durumda en yeni 4) saklanır; daha eskiler yeni yedek başarıyla alınınca silinir. Yedek alınamazsa sahibe Telegram uyarısı gider. Yalnız bu aracın kendi yazdığı yedek klasörleri silinir; başka bir dosyaya dokunulmaz.
 - **Gizlilik:** telefon numarası ve ilan metni içerir. Klasörler yalnız root ve `kktc-bot` tarafından okunur (izin 0700, dosyalar 0600), git deposuna asla girmez.
 - **Listelemek:**
 ```

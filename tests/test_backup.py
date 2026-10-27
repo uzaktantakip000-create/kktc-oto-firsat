@@ -147,23 +147,45 @@ def test_backup_name_pattern():
 
 def test_retention_keeps_newest_n_and_touches_only_its_own_folders(tmp_path):
     parent = tmp_path / "yedekler"
-    for day in range(1, 7):
-        make_backup(parent, f"2026100{day}-000000")
+    for day in range(1, 7):  # hepsi 28 günden eski: yalnız en yeni 4 kalır
+        make_backup(parent, f"2026080{day}-000000")
     (parent / "notlar").mkdir()
     (parent / "notlar" / "onemli.txt").write_text("silme")
     (parent / "readme.txt").write_text("silme")
-    make_backup(parent, "20260930-000000", extra="benim.txt")  # adı kalıba uyar ama içinde başkasının dosyası var
-    make_backup(parent, "20260999-000000")  # geçersiz tarih: kalıba uymaz
+    make_backup(parent, "20260731-000000", extra="benim.txt")  # adı kalıba uyar ama içinde başkasının dosyası var
+    make_backup(parent, "20260799-000000")  # geçersiz tarih: kalıba uymaz
     outside = make_backup(tmp_path, "disarda")
-    (parent / "20260929-000000").symlink_to(outside, target_is_directory=True)  # kalıba uyan ama BAĞLANTI olan ad
+    (parent / "20260729-000000").symlink_to(outside, target_is_directory=True)  # kalıba uyan ama BAĞLANTI olan ad
     removed, left = backup.apply_retention(parent, 4, now=NOW)
-    assert removed == ["20261001-000000", "20261002-000000"]
-    assert left == ["20260930-000000"]  # içinde yabancı dosya: silinmedi, bildirildi
-    assert names(parent) == ["20260929-000000", "20260930-000000", "20260999-000000", "20261003-000000", "20261004-000000",
-                             "20261005-000000", "20261006-000000", "notlar", "readme.txt"]
-    assert (parent / "20260930-000000" / "benim.txt").exists() and (parent / "20260930-000000" / "listings.csv").exists()
+    assert removed == ["20260801-000000", "20260802-000000"]
+    assert left == ["20260731-000000"]  # içinde yabancı dosya: silinmedi, bildirildi
+    assert names(parent) == ["20260729-000000", "20260731-000000", "20260799-000000", "20260803-000000", "20260804-000000",
+                             "20260805-000000", "20260806-000000", "notlar", "readme.txt"]
+    assert (parent / "20260731-000000" / "benim.txt").exists() and (parent / "20260731-000000" / "listings.csv").exists()
     assert (parent / "notlar" / "onemli.txt").exists()
     assert names(outside) == ["alerts.csv", "listings.csv", "manifest.json"]  # bağlantının gösterdiği yere dokunulmadı
+
+
+def test_retention_is_age_based_so_extra_runs_do_not_push_out_weekly_copies(tmp_path):
+    """27.10.2026: sayıya göre saklamada araya giren elle/ek yedekler haftalık kopyaları siliyordu. Son 28 günün HEPSİ kalır; daha eskiler
+    yalnız en yeni N dışında kalınca silinir."""
+    parent = tmp_path / "y"
+    weekly = ["20260908-020000", "20260915-020000", "20260922-020000", "20260929-020000", "20261006-020000"]
+    extra = ["20261005-100000", "20261005-110000", "20261006-090000"]  # aynı haftada ek yedekler
+    for name in ["20260801-020000", *weekly, *extra]:
+        make_backup(parent, name)
+    removed, left = backup.apply_retention(parent, 4, now=NOW)  # NOW = 06.10 12:00; sınır 08.09 12:00
+    assert removed == ["20260801-020000", "20260908-020000"] and left == []  # 28 günden eski ve en yeni 4'ün dışında
+    assert names(parent) == sorted(weekly[1:] + extra)
+
+
+def test_retention_keeps_the_newest_n_even_when_all_are_older_than_28_days(tmp_path):
+    parent = tmp_path / "y"
+    for month in range(1, 7):  # sunucu aylarca yedek alamamış: en yeni 4 her durumda kalır
+        make_backup(parent, f"20260{month}01-000000")
+    removed, _ = backup.apply_retention(parent, 4, now=NOW)
+    assert removed == ["20260101-000000", "20260201-000000"]
+    assert names(parent) == ["20260301-000000", "20260401-000000", "20260501-000000", "20260601-000000"]
 
 
 def test_retention_with_fewer_backups_than_keep_deletes_nothing(tmp_path):
@@ -247,6 +269,8 @@ def test_existing_target_is_never_deleted_when_it_cannot_be_created(tmp_path):
 def fake_env(monkeypatch):
     monkeypatch.setattr(backup, "load_env", lambda *a, **k: None)  # çalışma klasöründeki .env (gerçek veritabanı) hiç okunmasın
     monkeypatch.setenv("DATABASE_URL", SECRET_DSN)
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)  # Telegram yok: hata uyarısı veritabanına bağlanmadan atlanır
+    monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
 
 
 def patch_db(monkeypatch, conn=None, *, set_error=None, readback=None, snapshot_error=None):
@@ -320,6 +344,46 @@ def test_unattended_database_down_exits_nonzero_and_changes_nothing(tmp_path, mo
     assert backup.main(["--dizin", str(parent), "--sakla", "1"]) == 1
     assert names(parent) == ["20200101-000000"] and state == {} and made == []
     assert "GIZLISIFRE123" not in capsys.readouterr().err
+
+
+def telegram_on(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
+
+
+def test_unattended_failure_tells_the_owner_once_a_day(tmp_path, monkeypatch, capsys, fake_env):
+    telegram_on(monkeypatch)
+    sent = []
+    monkeypatch.setattr(backup, "notify_owner", lambda repo, key, text, repeat_hours: sent.append((key, text, repeat_hours)))
+    state, made, _ = patch_db(monkeypatch, snapshot_error=psycopg.OperationalError(f"bağlanılamadı {SECRET_DSN}"))
+    assert backup.main(["--dizin", str(tmp_path / "y"), "--sakla", "4"]) == 1
+    assert sent == [("backup_failed", "⚠️ Veritabanı yedeği alınamadı (OperationalError).", 24)]
+    assert state == {} and made == [SECRET_DSN]  # yalnız uyarının tekrar sınırı için bağlantı; backup_last_ok yazılmadı
+    assert "GIZLISIFRE123" not in capsys.readouterr().err
+
+
+def test_alert_failure_never_masks_the_failed_exit_code(tmp_path, monkeypatch, capsys, fake_env):
+    telegram_on(monkeypatch)
+
+    def boom(*a, **k):
+        raise RuntimeError(f"telegram/veritabanı yok {SECRET_DSN}")
+
+    monkeypatch.setattr(backup, "notify_owner", boom)
+    patch_db(monkeypatch, snapshot_error=psycopg.OperationalError("bağlanılamadı"))
+    assert backup.main(["--dizin", str(tmp_path / "y")]) == 1
+    monkeypatch.setattr(backup, "Repository", boom)  # veritabanına uyarı için de bağlanılamıyor
+    assert backup.main(["--dizin", str(tmp_path / "y")]) == 1
+    err = capsys.readouterr().err
+    assert err.count("yedek hatası sahibe bildirilemedi: RuntimeError") == 2 and "GIZLISIFRE123" not in err
+
+
+def test_manual_failure_sends_no_alert(tmp_path, monkeypatch, fake_env):
+    telegram_on(monkeypatch)
+    sent = []
+    monkeypatch.setattr(backup, "notify_owner", lambda *a, **k: sent.append(a))
+    _, made, _ = patch_db(monkeypatch, snapshot_error=psycopg.OperationalError("bağlanılamadı"))
+    assert backup.main([str(tmp_path / "elle")]) == 1
+    assert sent == [] and made == []  # elle yedek veritabanına HİÇ yazmaz (uyarı kaydı da)
 
 
 def test_missing_database_url_exits_nonzero(tmp_path, monkeypatch, capsys):

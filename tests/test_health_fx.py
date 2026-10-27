@@ -84,6 +84,22 @@ def test_alert_text_hides_secrets(monkeypatch):
     assert "SECRETSECRET" not in sent[0]
 
 
+def test_failed_alert_send_is_logged_without_chat_id(monkeypatch, capsys):
+    """Telegram gönderimi başarısızsa sessiz kalmaz: log'da anahtar, durum kodu ve maskeli açıklama; sohbet kimliği yok, tekrar sınırı yazılmaz."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:SECRETSECRET")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "987654321")
+
+    def fail(*a, **kw):
+        raise health.TelegramError("sendMessage", 400, "Bad Request: bot123456:SECRETSECRET chat not found")
+
+    monkeypatch.setattr(health, "api", fail)
+    repo = FakeRepo()
+    assert health.notify_owner(repo, "backup_failed", "x") is False and repo.marked == []
+    out = capsys.readouterr().out
+    assert "backup_failed" in out and "400" in out and "chat not found" in out
+    assert "987654321" not in out and "SECRETSECRET" not in out
+
+
 class Store:
     def __init__(self):
         self.d = {}

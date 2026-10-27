@@ -5,9 +5,11 @@ Kullanım:
   python -m entrypoints.backup --dizin <klasör> [--sakla N]
       GÖZETİMSİZ (VPS haftalık zamanlayıcısı, deploy/bot/kktc-backup.*): <klasör>/<tarih-saat>/ altına yazar. Yedek BAŞARIYLA bitince
       bot_state.backup_last_ok = o anın UTC zamanı (ISO) yazılır (yeni bağlantıdan geri okunup doğrulanır; tek veritabanı yazması budur).
-      --sakla N: en yeni N tam yedek kalır, daha eskileri silinir. Yalnız bu aracın kendi yazdıkları silinir (klasör adı <YYYYMMDD-HHMMSS>,
+      --sakla N: son 28 günün bütün tam yedekleri ve her durumda en yeni N tam yedek kalır, daha eskileri silinir (yaşa göre: araya giren elle
+      alınmış yedekler haftalık kopyaları itip silmesin). Yalnız bu aracın kendi yazdıkları silinir (klasör adı <YYYYMMDD-HHMMSS>,
       içinde yalnız manifest.json ve manifest'teki tabloların .csv dosyaları); başka bir şey görülürse o klasöre dokunulmaz.
-Başarısız yedek: çıkış kodu 0 DEĞİL, yarım kalan yeni klasör silinir, ESKİ yedeklere dokunulmaz, backup_last_ok yazılmaz.
+Başarısız yedek: çıkış kodu 0 DEĞİL, yarım kalan yeni klasör silinir, ESKİ yedeklere dokunulmaz, backup_last_ok yazılmaz; gözetimsiz kullanımda
+sahibe Telegram uyarısı (backup_failed, 24 saatte bir; uyarı gidemese de çıkış kodu değişmez).
 Dosyalar kişisel veri (telefon, ilan metni) içerir: izinleri 0600 (klasör 0700); git deposunun DIŞINDA kalır, araç depo içindeki bir klasöre yazmayı reddeder.
 Her veritabanı-yazan adımdan (migration, toplu UPDATE/DELETE) ÖNCE de çalıştırılır. (Supabase ücretsiz planda otomatik yedek/geri dönüş olmayabilir.)
 Geri yükleme: tablo şeması aynıysa `COPY <tablo> FROM STDIN WITH CSV HEADER` ile; asıl amaç yanlışlıkla silinen/değişen VERİYİ kurtarabilmek."""
@@ -23,12 +25,15 @@ from pathlib import Path
 import psycopg
 from psycopg import sql
 
+from application.health import notify_owner
 from infrastructure.config import load_env, redact, require
 from infrastructure.db.repository import Repository
 
 STATE_KEY = "backup_last_ok"  # bot_state: son BAŞARILI gözetimsiz yedeğin UTC zamanı (ISO); sabah durum kodu bunu okur
 MANIFEST = "manifest.json"
 NAME_FORMAT = "%Y%m%d-%H%M%S"
+KEEP_DAYS = 28  # saklama: bu kadar günden yeni tam yedeklerin hepsi kalır (en yeni --sakla N her durumda kalır)
+FAIL_ALERT_KEY = "backup_failed"  # sahibe uyarı (notify_owner tekrar sınırı anahtarı)
 STALE_INCOMPLETE_S = 6 * 3600  # manifest'i olmayan (yarım kalmış) eski klasör bu kadar saatten sonra temizlenir; yeni olana (çalışan yedek olabilir) dokunulmaz
 
 
@@ -122,7 +127,8 @@ def remove_backup_dir(folder: Path) -> bool:
 
 
 def apply_retention(parent: Path, keep: int, current: str | None = None, now: datetime | None = None) -> tuple[list[str], list[str]]:
-    """`parent` içinde en yeni `keep` TAM yedeği bırakır, eskilerini siler. Yalnız adı <YYYYMMDD-HHMMSS> olan, gerçek klasör olan ve içinde
+    """`parent` içinde KEEP_DAYS günden yeni bütün TAM yedekleri ve her durumda en yeni `keep` tanesini bırakır, eskilerini siler (yaş klasör
+    adındaki UTC zamandan). Yalnız adı <YYYYMMDD-HHMMSS> olan, gerçek klasör olan ve içinde
     yalnız bu aracın dosyaları bulunan klasörlere dokunur. `current` (az önce alınan yedek) saat sapması olsa bile asla silinmez.
     Manifest'siz klasör yedek sayılmaz: 6 saatten eskiyse (yarım kalmış yedek) temizlenir, yenisine dokunulmaz.
     Döner: (silinenler, silinemeyip yerinde bırakılanlar)."""
@@ -138,7 +144,8 @@ def apply_retention(parent: Path, keep: int, current: str | None = None, now: da
                 complete.append(e.name)
             elif now_ts - e.stat(follow_symlinks=False).st_mtime > STALE_INCOMPLETE_S:
                 incomplete.append(e.name)
-    keep_names = set(complete[-keep:]) | ({current} if current else set())
+    recent = {n for n in complete if now_ts - parse_backup_name(n).replace(tzinfo=timezone.utc).timestamp() < KEEP_DAYS * 86400}
+    keep_names = set(complete[-keep:]) | recent | ({current} if current else set())
     removed, left = [], []
     for name in [n for n in complete if n not in keep_names] + [n for n in incomplete if n != current]:
         (removed if remove_backup_dir(parent / name) else left).append(name)
@@ -207,7 +214,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                                 description="Veritabanı tablolarını CSV olarak yedekler (başlıktaki açıklamaya bakın).")
     p.add_argument("hedef", nargs="?", help="elle: yedeğin yazılacağı klasörün KENDİSİ (varsayılan ~/KKTC-yedek/<tarih-saat>)")
     p.add_argument("--dizin", help="gözetimsiz: yedekler bu klasörün altına <tarih-saat>/ olarak yazılır; başarıdan sonra bot_state.backup_last_ok yazılır")
-    p.add_argument("--sakla", type=int, help="yalnız --dizin ile: en yeni bu kadar tam yedek kalır, eskileri silinir (en az 1)")
+    p.add_argument("--sakla", type=int, help="yalnız --dizin ile: son 28 günün yedekleri ve en az en yeni bu kadar tam yedek kalır, eskileri silinir (en az 1)")
     args = p.parse_args(argv)
     if args.dizin and args.hedef:
         p.error("hedef klasör ile --dizin birlikte verilmez")
@@ -216,6 +223,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     if args.sakla is not None and args.sakla < 1:
         p.error("--sakla en az 1 olmalı")
     return args
+
+
+def alert_failure(error: BaseException) -> None:
+    """Gözetimsiz yedek başarısız: sahibe uyarı (24 saatte bir). Hiçbir hatası yukarı çıkmaz (çıkış kodu zaten 1); log'a yalnız hata TÜRÜ.
+    Telegram ayarı yoksa veritabanına hiç bağlanılmaz. Veritabanına ulaşılamıyorsa uyarı da gidemez (tekrar sınırı orada): log satırı kalır."""
+    if not os.environ.get("TELEGRAM_BOT_TOKEN") or not os.environ.get("TELEGRAM_CHAT_ID"):
+        return
+    try:
+        repo = Repository(require("DATABASE_URL"))
+        try:
+            notify_owner(repo, FAIL_ALERT_KEY, f"⚠️ Veritabanı yedeği alınamadı ({type(error).__name__}).", repeat_hours=24)
+        finally:
+            repo.conn.close()
+    except Exception as e:
+        print(f"UYARI: yedek hatası sahibe bildirilemedi: {type(e).__name__}", file=sys.stderr)
 
 
 def main(argv: list[str]) -> int:
@@ -238,9 +260,13 @@ def main(argv: list[str]) -> int:
             conn.close()
     except SystemExit as e:  # git deposu içi reddi: kendi mesajıyla, başarısız
         print(f"YEDEK ALINAMADI: {e.code}", file=sys.stderr)
+        if unattended:
+            alert_failure(e)
         return 1
     except Exception as e:  # her hata (bağlantı, disk, izin): sıfırdan farklı çıkış, eski yedeklere dokunulmaz
         print(f"YEDEK ALINAMADI: {type(e).__name__}: {redact(str(e))[:300]}", file=sys.stderr)
+        if unattended:  # elle yedek veritabanına HİÇ yazmaz (uyarı kaydı da yazılmaz)
+            alert_failure(e)
         return 1
     seconds = time.monotonic() - started
     size = dir_bytes(target)
@@ -260,7 +286,7 @@ def main(argv: list[str]) -> int:
     if args.sakla is not None:
         try:
             removed, left = apply_retention(parent, args.sakla, current=target.name, now=now)
-            print(f"saklama (en yeni {args.sakla}): {len(removed)} eski yedek silindi" + (f" ({', '.join(removed)})" if removed else ""))
+            print(f"saklama (son {KEEP_DAYS} gün + en az en yeni {args.sakla}): {len(removed)} eski yedek silindi" + (f" ({', '.join(removed)})" if removed else ""))
             if left:
                 print(f"UYARI: silinemeyen/tanınmayan içerikli klasör(ler) yerinde bırakıldı: {', '.join(left)}", file=sys.stderr)
         except Exception as e:  # yeni yedek tamam; eskileri temizleyememek yedeği başarısız yapmaz (günlükte uyarı)

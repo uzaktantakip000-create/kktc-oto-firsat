@@ -133,8 +133,9 @@ class Failover:
 
 
 TICK = Failover(VPS_TICK_KEY, FO_TICK_KEY, "vps_failover", "vps_recovered", TICK_FRESH, ALERT_REPEAT_H,
-                "⚠️ Sunucu turları durdu (son tur {t} önce); GitHub devraldı, tarama sürüyor.",
-                "✅ Sunucu turları yeniden çalışıyor (kesinti ~{t}; bu arada GitHub taradı).")
+                "⚠️ Sunucu turları durdu (son tur {t} önce); GitHub devraldı, siteler taranıyor. "
+                "Facebook grupları sunucu dönene kadar okunmuyor (okuyucu sunucuda).",
+                "✅ Sunucu turları yeniden çalışıyor (kesinti ~{t}; bu arada GitHub siteleri taradı). Facebook grupları yeniden okunuyor.")
 BROWSER = Failover(VPS_BROWSER_KEY, FO_BROWSER_KEY, "vps_browser_failover", "vps_browser_recovered", BROWSER_ALERT_AFTER, 24,
                    "⚠️ Sunucu KKTCarabam'ı okuyamıyor (son başarı {t} önce); GitHub devraldı, tarama sürüyor.",
                    "✅ Sunucu KKTCarabam'ı yeniden okuyor (kesinti ~{t}; bu arada GitHub okudu).")
