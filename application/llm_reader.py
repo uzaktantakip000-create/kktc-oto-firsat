@@ -117,6 +117,55 @@ def call_alarms(repo, err: str | None, now: datetime | None = None) -> None:
     rate_limit_alarm(repo, err, now)
 
 
+# Sonuçsuzluk serisi (27.10.2026): hesap hatası (account_alarm) ve 429 serisi (rate_limit_alarm) dışındaki kalıcı arıza (zaman aşımı, 5xx,
+# "yanıt kesildi", "json yok"…) hiç uyarı vermiyordu. İşe yarar sonuç (AYRIŞTIRILMIŞ okuma, fırsat notu) çıkmayan her gerçek çağrı seriyi
+# (SILENT_KEY: ilk sonuçsuz çağrının anı, sayısı, son hata) uzatır; işe yarar sonuç siler. En az SILENT_MIN_CALLS çağrı ve SILENT_MIN_HOURS
+# saattir sonuç yoksa sahibe 24 saatte bir uyarı ("llm_sessiz"); son hatanın kendi uyarısı varsa (hesap hatası, 429) ikinci mesaj gitmez.
+# Görsel okuma ayrı modeldir (openrouter.IMAGE_MODEL): seriye girmez (başarısı metin modelinin arızasını örtmesin), yalnız günlük sayıya girer.
+# Günlük sayılar (day_key: llm_ok:<gün>, llm_err:<gün>; bütçe doluyken çağrı yok, sayılmaz) hata varsa sabah nabzında (status.llm_line).
+SILENT_KEY = "llm_hata_seri"
+SILENT_MIN_CALLS, SILENT_MIN_HOURS = 5, 3
+SILENT_ALERT = ("⚠️ Yapay zekâ {h} saattir işe yarar cevap vermiyor (son hata: {err}). Facebook 🟢'leri yapay zekâ kontrolü olmadan gidiyor, "
+                "fırsat notu eklenmiyor.")
+
+
+def day_key(kind: str, now: datetime) -> str:
+    """Günlük çağrı sayısı anahtarı: kind 'ok' ya da 'err' (llm_spend gibi UTC günü)."""
+    return f"llm_{kind}:{now:%Y-%m-%d}"
+
+
+def day_count(repo, kind: str, now: datetime) -> int:
+    try:
+        return int(repo.get_state(day_key(kind, now), "0") or 0)
+    except ValueError:
+        return 0
+
+
+def outcome_alarm(repo, err: str | None, now: datetime | None = None, streak: bool = True) -> None:
+    """Gerçek çağrının SONUCU (err None = işe yarar sonuç; ayrıştırmadan sonra çağrılır): günlük sayı ve (streak ise) sonuçsuzluk serisi.
+    Hiçbir hata yukarı fırlamaz."""
+    try:
+        now = now or datetime.now(timezone.utc)
+        kind = "err" if err else "ok"
+        repo.set_state(day_key(kind, now), str(day_count(repo, kind, now) + 1))
+        if not streak:
+            return
+        raw = repo.get_state(SILENT_KEY)
+        if err is None:
+            if raw:
+                repo.set_state(SILENT_KEY, "")
+            return
+        since, n = _rate_streak(raw) or (now, 0)
+        n += 1
+        repo.set_state(SILENT_KEY, json.dumps({"since": since.isoformat(), "n": n, "last_err": err}, ensure_ascii=False))
+        hours = (now - since).total_seconds() / 3600
+        if n >= SILENT_MIN_CALLS and hours >= SILENT_MIN_HOURS and err not in ACCOUNT_ERRORS and err != RATE_LIMITED:
+            from application.health import notify_owner  # tembel: health → notify → ... döngüsü olmasın
+            notify_owner(repo, "llm_sessiz", SILENT_ALERT.format(h=int(hours), err=err), repeat_hours=24)
+    except Exception as e:
+        print("yapay zekâ sessizlik uyarısı yazılamadı:", type(e).__name__)
+
+
 class LlmReader:
     def __init__(self, repo: Repository, api_key: str, model: str, call=openrouter.read_listing, now=None,
                  image_call=openrouter.read_image_text):
@@ -144,11 +193,9 @@ class LlmReader:
         self.repo.set_state(self._spend_key(), f"{spent + cost:.5f}")
         self.calls += 1
         call_alarms(self.repo, err, self._now)
-        if err:
-            self.last_error = err
-            return None
-        read = parse_llm_read(data, text)
-        self.last_error = None if read else "çıktı geçersiz"
+        read = None if err else parse_llm_read(data, text)
+        self.last_error = err or (None if read else "çıktı geçersiz")
+        outcome_alarm(self.repo, self.last_error, self._now)  # başarı = ayrıştırılmış okuma (çıktı geçersizse sonuçsuz sayılır)
         return read
 
 
@@ -162,6 +209,7 @@ class LlmReader:
         self.repo.set_state(self._spend_key(), f"{spent + cost:.5f}")
         self.last_error = err or (None if text else "görselde okunur yazı yok")
         call_alarms(self.repo, err, self._now)
+        outcome_alarm(self.repo, err, self._now, streak=False)  # ayrı model: yalnız günlük sayı ("yazı yok" da cevaptır)
         return text or None
 
 
@@ -315,6 +363,7 @@ def deal_notes(repo: Repository, evs: list[Evaluated], api_key: str, model: str,
             if err:
                 print("LLM notu alınamadı:", err + (" (geçici: sonraki turda yeniden sorulur, bu turda başka not sorulmaz)" if stalled else ""))
             call_alarms(repo, err, now)  # hesap hatası ve 429 serisi (cevap gelince seri silinir)
+            outcome_alarm(repo, None if note is not None else (err or "yanıt biçimi"), now)  # başarı = elde not
             repo.set_state(ledger._spend_key(), f"{spent + cost:.5f}")
             if not stalled:  # geçici hata önbelleğe yazılmaz
                 repo.set_state(key, json.dumps(note, ensure_ascii=False))

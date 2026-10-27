@@ -88,6 +88,14 @@ def test_heartbeat_mentions_delays_briefly_and_points_to_the_detailed_report():
     assert "SANA HABER VEREN" not in text  # eski uzun rapor sabah mesajı değil
 
 
+def test_heartbeat_shows_todays_ai_counts_only_when_there_were_errors():
+    repo = FakeRepo([src("KKTCar")])
+    repo.state["llm_ok:2026-10-02"] = "12"
+    assert "Yapay zekâ" not in status.build_heartbeat(repo, NOW)  # hata yok: satır yok
+    repo.state.update({"llm_err:2026-10-02": "7", "llm_err:2026-10-01": "99"})  # dünkü sayı karışmaz
+    assert status.build_heartbeat(repo, NOW).splitlines()[1] == "🤖 Yapay zekâ bugün: 12 işe yarar cevap, 7 hatalı çağrı."
+
+
 def test_source_limits_per_platform():
     assert health.source_limit_hours({"url": "https://www.facebook.com/groups/1", "platform": "facebook"}) == 12
     assert health.source_limit_hours({"url": "https://kibrisarabaal.com", "platform": "web"}) == 6  # 21.10.2026: gündüz 30, gece 120 dk

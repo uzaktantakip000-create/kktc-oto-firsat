@@ -103,7 +103,7 @@ def test_the_first_answer_clears_the_streak_and_other_errors_leave_it(alarms, an
     assert repo.state[lr.RATE_KEY] == ""
     for i in range(5):  # yeni seri: 5 çağrı ama 40 dakika
         failing(repo, DAY + 5 * H + i * 10 * MIN).read("x")
-    assert [a[0] for a in alarms] == ["llm_hesap"]  # yalnız 402'nin kendi uyarısı
+    assert [a[0] for a in alarms if a[0] != "llm_sessiz"] == ["llm_hesap"]  # yalnız 402'nin kendi uyarısı (sonuçsuzluk serisi aşağıda)
 
 
 def test_429s_from_deal_notes_and_photo_reads_count_too(alarms):
@@ -129,3 +129,76 @@ def test_a_broken_streak_record_or_failing_alert_never_breaks_reading(monkeypatc
     for i in range(1, 5):
         assert failing(repo, DAY + i * H).read("x") is None
     assert "yapay zekâ istek sınırı uyarısı yazılamadı: RuntimeError" in capsys.readouterr().out
+
+
+# --- sonuçsuzluk serisi (27.10.2026): zaman aşımı, 5xx, "yanıt kesildi", "json yok"… saatlerce sürse de uyarı yoktu ---
+
+def test_hours_without_a_usable_answer_warn_the_owner(alarms):
+    repo = FakeRepo()
+    for i, err in enumerate(["ReadTimeout", "http 502", "yanıt kesildi", "json yok"]):
+        failing(repo, DAY + i * H, err=err).read("x")
+    assert alarms == []  # 4 çağrı: henüz değil
+    failing(repo, DAY + 3 * H, err="http 503").read("x")  # 5. çağrı, 3 saattir sonuç yok
+    assert json.loads(repo.state[lr.SILENT_KEY]) == {"since": DAY.isoformat(), "n": 5, "last_err": "http 503"}
+    assert alarms == [("llm_sessiz", "⚠️ Yapay zekâ 3 saattir işe yarar cevap vermiyor (son hata: http 503). Facebook 🟢'leri yapay zekâ "
+                                     "kontrolü olmadan gidiyor, fırsat notu eklenmiyor.", 24)]  # tekrar sınırı notify_owner'da (24 saat)
+
+
+def test_many_failures_in_a_short_time_never_warn(alarms):
+    repo = FakeRepo()
+    for i in range(20):
+        failing(repo, DAY + i * 5 * MIN, err="ReadTimeout").read("x")  # 95 dakika
+    assert alarms == []
+
+
+def test_an_unparsable_answer_extends_the_streak_and_only_a_parsed_read_or_a_note_clears_it(alarms):
+    repo = FakeRepo()
+    for i in range(4):
+        r = lr.LlmReader(repo, "k", "m", call=lambda *a: (["bozuk"], None, 0.0), now=DAY + i * H)  # model cevap verdi, okuma çıkmadı
+        assert r.read("x") is None and r.last_error == "çıktı geçersiz"
+    assert json.loads(repo.state[lr.SILENT_KEY]) == {"since": DAY.isoformat(), "n": 4, "last_err": "çıktı geçersiz"}
+    assert reader(repo).read(TEXT) is not None
+    assert repo.state[lr.SILENT_KEY] == ""
+    failing(repo, DAY + 5 * H, err="ReadTimeout").read("x")
+    lr.deal_notes(repo, [green()], "k", "m", call=deal_call(note={"not": "x"}), now=DAY + 5 * H)
+    assert repo.state[lr.SILENT_KEY] == "" and alarms == []
+
+
+def test_deal_note_failures_count_and_photo_reads_neither_extend_nor_clear(alarms):
+    repo = FakeRepo()
+    for i in range(4):
+        lr.deal_notes(repo, [green(5000 + i)], "k", "m", call=deal_call(note=None, err="yanıt kesildi", cost=0.0), now=DAY + i * H)
+    lr.LlmReader(repo, "k", "m", image_call=lambda *a: ("2015 Vitz", None, 0.0), now=DAY + 3 * H).read_image(b"jpg")  # ayrı model
+    assert json.loads(repo.state[lr.SILENT_KEY])["n"] == 4
+    lr.LlmReader(repo, "k", "m", image_call=lambda *a: (None, "ReadTimeout", 0.0), now=DAY + 4 * H).read_image(b"jpg")
+    assert json.loads(repo.state[lr.SILENT_KEY])["n"] == 4 and alarms == []
+    assert repo.state["llm_ok:2026-10-02"] == "1" and repo.state["llm_err:2026-10-02"] == "5"  # görsel de günlük sayıda
+
+
+@pytest.mark.parametrize("err,key", [("http 429", "llm_429"), ("http 402", "llm_hesap")])
+def test_errors_with_their_own_alert_do_not_send_a_second_one(alarms, err, key):
+    repo = FakeRepo()
+    for i in range(6):
+        failing(repo, DAY + i * H, err=err).read("x")
+    assert json.loads(repo.state[lr.SILENT_KEY])["n"] == 6  # seri yine uzar (karışık arızada sonraki hata uyarır)
+    assert {a[0] for a in alarms} == {key}
+
+
+def test_an_empty_budget_is_not_a_failure(alarms):
+    repo = FakeRepo()
+    repo.state["llm_spend:2026-10-02"] = str(lr.DAILY_BUDGET_USD)
+    for i in range(6):  # bütçe doluyken çağrı yapılmaz: ne seri ne günlük hata
+        assert failing(repo, DAY + i * H, err="ReadTimeout").read("x") is None
+        lr.deal_notes(repo, [green()], "k", "m", call=deal_call(note=None, err="ReadTimeout"), now=DAY + i * H)
+    assert lr.SILENT_KEY not in repo.state and "llm_err:2026-10-02" not in repo.state and alarms == []
+
+
+def test_a_failing_silence_alert_never_breaks_reading(monkeypatch, capsys):
+    def boom(*a, **k):
+        raise RuntimeError("telegram yok")
+
+    monkeypatch.setattr(health, "notify_owner", boom)
+    repo = FakeRepo()
+    for i in range(5):
+        assert failing(repo, DAY + i * H, err="http 500").read("x") is None
+    assert "yapay zekâ sessizlik uyarısı yazılamadı: RuntimeError" in capsys.readouterr().out

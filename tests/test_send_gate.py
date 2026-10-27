@@ -67,8 +67,12 @@ SPEND = "llm_spend:<gün>"
 
 
 def shown(key):
-    """Günlük yapay zekâ harcama anahtarı (`llm_spend:<tarih>`) izde tarihsiz görünür: iz gece yarısına bağlı olmasın."""
-    return SPEND if key.startswith("llm_spend:") else key
+    """Günlük yapay zekâ anahtarları (harcama `llm_spend:<tarih>`, çağrı sayısı `llm_ok:`/`llm_err:<tarih>`) izde tarihsiz görünür: iz gece
+    yarısına bağlı olmasın."""
+    for prefix in ("llm_spend:", "llm_ok:", "llm_err:"):
+        if key.startswith(prefix):
+            return prefix + "<gün>"
+    return key
 
 
 class FakeRepo:
@@ -240,12 +244,14 @@ GOLDEN_GATE_TRACE = [
 ]
 
 
-def note_trace(i, n, spent_after):
+def note_trace(i, n, spent_after, ok_n):
     """Fırsat notu (05.10.2026'dan beri: okuyucuyla aynı günlük bütçe + (ilan, fiyat) önbelleği): önbellek bakılır, bütçe okunur, sorulur,
-    429 serisine bakılır (22.10.2026: cevap geldi, seri yoksa yazılmaz), harcama ve sonuç yazılır."""
+    429 serisine bakılır (22.10.2026: cevap geldi, seri yoksa yazılmaz), günlük başarı sayısı artar ve sonuçsuzluk serisine bakılır
+    (27.10.2026: not geldi, seri yoksa yazılmaz), harcama ve sonuç yazılır."""
     return [("repo.get_state", f"deal_note:{i}:t5000.0"), ("repo.get_state", SPEND),
             ("check_deal", f"ilan {i}", f"İlanın fiyatı ≈ £5000. Emsal: {n} ilan, medyan £8000, aralık £7000–£9000"),
             ("repo.get_state", llm_reader.RATE_KEY),
+            ("repo.get_state", "llm_ok:<gün>"), ("repo.set_state", "llm_ok:<gün>", str(ok_n)), ("repo.get_state", llm_reader.SILENT_KEY),
             ("repo.set_state", SPEND, spent_after), ("repo.set_state", f"deal_note:{i}:t5000.0", '{"gercek_firsat_mi": true}')]
 
 
@@ -254,7 +260,7 @@ GOLDEN_SEND = ("send_alerts", "guclu", [("g1", (), ()), ("g7", (), (llm_reader.O
 GOLDEN_GREEN_TRACE = [
     ("pending_alerts", "guclu", True),
     *GOLDEN_GATE_TRACE,
-    *note_trace("g1", 9, "0.00050"), *note_trace("g7", 11, "0.00100"), *note_trace("g8", 9, "0.00150"),
+    *note_trace("g1", 9, "0.00050", 1), *note_trace("g7", 11, "0.00100", 2), *note_trace("g8", 9, "0.00150", 3),
     GOLDEN_SEND,
 ]
 

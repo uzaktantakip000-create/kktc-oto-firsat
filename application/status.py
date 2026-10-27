@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from application.collect_facebook import MONTHLY_BUDGET_USD as FB_BUDGET
 from application.collect_instagram import MONTHLY_BUDGET_USD as IG_BUDGET
-from application import feed_switch, kaa_gate, price_book_job, selfwatch
+from application import feed_switch, kaa_gate, llm_reader, price_book_job, selfwatch
 from application.maintenance import summary_line
 from application.health import notify_owner, source_limit_hours
 from domain.kktc_time import kktc_hour, to_kktc
@@ -236,6 +236,12 @@ def shadow_line(repo: Repository, now: datetime | None = None) -> str | None:
     return line + (f"\n   ({reader})" if reader else "")
 
 
+def llm_line(repo: Repository, now: datetime) -> str | None:
+    """Bugünkü yapay zekâ çağrıları (llm_reader.outcome_alarm sayar); yalnız hata varsa satır var."""
+    ok, err = llm_reader.day_count(repo, "ok", now), llm_reader.day_count(repo, "err", now)
+    return f"🤖 Yapay zekâ bugün: {ok} işe yarar cevap, {err} hatalı çağrı." if err else None
+
+
 def build_heartbeat(repo: Repository, now: datetime | None = None) -> str:
     """Günlük "sistem çalışıyor" nabzı (sahibin kararı 03.10.2026: sabah durumu kalktı; ayrıntı /durum'da). Arıza varsa ayrıca haber gider
     (check_sources, kaynak alarmı); burada yalnız gecikme sayısı + son 24 saat sayıları + öz-izleme satırları (application/selfwatch)."""
@@ -250,6 +256,13 @@ def build_heartbeat(repo: Repository, now: datetime | None = None) -> str:
             "gönderildi.")
     if late:
         text += f"\n⚠️ {len(late)} yerde gecikme var (ayrıntı: /durum)."
+    try:
+        line = llm_line(repo, now)
+    except Exception as e:  # sayı okunamasa da sabah mesajı gider
+        print("sabah satırı (yapay zekâ) yazılamadı:", type(e).__name__)
+        line = None
+    if line:
+        text += "\n" + line
     for line in selfwatch.morning_lines(repo, now):  # en çok 3 satır: taramalar nerede + yedek sağlığı, son yedek, sosyal okuyucu (kayıt/dosya yoksa satır yok; hata sabah mesajını bozmaz)
         text += "\n" + line
     try:
