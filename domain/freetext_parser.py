@@ -14,18 +14,25 @@ _BRANDS = [  # (aranan kelime, marka)
     "toyota", "honda", "nissan", "mazda", "suzuki", "hyundai", "kia", "ford", "opel", "vauxhall", "renault", "peugeot",
     "citroen", "fiat", "bmw", "mercedes-benz", "mercedes", "audi", "volkswagen", "vw", "skoda", "seat", "volvo",
     "mitsubishi", "subaru", "lexus", "jeep", "land rover", "range rover", "mini", "mg", "dacia", "chevrolet", "daihatsu",
-    "isuzu", "porsche", "tesla", "alfa romeo", "jaguar", "smart", "saab", "ssangyong", "cupra", "byd", "chery",
+    "isuzu", "porsche", "tesla", "alfa romeo", "jaguar", "saab", "ssangyong", "cupra", "byd", "chery",
 ]
 # Facebook'ta görülen yanlış yazımlar (27.10.2026): yazım -> aranan kelime. Mercedes yazımları normalize._BRANDS'takilerle aynı.
 _BRAND_ALIASES = {"mersedes": "mercedes", "mersedez": "mercedes", "mercedez": "mercedes", "suziki": "suzuki",
                   "wolkswagen": "volkswagen", "mersedes-benz": "mercedes-benz", "mersedez-benz": "mercedes-benz",
-                  "mercedez-benz": "mercedes-benz"}  # tireli yazım: "-BENZ" model sanılmasın (gözden geçirme, 27.10)
+                  "mercedez-benz": "mercedes-benz",  # tireli yazım: "-BENZ" model sanılmasın (gözden geçirme, 27.10)
+                  "wolswagen": "volkswagen", "volswagen": "volkswagen", "toyoto": "toyota", "toyata": "toyota",
+                  "suzik": "suzuki", "lander rover": "land rover"}  # canlı denetim 27.10: bu yazımlı gönderiler "marka yok" düşüyordu
+# "Smart" donanım adı da olur ("Start/Stop & Smart Stop", "smart key"; 30 günde 24 Facebook ilanı Smart|stop okundu, gerçekte Vitz/Swift):
+# arkasından donanım sözcüğü geliyorsa marka sayılmaz (27.10.2026).
+_SMART_FEATURE = (r"(?:stop|start|key|keyless|entry|giri[şs]|kart|card|anahtar|park|cruise|sens[oö]r|sensor|ekran|tv|phone|telefon|"
+                  r"mode|mod|charge|[şs]arj)(?![a-zçğıöşü0-9])")
 # Bitişik "Mazda3"/"MAZDA2": model rakamı markaya yapışık; model o rakam olur (normalize "Mazda 3" ile aynı anahtar).
 # "FORT" yalnız arkasından Focus/Fiesta geliyorsa Ford'dur: tek başına "fort" sıradan bir sözcük.
 _BRAND_RE = re.compile(r"(?<![a-zçğıöşü0-9])((?:"
                        + "|".join(re.escape(b) for b in sorted([*_BRANDS, *_BRAND_ALIASES], key=len, reverse=True))
                        + r")(?![a-zçğıöşü0-9])|mazda(?=[2356](?![a-zçğıöşü0-9]))"
-                       r"|fort(?=[^\S\n]+(?:focus|fiesta)(?![a-zçğıöşü0-9])))", re.I)
+                       r"|fort(?=[^\S\n]+(?:focus|fiesta)(?![a-zçğıöşü0-9]))"
+                       r"|smart(?![^\S\n]*[/&-]?[^\S\n]*" + _SMART_FEATURE + r")(?![a-zçğıöşü0-9]))", re.I)
 # ilan olmayan / araç olmayan gönderiler
 _SKIP = re.compile(r"kiral[ıi]k|aran[ıi]yor|al[ıi]n[ıi]r|al[ıi]yoruz|almak\s+istiyorum", re.I)  # ilan türü: kiralık / alım ilanı
 _SKIP_TITLE = re.compile(r"jant|lastik|tekne|bisiklet|motosiklet|yedek\s+par[çc]a|bah[çc]e", re.I)  # araç olmayan ürün (başlıkta)
@@ -34,11 +41,21 @@ _SKIP_HEAD = 150  # 'aranıyor/kiralık/jant' gibi ilan türünü belirten sözc
 _NOT_PRICE_LINE = re.compile(r"tramer|boya|kredi|taksit|pe[şs]inat|komisyon|depozito|kapora|vergi|muayene|sigorta|"
                              r"[öo]deme|masraf|bak[ıi]m", re.I)
 _PRICE_HINT = re.compile(r"fiyat|nakit|nakite|pe[şs]in|sat[ıi][şs]", re.I)
-_PHONE = re.compile(r"(?<!\d)(?:\+?\s*9?0[\s.-]*)?\(?5\d{2}\)?[\s.-]?\d{3}[\s.-]?\d{2}[\s.-]?\d{2}(?!\d)")
+# Eski (üzeri çizili) fiyat ve İngilizce taksit/avans tutarı asıl fiyat değildir: "Eski Fiyat: 21.000 £ … 18.000 £", "1500STG Advance".
+# 'fiyat' ipucu _NOT_PRICE_LINE'ı geçersiz kıldığı için ayrı ve ipucundan önce bakılır (canlı denetim 27.10.2026: 16 ilan eski fiyatla kayıtlı).
+_OLD_PRICE = re.compile(r"(?<![a-z])(?:eski|onceki|old|was)\s*(?:fiyat|price)|uzeri\s*cizili")  # fold'lanmış metinde aranır
+_ADVANCE = re.compile(r"advance|installment|down\s*payment|monthly|per\s*month|deposit", re.I)
+# Telefon satır sonunu geçmez: önündeki "\n" de eşleşip silinince iki satır birleşiyordu ("…takas fiyatı 16.500 stg\n0533… FİYAT:15.500"
+# tek satır olup fiyat belirsiz kalıyordu; 27.10.2026)
+_PHONE_SEP = r"(?:[^\S\n]|[.-])"
+_PHONE = re.compile(rf"(?<!\d)(?:\+?[^\S\n]*9?0{_PHONE_SEP}*)?\(?5\d{{2}}\)?{_PHONE_SEP}?\d{{3}}{_PHONE_SEP}?\d{{2}}{_PHONE_SEP}?\d{{2}}(?!\d)")
 # 1980–2039: kalıp 2030'ları da tanır; geleceğe dönük yıl yine reddedilir (bulunan yıl, model yılı tavanından = bu yıl + 1 büyükse elenir)
 # Ardından gelen para birimi yılı fiyat yapar ("2000 STG"); ama birimin arkasında sayı varsa birim o sayınındır ("2014 £6500")
-_YEAR = re.compile(r"(?<![\d.,£€$])(19[89]\d|20[0-3]\d)(?![\d.,]?\d)"
-                   r"(?![ \t]*(?:£|₺|€|\$|tl\b|stg\b|gbp\b|sterlin\b|str\b)(?![ \t]*\d))", re.I)
+# Tek harfe yapışık sayı model adıdır ("S2000", "C2000"; "SWIFT2018" yıl kalır); arkasında motor birimi olan sayı motor hacmidir
+# ("2000 cc", "1998cc"; canlı denetim 27.10.2026: motor hacmi model yılı okunuyordu).
+_YEAR = re.compile(r"(?<![\d.,£€$])(?<!(?<![A-Za-zÇĞİÖŞÜçğıöşü])[A-Za-zÇĞİÖŞÜçğıöşü])(19[89]\d|20[0-3]\d)(?![\d.,]?\d)"
+                   r"(?![ \t]*(?:£|₺|€|\$|tl\b|stg\b|gbp\b|sterlin\b|str\b)(?![ \t]*\d))"
+                   r"(?![ \t]*(?:cc|c\.c|cm3|hp|ps|bg|kw)\b)", re.I)
 # Sayı ile birim/etiket arası satır sonunu GEÇMEZ ([^\S\n]: satır sonu dışındaki boşluk): "2012\nkm ..." yıl, "km\n4.900 stg" fiyat olurdu.
 _KM_NUM = r"\d{1,3}(?:[.,]\d{3})+|\d{4,6}|\d{1,3}[^\S\n]*(?:bin|k)(?![a-zçğıöşü])"  # "145 bin km", "145k km"
 _KM = re.compile(rf"(?<![\d.,])({_KM_NUM})[^\S\n]*(km|mil(?!eage)\w*)\b", re.I)  # "mileage" birim değil etiket: "2020 Mileage: 82000"
@@ -69,14 +86,28 @@ _CC = re.compile(r"\b(\d{3,4})\s*cc\b", re.I)
 _MODEL_STOP = {"il", "ilk", "ilan", "sahibinden", "galeriden", "yeni", "temiz", "hasarsiz", "hatasiz", "boyasiz", "tek",
                "motor", "arac", "otomobil", "arabasi", "araba", "marka", "model", "aracimiz", "gunluk", "satilik", "benz"}
 _CHASSIS = re.compile(r"[efgu]\d{2}|w\d{3}", re.I)  # BMW F30 / Mercedes W204: şasi kodu; model arkasındaki sözcük ("F30 320i")
-_SPLIT_MODELS = [(re.compile(r"c[\s-]*h[\s-]*r(?![a-z0-9])", re.I), "C-HR"),  # "CH R", "C HR": sözcüklere bölünüp "CH" kalıyordu
-                 (re.compile(r"(cx|cr|hr|zr)[\s-]+(v|\d{1,2})(?![a-z0-9])", re.I), None)]  # "CX 5", "CR V" -> "CX-5", "CR-V"
+# Birden çok sözcüklü model adları (yoksa ilk sözcük alınır): ad, eşleşmeden kurulur.
+# Yaris/Corolla Cross, RAV 4, WR-V, Land Cruiser, Grand Cherokee/Vitara (canlı denetim 27.10.2026): ilk sözcük sitelerin anahtarıyla
+# eşleşmiyor ("rav", "land", "grand") ya da başka modelin havuzuna giriyordu ("Yaris Cross" -> "yaris").
+_SPLIT_MODELS = [
+    (re.compile(r"c[\s-]*h[\s-]*r(?![a-z0-9])", re.I), lambda m: "C-HR"),  # "CH R", "C HR": sözcüklere bölünüp "CH" kalıyordu
+    (re.compile(r"(cx|cr|hr|zr)[\s-]+(v|\d{1,2})(?![a-z0-9])", re.I), lambda m: f"{m.group(1)}-{m.group(2)}".upper()),  # "CX 5" -> "CX-5"
+    (re.compile(r"(yaris|corolla)[^\S\n]*-?[^\S\n]*cross(?![a-z0-9])", re.I), lambda m: f"{m.group(1).title()} Cross"),
+    (re.compile(r"rav[^\S\n]*-?[^\S\n]*4(?![a-z0-9])", re.I), lambda m: "RAV4"),
+    (re.compile(r"wr[^\S\n]*-?[^\S\n]*v(?![a-z0-9])", re.I), lambda m: "WR-V"),
+    (re.compile(r"land[^\S\n]*-?[^\S\n]*cruiser(?:[^\S\n]+(prado))?(?![a-z0-9])", re.I),
+     lambda m: "Land Cruiser Prado" if m.group(1) else "Land Cruiser"),
+    (re.compile(r"grand[^\S\n]+(cherokee|vitara)(?![a-z0-9])", re.I), lambda m: f"Grand {m.group(1).title()}"),
+]
 _UPPER_BRANDS = {"bmw", "mg", "vw", "byd"}
 _CITIES = ["girne", "lefkoşa", "lefkosa", "gazimağusa", "gazimagusa", "mağusa", "magusa", "güzelyurt", "guzelyurt",
            "iskele", "lefke", "alsancak", "lapta", "karpaz", "dikmen", "yeni boğaziçi", "boğaz", "bogaz", "ercan"]
 
 
-_TRADE_IN = re.compile(r"takas[a-zçğıöşü]*\s+al[ıi]n[ıi]r", re.I)  # "takas alınır" satış ilanında geçer, alım ilanı değildir
+# Satış ilanında geçen alım/kiralık sözleri alım ilanı değildir: "takas alınır", "içine araç alınır", "üstüne araba alınır",
+# "kiralık geçmişi yok" (canlı denetim 27.10.2026: bu ilanlar "araç değil" düşüyordu). "gün içinde araç alınır" sayılmaz (içinde ≠ içine).
+_TRADE_IN = re.compile(r"(?:takas[a-zçğıöşü]*|[iİı]ç[iİı]ne|[iİı]çer[iİı]s[iİı]ne|[üÜuU]st[üÜuU]ne|[üÜuU]zer[iİı]ne)(?![a-zçğıöşü])"
+                       r"[^\n.!?]{0,40}?al[ıi]n[ıi]r|kiral[ıi]k\s+ge[çc]mi[şs]", re.I)
 
 
 def _not_a_sale_ad(text: str) -> bool:
@@ -142,12 +173,18 @@ def _price(lines: list[str], skip_box: bool = False) -> tuple[float, str, str, b
                     small_tl.append(t.amount)
                 continue
             before, after = scrubbed[max(0, t.start - 14): t.start], scrubbed[t.end: t.end + 14]
+            if _OLD_PRICE.search(fold(before)) or _ADVANCE.search(before + " " + after):
+                continue
             hint = bool(_PRICE_HINT.search(before))
             if (_NOT_PRICE_LINE.search(before) or _NOT_PRICE_LINE.search(after)) and not hint:
                 continue  # "taksitli 5000£", "peşinat 3000£", "tramer 32.000 TL"
             if 300 <= t.amount <= 2_000_000:
                 found.append((t.amount, read[0], ln, hint or bool(_PRICE_HINT.search(ln)) and not _NOT_PRICE_LINE.search(ln), read[1]))
     found = [f for f in found if not any(abs(f[0] - s) <= 0.01 * s for s in small_tl)]
+    # Gövde tutarı açık £/TL ile yazıyorsa Facebook satış kutusunun aynı rakamlı "€7,900" satırı ikinci fiyat değil, yankıdır
+    # ("7900£" + "€7,900" belirsiz sayılıp fiyatsız kalıyordu; canlı denetim 27.10.2026: 638 ilan). Farklı € tutarı yine belirsizdir.
+    echo = {a for a, c, _, _, _ in found if c in ("GBP", "TRY")}
+    found = [f for f in found if not (f[1] == "EUR" and f[0] in echo)]
     if not found:
         return None
     amounts = {(a, c) for a, c, _, _, _ in found}
@@ -155,6 +192,8 @@ def _price(lines: list[str], skip_box: bool = False) -> tuple[float, str, str, b
         a, c = next(iter(amounts))
     else:
         hinted = {(a, c) for a, c, _, h, _ in found if h}
+        if len(hinted) > 1:  # "FİYAT 39.500 STERLİN" + "TAKASLI FİYATI: 42.000": takaslı fiyat nakit fiyatın yerine geçmez
+            hinted = {(a, c) for a, c, ln, h, _ in found if h and not re.search(r"takas", ln, re.I)}
         if len(hinted) != 1:
             return None
         a, c = next(iter(hinted))
@@ -198,7 +237,7 @@ def _km(text: str) -> int | None:
         value = _km_value(m.group(1))
         if value is not None and _service_km(text, m.start(), m.end(), value):
             continue
-        if m.group(2).lower().startswith("mil"):
+        if fold(m.group(2)).startswith("mil"):  # fold: büyük "MİL".lower() "mi̇l" olur, mil sanılmıyordu (27.10.2026)
             return None  # mil = mil (İngiliz yolcu araçları): km'ye çevirmek yerine bilinmiyor say, veri kapısı en fazla 🟡 yapar
         return value
     m = _KM_LABEL.search(text)
@@ -238,11 +277,13 @@ def parse_freetext(text: str, default_steering: str | None = None, max_year: int
         return None
     if max_year is None:
         max_year = max_model_year(today)
-    brand_m = _BRAND_RE.search(text)
-    if not brand_m:
-        return None
     phones = [p for p in (normalize_phone(m.group()) for m in _PHONE.finditer(text)) if p]
     no_phone = _PHONE.sub(" ", text)
+    # Marka telefonu atılmış metinde aranır: model/yıl bu metnin konumlarıyla okunur. Asıl metinde aranınca markadan önceki telefon kadar
+    # kayıyordu ("KKTC 0548… Renault Clio 2013" -> model "5500"; canlı denetim 27.10.2026: 1.196 Facebook ilanında model bozuk)
+    brand_m = _BRAND_RE.search(no_phone)
+    if not brand_m:
+        return None
     years = [int(y) for y in _YEAR.findall(no_phone) if int(y) <= max_year]
     if not years:
         return None
@@ -270,12 +311,16 @@ def parse_freetext(text: str, default_steering: str | None = None, max_year: int
         nxt = words[i + 1].group() if i + 1 < len(words) else ""
         if re.fullmatch(r"(19|20)\d{2}|modeli?|otomatik|manuel|full", w, re.I) or fold(w) in _MODEL_STOP:
             continue
+        if not re.search(r"[A-Za-z0-9ÇĞİÖŞÜçğıöşü]", w):
+            continue  # "Mercedes - Benz Vito": tek başına "-" model değil
+        if (wm.start() and after[wm.start() - 1] in "£€$₺") or re.match(r"[.,]\d{3}(?!\d)", after[wm.end():]):
+            break  # fiyat rakamı model değil: "C180 Mercedes⏎€15,500" -> "15" olurdu
         if _CHASSIS.fullmatch(w) and re.fullmatch(r"\d{3}[a-zçğıöşüİ]{0,2}|[a-z]{1,3}\d{2,3}[a-z]?", nxt, re.I):
             continue  # "BMW F30 320i" -> "320i" (emsal 3 serisiyle eşleşir; "f30" eşleşmez)
         model = w
-        split = next(((pat.match(after, wm.start()), name) for pat, name in _SPLIT_MODELS if pat.match(after, wm.start())), None)
+        split = next((name(sm) for pat, name in _SPLIT_MODELS if (sm := pat.match(after, wm.start()))), None)
         if split:
-            model = split[1] or f"{split[0].group(1)}-{split[0].group(2)}".upper()
+            model = split
         elif w.lower() == "i" and nxt.isdigit():  # "İ 30" -> "i30"
             model = "i" + nxt
         break
@@ -322,9 +367,9 @@ def diagnose(text: str, today: date | None = None) -> str:
     """Gönderi neden ilan sayılmadı? ('ok' = okunur). Yalnızca sayaç için; metin saklanmaz."""
     if not text or _not_a_sale_ad(text):
         return "arac_degil"
-    if not _BRAND_RE.search(text):
-        return "marka_yok"
     no_phone = _PHONE.sub(" ", text)
+    if not _BRAND_RE.search(no_phone):
+        return "marka_yok"
     if not [y for y in _YEAR.findall(no_phone) if int(y) <= max_model_year(today)]:
         return "yil_yok"
     if _price(_clean_lines(no_phone)) is None:

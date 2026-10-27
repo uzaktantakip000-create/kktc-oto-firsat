@@ -61,17 +61,21 @@ def implausible_amount(amount: float | None, currency: str | None) -> bool:
     return placeholder_amount(amount) or (currency == "TRY" and float(amount) < TL_CAR_MIN)
 
 
-_NUM = re.compile(r"(?<![\d.,])\d[\d.,]*")
+# Noktaya yapışık sayı yalnız noktadan önce harf varsa ("tamamdır.250.000 tl"); "1.250"nin "250"si ya da "..5" ayrı sayı değildir (27.10.2026)
+_NUM = re.compile(r"(?<![\d,])(?:(?<=[^\W\d_]\.)|(?<!\.))\d[\d.,]*")
 _SCALE = re.compile(r"\s*(?:bin|k)(?![a-zçğıöşü])", re.I)  # "15 bin", "7.5k"
 _ORDINAL = re.compile(r"\s*(?:el\b|sahib)", re.I)  # "1. el", "2.el", "ilk sahibi": fiyat değil
 _YEARISH = re.compile(r"19[89]\d|20[0-3]\d")
+# Birime yapışık Türkçe ek-fiil "-dır/-dir/-tır/-dur...": "5.200 sterlindir", "8500 stgdir", "250 bin tldir" (27.10.2026). Yönelme eki ("tlye",
+# "stge kadar") birim sayılmaz: alım ilanındaki bütçe olur.
+_TR_COPULA = r"(?:(?![a-z])|(?=[dt][ıiuü]r(?![a-zçğıöşü])))"
 _CURRENCIES = [
-    ("TRY", r"(?<![a-z])(?:tl|try)(?![a-z])|₺"),
-    ("GBP", r"(?<![a-z])(?:stg|gbp|sterlin|sterling|str|pound|pounds|paund)(?![a-z])|£"),  # "6100str", "49900 paund"
+    ("TRY", rf"(?<![a-z])(?:tl|try){_TR_COPULA}|₺"),
+    ("GBP", rf"(?<![a-z])(?:stg|gbp|sterlin|sterling|str|pound|pounds|paund){_TR_COPULA}|£"),  # "6100str", "49900 paund"
     ("EUR", r"(?<![a-z])(?:eur|euro)(?![a-z])|€"),
     ("USD", r"(?<![a-z])(?:usd|dolar)(?![a-z])|\$"),
 ]
-_GAP = r"[\s()\[\]:=/–-]*"  # sayı ile para birimi arasında olabilenler: "6.500 (STG)", "STG: 6.500", "£ - 6.500"
+_GAP = r"(?:\.-)?[\s()\[\]:=/–-]*"  # sayı ile para birimi arasında olabilenler: "6.500 (STG)", "STG: 6.500", "£ - 6.500", "8.500.-stg"
 _ANY = [(code, re.compile(p, re.I)) for code, p in _CURRENCIES]
 _AFTER = [(code, re.compile(f"({_GAP})({p})", re.I)) for code, p in _CURRENCIES]
 _BEFORE = [(code, re.compile(f"({p})({_GAP})$", re.I)) for code, p in _CURRENCIES]

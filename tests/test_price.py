@@ -87,3 +87,12 @@ def test_slash_thousands_separator():  # FB: "12/800 £" 800 £ okunuyordu
     assert parse_price("12/800 £").amount == 12800
     assert join_split_thousands("180/000 km") == "180.000 km"
     assert join_split_thousands("12/10/2025") == "12/10/2025"  # tarih değişmez
+
+
+def test_copula_suffix_glued_period_and_dash_27_10():
+    assert parse_price("5.200 sterlindir") == parse_price("5.200 sterlin")
+    assert (parse_price("8500 stgdir").amount, parse_price("8500 stgdir").currency) == (8500, "GBP")
+    assert (parse_price("tamamdır.250.000 tl").amount, parse_price("tamamdır.250.000 tl").currency) == (250000, "TRY")
+    assert (parse_price("8.500.-stg").amount, parse_price("8.500.-stg").currency) == (8500, "GBP")
+    assert [t.amount for t in price_tokens("1.250 stg")] == [1250]  # "250" ayrı sayı değil
+    assert parse_price("300.000 tlye kadar").currency_guess  # yönelme eki birim sayılmaz

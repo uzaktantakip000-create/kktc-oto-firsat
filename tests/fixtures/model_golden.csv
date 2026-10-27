@@ -164,8 +164,8 @@ BMW,8 Serisi 840d,BMW,8
 BMW,8 Serisi 840i xDrive,BMW,8
 BMW,8 Serisi 840i xDrive Gran Coupe,BMW,8
 BMW,840i,BMW,8
-Bmw,E46,BMW,e46
-BMW,F30,BMW,f30
+Bmw,E46,BMW,3
+BMW,F30,BMW,3
 BMW,i Serisi i3,BMW,i
 BMW,i Serisi i8,BMW,i
 BMW,iX xDrive40,BMW,ix
@@ -385,7 +385,7 @@ Hyundai,Accent,Hyundai,accent
 Hyundai,Coupe,Hyundai,coupe
 Hyundai,Elantra,Hyundai,elantra
 Hyundai,Elantra 1.6,Hyundai,elantra
-Hyundai,Elentra,Hyundai,elentra
+Hyundai,Elentra,Hyundai,elantra
 Hyundai,Getz,Hyundai,getz
 Hyundai,Getz 1.4 DOHC,Hyundai,getz
 Hyundai,Getz 1.6,Hyundai,getz
@@ -408,7 +408,7 @@ Hyundai,Kona,Hyundai,kona
 Hyundai,Matrix,Hyundai,matrix
 Hyundai,Matrix 1.5 CRDi,Hyundai,matrix
 Hyundai,Santa Fe,Hyundai,santa
-Hyundai,santafe,Hyundai,santafe
+Hyundai,santafe,Hyundai,santa
 Hyundai,Sonata,Hyundai,sonata
 Hyundai,Tucson,Hyundai,tucson
 Infiniti,Q60,Infiniti,q60
@@ -1312,3 +1312,17 @@ Yuki,Activa,Yuki,activa
 Yuki,Expolerer 250d,Yuki,expolerer
 Yuki,Margherita,Yuki,margherita
 Yuki,Risotto-125,Yuki,risotto
+BMW,F30 320d,BMW,3
+BMW,E90,BMW,3
+BMW,E46 M3,BMW,e46
+BMW,E93,BMW,e93
+BMW,F10 520d,BMW,5
+BMW,E70,BMW,e70
+Ford,Fokus,Ford,focus
+Hyundai,Elentra,Hyundai,elantra
+Hyundai,SantaFe,Hyundai,santa
+Nissan,Tida,Nissan,tiida
+Renault,Megan,Renault,megane
+Suzuki,Swfit,Suzuki,swift
+Toyota,RAV 4,Toyota,rav4
+Toyota,RAV-4,Toyota,rav4

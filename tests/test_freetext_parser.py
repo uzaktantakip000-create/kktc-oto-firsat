@@ -253,3 +253,141 @@ def test_masked_price_is_not_unmasked():
 def test_hyphenated_misspelled_mercedes_keeps_the_real_model(text):
     r = parse_freetext(text)
     assert r.brand == "Mercedes-Benz" and r.model == "C180"
+
+
+# Canlı denetim düzeltmeleri (27.10.2026) ---------------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text, model", [
+    ("KKTC 05330000011 Renault Clio 2013 5500 stg", "Clio"),
+    ("Tel 0533 000 00 12\nMazda demio 2002 140 bin tl", "demio"),
+    ("0533 000 00 14\n2015 Toyota Corolla 1.6 otomatik 85.000 km 8500 stg", "Corolla"),
+    ("2015 Toyota Corolla 1.6 otomatik 85.000 km 8500 stg 0533 000 00 14", "Corolla"),
+])
+def test_phone_before_the_brand_does_not_shift_the_model(text, model):
+    p = parse_freetext(text)
+    assert p.model == model and p.phone
+
+
+@pytest.mark.parametrize("unit", ["60 BİN MİL", "60.000 MİL", "60 bin mil", "60.000 Mil"])
+def test_uppercase_turkish_mil_is_miles_not_km(unit):
+    assert parse_freetext(f"2022 Mercedes C 220 d {unit} 12.000 STG").km is None
+
+
+def test_km_still_read_in_uppercase():
+    assert parse_freetext("2022 Mercedes C 220 d 60 BİN KM 12.000 STG").km == 60000
+
+
+@pytest.mark.parametrize("text, year", [
+    ("Honda Civic 2000cc\n2015 model\n8000 stg", 2015),
+    ("Hyundai Tucson 2000 cc 2015 8000 stg", 2015),
+    ("Mercedes C200\nBenzin 1998 cc\n2009 model 5000 stg", 2009),
+    ("Honda S2000\nYIL : 2001\n9000 stg", 2001),
+    ("Suzuki SWIFT2018 MODEL 9000 stg", 2018),
+])
+def test_engine_size_and_model_name_are_not_the_year(text, year):
+    assert parse_freetext(text).year == year
+
+
+def test_engine_size_alone_gives_no_year():
+    assert parse_freetext("Seat Leon cupra 2000cc 6250 stg") is None
+
+
+@pytest.mark.parametrize("text, model", [
+    ("TOYOTA YARIS CROSS 1.5 HYBRID 2021 £20.500", "Yaris Cross"),
+    ("Toyota Corolla Cross 2022 £31.900", "Corolla Cross"),
+    ("Toyota RAV 4 2015 15000 stg", "RAV4"),
+    ("Toyota RAV-4 2015 15000 stg", "RAV4"),
+    ("Honda WRV 2020 15000 stg", "WR-V"),
+    ("Toyota Land Cruiser Prado 2023 £56.000", "Land Cruiser Prado"),
+    ("Jeep Grand Cherokee 2012 9000 stg", "Grand Cherokee"),
+    ("2012 Model Otomatik Mercedes - Benz Vito\nFiyat: 15.200 £", "Vito"),
+    ("Mercedes - C220 CDI 2003 4350 STG", "C220"),
+])
+def test_multi_word_and_spaced_models(text, model):
+    assert parse_freetext(text).model == model
+
+
+@pytest.mark.parametrize("text, brand, model", [
+    ("*2015 model *Motor 1.3 *Start stop *Smart stop *Koltuk ısıtma Toyota Vitz €6,400", "Toyota", "Vitz"),
+    ("smart key 2016 Honda Fit 7000 stg", "Honda", "Fit"),
+    ("Smart Fortwo 2015 5000 stg", "Smart", "Fortwo"),
+    ("2006 model Wolswagen POLO 150.000 TL", "Volkswagen", "POLO"),
+    ("Toyoto auris 2012 6000 stg", "Toyota", "auris"),
+    ("LANDER ROVER FREELANDER 2008 5000 stg", "Land Rover", "FREELANDER"),
+])
+def test_smart_feature_is_not_a_brand_and_brand_typos(text, brand, model):
+    p = parse_freetext(text)
+    assert (p.brand, p.model) == (brand, model)
+
+
+@pytest.mark.parametrize("text, price", [
+    ("2019 Volkswagen Tiguan\nEski Fiyat: 21.000 £\nACİL SATILIK 18.000 £", 18000),
+    ("2018 Mazda CX-5\nESKİ FİYAT £36.000\n£32.499", 32499),
+    ("2016 Honda Fit Peşin Fiyat: 15.900 Stg", 15900),
+    ("2016 Honda Fit\nNakit 12.000 stg", 12000),
+    ("Range Rover Velar 2022\nFİYAT 39.500 STERLİN\nTAKASLI FİYATI:42.000 STERLİN", 39500),
+])
+def test_old_price_and_trade_in_price_are_not_the_price(text, price):
+    assert parse_freetext(text).price_amount == price
+
+
+@pytest.mark.parametrize("text", [
+    "2001 Toyota Fielder Installment Plan Is Available= 1500STG Advance\nTotal Price 3200",
+    "Mazda Demio 2010\nFİYAT : 2.500STG\nKAMPANYALI FİYAT 2.000STG",  # iki farklı fiyat: belirsiz kalır
+    "Nissan Note 2015 7000 stg\n€6,900",
+])
+def test_ambiguous_or_advance_amounts_give_no_price(text):
+    assert parse_freetext(text) is None
+
+
+@pytest.mark.parametrize("text, amount, currency", [
+    ("7900£\nMazda demio 2016 model\nOtomatik full paket benzin\n€7,900", 7900, "GBP"),
+    ("5.500 STG Nissan Cube 2010\n€5,500", 5500, "GBP"),
+    ("Nissan Note 2015 100000 TL\n€100,000", 100000, "TRY"),
+])
+def test_same_amount_marketplace_euro_box_is_an_echo(text, amount, currency):
+    p = parse_freetext(text)
+    assert (p.price_amount, p.currency, p.currency_guess) == (amount, currency, False)
+
+
+@pytest.mark.parametrize("text", [
+    "Mercedes C250 2012 TAKAS EDİLİR ICINE ARABA ALINIR £10,000",
+    "2024 MAZDA CX-5 NIGHT EDITION İÇERİSİNE ARAÇ ALINIR 25000 stg",
+    "GALERİDEN SATILIK! KİRALIK GEÇMİŞİ YOK! Ford Focus 2013 6000 stg",
+])
+def test_trade_in_and_no_rental_history_are_sale_ads(text):
+    assert diagnose(text) == "ok"
+
+
+@pytest.mark.parametrize("text", [
+    "Araba alınır nakit ödeme", "Temiz dizel arac alinir €1,000", "2015 Toyota Corolla alınır 3000 stg",
+    "Toyota Corolla 2015 3 gün içinde araç alınır 5000 stg",
+])
+def test_wanted_ads_still_skipped(text):
+    assert diagnose(text) == "arac_degil"
+
+
+@pytest.mark.parametrize("line, amount, currency", [
+    ("fiatı 5.200 sterlindir", 5200, "GBP"), ("8500 stgdir", 8500, "GBP"), ("tamamdır.250.000 tl son fiyat", 250000, "TRY"),
+    ("8.500.-stg", 8500, "GBP"), ("950.000.-TL", 950000, "TRY"),
+])
+def test_price_suffix_glued_period_and_dash(line, amount, currency):
+    p = parse_freetext(f"2012 Toyota Corolla\n{line}")
+    assert (p.price_amount, p.currency) == (amount, currency)
+
+
+def test_directional_suffix_is_not_a_price():
+    assert parse_freetext("2012 Toyota Corolla\n300.000 tlye kadar") is None
+
+
+def test_phone_does_not_join_two_lines():
+    """Telefonun önündeki satır sonu silinmez: takaslı fiyat satırı asıl fiyat satırıyla birleşip fiyatı belirsiz yapmıyor (27.10.2026)."""
+    text = ("2014 Model C180 Benzin\nUygun fiyatli arac takasa alinir.takas fiyati.16.500 stg dir.\n0533 0000013 FİYAT:15.500 STG\n"
+            "C180 Mercedes\n€15,500")
+    p = parse_freetext(text)
+    assert (p.price_amount, p.currency, p.model) == (15500, "GBP", None)  # model fiyat rakamı ("15") değil
+
+
+@pytest.mark.parametrize("text, model", [("Mazda 3 2015 1.500 cc 9000 stg", "3"), ("BMW 3.18 2009 5500 stg", "3")])
+def test_model_digit_is_kept_when_not_a_price(text, model):
+    assert parse_freetext(text).model == model
