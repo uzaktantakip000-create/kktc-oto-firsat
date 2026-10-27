@@ -1,6 +1,7 @@
 """Marka/model adlarını emsal eşleştirmesi için standart anahtara çevirir."""
 import re
 import unicodedata
+from functools import lru_cache
 
 from domain.model_keys import model_key
 
@@ -45,6 +46,34 @@ def fold(text: str) -> str:
     text = text.replace("ı", "i").replace("İ", "i")
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
     return re.sub(r"\s+", " ", text).strip()
+
+
+# Kasa tipi (27.10.2026): açık üstü/kupe aynı modelin sedan/hatchinden pahalı ya da farklı fiyatlanır (BMW 3, Mercedes C/E/CLK); emsal
+# havuzunda karışmasın. YALNIZ kısa yapısal alanlardan okunur (model sütunu + ilan adresindeki ad parçası): serbest metin taranmaz
+# (açıklamada başka aracın 'coupe'u geçebilir). 'cc' (Peugeot CC dışında anlam taşımıyor) ve 'spider' bilerek yok.
+_BODY_CABRIO = re.compile(r"cabrio|convertible|kabrio|roadster")  # 'cabriolet' de 'cabrio' içerir
+_BODY_COUPE = re.compile(r"coupe|kupe")
+_BODY_URL_TOKENS = {"cabrio": "cabrio", "cabriolet": "cabrio", "convertible": "cabrio", "kabrio": "cabrio", "roadster": "cabrio",
+                    "coupe": "coupe", "kupe": "coupe"}
+
+
+@lru_cache(maxsize=100_000)
+def body_type(model: str | None, url: str | None = None) -> str | None:
+    """'cabrio' | 'coupe' | None. Model alanında (listings.model: '320i Cabrio', 'CLK Coupe') ya da ilan adresinin ad parçasında
+    (kktcar.com/listing/2009-bmw-320i-cabrio-lefkosa-xxx) geçen açık söz. Hem cabrio hem coupe geçerse ('Coupe Cabriolet') cabrio.
+    Adreste yalnız TAM sözcük sayılır (Instagram/Facebook kısa kodları rastgele harftir); sorgu kısmı atılır. Hiçbiri yoksa None
+    (kasa bilinmiyor = sıradan sedan/hatch sayılır)."""
+    found: set[str] = set()
+    if model:
+        m = fold(model)
+        if _BODY_CABRIO.search(m):
+            found.add("cabrio")
+        if _BODY_COUPE.search(m):
+            found.add("coupe")
+    if url:
+        path = re.sub(r"^[a-z][a-z0-9+.-]*://[^/]*", "", url.strip().split("?")[0].split("#")[0], flags=re.I)  # sunucu adı ve sorgu atılır
+        found.update(_BODY_URL_TOKENS[t] for t in re.split(r"[^a-z0-9]+", fold(path)) if t in _BODY_URL_TOKENS)
+    return "cabrio" if "cabrio" in found else ("coupe" if "coupe" in found else None)
 
 
 # Araba olmayan kategoriler (KibrisArabaAl motosiklet, tekne, karavan, ticari vb. de listeler): değerlendirilmez, emsale girmez

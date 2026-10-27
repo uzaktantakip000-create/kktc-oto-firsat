@@ -88,6 +88,7 @@ def test_market_pool_keys_return_exactly_the_filtered_pool_including_null_models
     add_listing(c, sid, "b0", brand_norm="BMW", model_norm="3")
     full = db.market_pool(days=120)
     assert len(full) == 8
+    assert all("model" in r and "url" in r for r in full)  # kasa tipi (cabrio/coupe) emsal ayrımı bu iki alana bakar
     keys = [("Toyota", "vitz"), ("Mazda", None)]
     narrow = db.market_pool(days=120, keys=keys)
     assert {str(r["id"]) for r in narrow} == {str(r["id"]) for r in full if (r["brand_norm"], r["model_norm"]) in set(keys)} and len(narrow) == 5

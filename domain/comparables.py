@@ -4,7 +4,7 @@ import statistics
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 
-from domain.normalize import canon_fuel, canon_transmission
+from domain.normalize import body_type, canon_fuel, canon_transmission
 from domain.settings import Settings
 
 LOW_KM_OLD_AGE = 10  # bu yaştan eski araçta...
@@ -72,6 +72,11 @@ def _is_comparable(target: dict, row: dict, year_span: int, now: datetime, s: Se
     if not s.min_plausible_price_gbp <= row["price_gbp"] <= s.max_plausible_price_gbp:
         return False
     if row["brand_norm"] != target["brand_norm"] or row["model_norm"] != target["model_norm"]:
+        return False
+    # Kasa tipi (27.10.2026): açık üstü/kupe yalnız aynı kasayla emsal olur. İşaretsiz ilan sıradan sedan/hatch sayılır, açık üstü/kupe
+    # emsal almaz (piyasayı yalnız düşürebilir). model/url yoksa (eski kayıtlı havuzlar, testler) kasa bilinmiyor = eskisi gibi.
+    tb, rb = body_type(target.get("model"), target.get("url")), body_type(row.get("model"), row.get("url"))
+    if rb != tb:
         return False
     if target["year"] is None or row["year"] is None or abs(row["year"] - target["year"]) > year_span:
         return False

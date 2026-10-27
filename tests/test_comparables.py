@@ -375,3 +375,54 @@ def test_placeholder_km_is_unknown_at_any_age():
     for km in (123_000, 111_000, 145_000, 99_999):
         assert effective_km({"km": km, "year": 2012}, day) == km
     assert effective_km({"km": 12_345, "year": 2020}, day) == 12_345  # yalnız tam yer tutucu kalıplar; genç araçta 12.345 gerçek olabilir
+
+
+# --- kasa tipi: açık üstü / kupe sedan-hatch emsaline karışmaz (27.10.2026) ---
+
+def test_body_type_from_model_and_url_slug():
+    from domain.normalize import body_type
+    assert body_type("320i Cabrio") == "cabrio" and body_type("3.20i CABRIOLET") == "cabrio" and body_type("Eos Convertible") == "cabrio"
+    assert body_type("335i Kabrio") == "cabrio" and body_type("MX-5 Roadster") == "cabrio"
+    assert body_type("CLK 200 Coupé") == "coupe" and body_type("C180 COUPE") == "coupe" and body_type("Astra Küpe") == "coupe"
+    assert body_type("Peugeot 207 Coupe Cabriolet") == "cabrio"  # ikisi de geçerse açık üstü
+    assert body_type("318i") is None and body_type("Mini Cooper") is None and body_type(None) is None and body_type("") is None
+    assert body_type("Passat Spider CC") is None  # 'cc' ve 'spider' kasa göstergesi sayılmaz
+    assert body_type("Corolla", "https://kktcar.com/listing/2009-bmw-320i-cabrio-lefkosa-rkdmq") == "cabrio"
+    assert body_type(None, "https://kktcar.com/listing/2008-mercedes-clk-coupe-girne-ab12c?x=cabrio") == "coupe"
+    assert body_type(None, "https://kktcar.com/listing/2008-bmw-318i-lefkosa-pg7zr") is None
+    assert body_type(None, "https://www.instagram.com/p/Dd8cBecoupeCqq0/") is None  # kısa kodun içindeki harfler tam sözcük değil
+
+
+def _bmw(i, price, model="318i", **kw):
+    return row(i, price, **{"brand_norm": "BMW", "model_norm": "3", "year": 2008, "model": model, "url": f"https://x.test/{i}", **kw})
+
+
+def test_cabrio_and_coupe_do_not_enter_a_plain_listings_market():
+    """BMW 3 örneği: sedan ilanın piyasası açık üstü emsallerle şişmesin; açık üstü ilan da yalnız açık üstülerle kıyaslansın."""
+    sedans = [_bmw(i, 6000 + i * 200) for i in range(8)]  # 6000..7400, medyan 6700
+    cabrios = [_bmw(100 + i, 9000 + i * 100, model="320i Cabrio") for i in range(7)]
+    target = _bmw("t", 4500)
+    plain = find_market(target, sedans, now=NOW)
+    mixed = find_market(target, sedans + cabrios, now=NOW)
+    assert plain is not None and mixed is not None
+    assert mixed.n == plain.n == 8 and mixed.median_gbp == plain.median_gbp == 6700  # açık üstüler hiç girmedi
+    assert not set(mixed.comparable_ids) & {r["id"] for r in cabrios}
+    # açık üstü ilan yalnız açık üstü emsal alır, sedanlar karışmaz
+    cabrio_target = _bmw("tc", 8000, model="325i Cabrio")
+    mc = find_market(cabrio_target, sedans + cabrios, now=NOW)
+    assert mc is not None and set(mc.comparable_ids) == {r["id"] for r in cabrios}
+    # kupe de ayrı: kupe ilan sedan/açık üstü emsal almaz
+    assert find_market(_bmw("tk", 8000, model="320i Coupe"), sedans + cabrios, now=NOW) is None
+    # ad adresten de okunur (model sütunu kısa yazılmışsa)
+    url_cabrio = _bmw(200, 9500, url="https://kktcar.com/listing/2008-bmw-320i-cabrio-girne-abc12")
+    assert find_market(target, sedans[:3] + [url_cabrio], now=NOW).n == 3
+
+
+def test_market_median_drops_when_cabrios_are_removed():
+    def mb(i, price, model="C200"):
+        return row(i, price, brand_norm="Mercedes-Benz", model_norm="c", year=2008, model=model)
+
+    pool = [mb(i, 6000 + i * 100) for i in range(9)] + [mb(50 + i, 12000 + i * 100, model="C200 Cabrio") for i in range(3)]
+    old = find_market(mb("t", 5000, model=None), [{k: v for k, v in r.items() if k != "model"} for r in pool], now=NOW)  # kasa bilgisi yok = eski davranış
+    new = find_market(mb("t", 5000), pool, now=NOW)
+    assert new.n == 9 and old.n == 12 and new.median_gbp < old.median_gbp

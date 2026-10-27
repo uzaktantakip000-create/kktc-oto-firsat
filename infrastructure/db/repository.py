@@ -263,7 +263,7 @@ class Repository:
             key_sql = " AND concat_ws('|', brand_norm, COALESCE(model_norm, '')) = ANY(%s)"
             args.append([f"{b}|{m or ''}" for b, m in keys])
         return self.conn.execute(
-            f"""SELECT id, brand_norm, model_norm, year, km, steering, transmission, fuel, engine_l::float8 AS engine_l,
+            f"""SELECT id, brand_norm, model_norm, model, year, km, steering, transmission, fuel, engine_l::float8 AS engine_l,
                       price_gbp::float8 AS price_gbp, currency,
                       currency_guess, first_seen_at, is_active, duplicate_of, url, seller_phone, seller_handle, urgency_signals,
                       COALESCE(posted_at, data_as_of, first_seen_at) AS ref_date
