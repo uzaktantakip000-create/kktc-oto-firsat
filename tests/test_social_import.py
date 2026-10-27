@@ -207,3 +207,12 @@ def test_page_lines_are_read_with_a_link_built_from_the_page_key():
     assert si.parse_line(json.dumps(doc | {"anahtar": "fbp:Kibris-Araba"})) == "alan"
     rows = [{"id": "p1", "platform": "facebook", "url": "https://www.facebook.com/KIBRISARABA/", "status": "aktif"}]
     assert set(si.source_map(rows)) == {"fbp:kibrisaraba"}
+
+
+def test_sharer_name_of_a_shared_photo_post_never_enters_the_listing_text():
+    """27.10.2026 (gizlilik): "+16 Photos from <ad>'s post" başlığı içe aktarmada silinir; ilanın kendi metni kalır."""
+    from application.social_import import strip_sharer
+    text = "2020 Mercedes GLC220d 69.000 KM'de +16 Photos from Örnek Kişi's post\nabc123"
+    assert "Örnek Kişi" not in strip_sharer(text) and "GLC220d 69.000 KM" in strip_sharer(text)
+    assert strip_sharer("Photos from Ali Veli's post") == ""
+    assert strip_sharer("2015 Honda Fit 7.500 STG") == "2015 Honda Fit 7.500 STG"

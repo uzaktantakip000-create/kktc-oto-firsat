@@ -174,12 +174,21 @@ def parse_line(line: str) -> tuple[str, SocialPost] | str:
     if posted and seen and posted > seen + FUTURE_SLACK:
         posted = None  # gelecekte paylaşılmış olamaz: saat dilimi/okuma hatası (14.10.2026: okuyucu zamanı Facebook yazısından okumaya başladı)
     post = SocialPost(platform=PLATFORM, source_key=page or group, post_id=pid, url=url,
-                      posted_at=posted or seen, text=text[:MAX_TEXT], image_url=image, dated=posted is not None,
+                      posted_at=posted or seen, text=strip_sharer(text)[:MAX_TEXT], image_url=image, dated=posted is not None,
                       seller_posts_14d=radar if type(radar) is int and 1 <= radar <= MAX_RADAR else None,
                       extra_text=_extra_text(doc.get("ek_metin")),
                       freshness=doc.get("tazelik") if doc.get("tazelik") in FRESHNESS else None,
                       first_post=_first_post(doc.get("ilk_gonderi"), pid))
     return key, post
+
+
+# Facebook'un paylaşılmış fotoğraf gönderisi başlığı ("+16 Photos from <Ad Soyad>'s post"): paylaşanın ADI ilan metnine girmesin
+# (sosyal oturum 27.10.2026: okuyucu da artık siliyor; burada ikinci kez, eski/yeni okuyucudan bağımsız)
+_SHARER = re.compile(r"(?:\+\d+\s*)?Photos from [^\n]{1,80}?'s post", re.I)
+
+
+def strip_sharer(text: str) -> str:
+    return _SHARER.sub("", text)
 
 
 def _first_post(value, pid: str) -> str | None:
