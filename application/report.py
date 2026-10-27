@@ -28,7 +28,7 @@ from domain.alert_policy import MIN_COMPARABLES_TO_SEND
 from domain.comparables import effective_km
 from domain.data_gate import GAP_LABELS
 from domain.decision import send_allowed
-from domain.kktc_time import to_kktc
+from domain.kktc_time import kktc_hour, to_kktc
 from domain.lifecycle import SOLD
 from domain.profit import Tier, buy_ceiling
 from domain.settings import RULES_VERSION, Settings
@@ -36,7 +36,12 @@ from infrastructure.config import mask_chat, redact
 from infrastructure.db.repository import URGENT_TIER, DatabaseDown, Repository
 
 REPORT_KEY = "weekly_report"
-REPEAT_HOURS = 24 * 7 - 2
+# Sabit gün ve saat (27.10.2026; spec §24.18): rapor yalnız KKTC saatiyle 09:00–11:59 arasında gider (yaz-kış aynı). Eskiden yalnız "166 saatte
+# bir" kuralı vardı: 15 dakikalık turlarla her hafta ~2 saat erkene kayıyordu, birkaç ay içinde gece sesli giderdi. 6,5 günlük tekrar engeli
+# bir önceki günün penceresini kapatır (6 gün + 3 saatlik pencereden uzun), 7. günün 09:00'unu açık bırakır (7 gün − 3 saatten kısa):
+# rapor her hafta aynı gün ~09:00'da gider
+SEND_HOURS_KKTC = range(9, 12)
+REPEAT_HOURS = 24 * 6 + 12
 MAX_UNITS = 4000  # Telegram sınırı 4096, UTF-16 birimiyle (emoji 2 sayılır): rapor bunun altında kurulur, notify_owner'da kesilmez
 WEEK_DAYS = 7
 VOTE_DAYS, VOTE_SHOW = 30, 10  # 30 günlük ölçüm penceresi (spec §24.5); en yeni 10 tanesi listelenir
@@ -357,9 +362,9 @@ def send_weekly_report(repo: Repository, recheck=None, now: datetime | None = No
     yeniden denenir (aboneye çift rapor gitmesin). Aboneye gidemeyen rapor yeniden denenmez (log'a maskeli yazılır); botu engelleyen (403)
     abone `durduruldu` olur, bir abonenin hatası öbürlerini durdurmaz."""
     token, owner_chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
-    if not token or not owner_chat or repo.alert_recent(REPORT_KEY, REPEAT_HOURS):
-        return False
     now = now or datetime.now(timezone.utc)
+    if not token or not owner_chat or kktc_hour(now) not in SEND_HOURS_KKTC or repo.alert_recent(REPORT_KEY, REPEAT_HOURS):
+        return False
     shared = _shared(repo, recheck or recheck_before_send, now)
     text, keyboard = _compose(repo, now, shared, owner_chat, True)
     # share=False: sahibin raporunda kendi oy listesi var, abonelere aynen gitmez; rapor yine herkese gider: her abone aşağıda aynı raporun

@@ -6,7 +6,7 @@ import pytest
 
 from application import health, report
 
-NOW = datetime(2026, 10, 15, 9, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 15, 7, 0, tzinfo=timezone.utc)  # KKTC 10:00: rapor penceresinin içi (09:00–11:59)
 
 
 def ago(**kw):
@@ -448,7 +448,7 @@ def test_send_without_votes_sends_no_keyboard(monkeypatch):
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
     sent = []
     monkeypatch.setattr(health, "api", lambda *a, **kw: sent.append(kw))
-    assert report.send_weekly_report(FakeRepo(), recheck=keep_all) is True
+    assert report.send_weekly_report(FakeRepo(), recheck=keep_all, now=NOW) is True
     assert "reply_markup" not in sent[0]
 
 

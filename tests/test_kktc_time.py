@@ -232,7 +232,8 @@ def test_estimated_deal_alert_is_silent_at_night_too_and_the_burst_summary_with_
 
 
 def test_the_weekly_report_and_owner_warnings_stay_audible_at_night(monkeypatch):
-    """Haftalık rapor ve sahibe sistem/hata uyarıları (sabah nabzı da aynı yoldan: health.notify_owner) gece de sesli gider."""
+    """Sahibe sistem/hata uyarıları (sabah nabzı da aynı yoldan: health.notify_owner) gece de sesli gider. Haftalık rapor geceleyin hiç
+    gitmez (27.10.2026'dan beri yalnız KKTC 09:00–11:59); gittiğinde sesli gider."""
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "owner")
     sent = []
@@ -240,11 +241,50 @@ def test_the_weekly_report_and_owner_warnings_stay_audible_at_night(monkeypatch)
     monkeypatch.setattr(report, "recheck_before_send", lambda repo, cands: cands)
     monkeypatch.setattr(report, "late_sources", lambda repo, now=None: [])
     night = utc(2026, 7, 15, 0, 30)  # KKTC 03:30
-    assert report.send_weekly_report(ReportRepo(votes=[vote_row(1)]), now=night) is True
+    assert report.send_weekly_report(ReportRepo(votes=[vote_row(1)]), now=night) is False and sent == []
     assert health.notify_owner(ReportRepo(), "hata", "⚠️ sistem uyarısı") is True
-    assert len(sent) == 2 and sent[0]["text"].startswith("📊 Haftalık rapor") and sent[1]["text"].startswith("⚠️ sistem uyarısı")
+    assert report.send_weekly_report(ReportRepo(votes=[vote_row(1)]), now=utc(2026, 7, 15, 6, 30)) is True  # KKTC 09:30
+    assert len(sent) == 2 and sent[0]["text"].startswith("⚠️ sistem uyarısı") and sent[1]["text"].startswith("📊 Haftalık rapor")
     assert not any("disable_notification" in kw for kw in sent)
     assert _deal_alert(monkeypatch, night)["disable_notification"] is True  # aynı anda fırsat mesajı sessiz: fark yalnız onda
+
+
+# --- haftalık rapor: her hafta aynı gün KKTC 09:00–11:59 (eskiden 166 saatlik tekrar engeli haftada ~2 saat erkene kayıyordu) ---
+class ClockRepo(ReportRepo):
+    """Tekrar engeli sahte saatle: rapor son gönderimden `hours` saat geçmeden yine gitmez (repository.alert_recent gibi)."""
+    def __init__(self, last=None):
+        super().__init__()
+        self.clock, self.last = None, last
+
+    def alert_recent(self, key, hours):
+        return self.last is not None and self.last > self.clock - timedelta(hours=hours)
+
+
+@pytest.mark.parametrize("start, last", [
+    (utc(2026, 10, 1), None),  # 25.10.2026 kış saatine geçiş arada
+    (utc(2026, 10, 1), utc(2026, 9, 28, 23, 0)),  # kaymış son rapor: KKTC 02:00
+    (utc(2027, 3, 4), utc(2027, 3, 1, 5, 50)),  # 28.03.2027 yaz saatine geçiş arada; son rapor KKTC 07:50
+])
+def test_weekly_report_lands_every_seven_days_inside_the_morning_window(monkeypatch, start, last):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "owner")
+    monkeypatch.setattr(report, "_shared", lambda repo, recheck, now: [])
+    monkeypatch.setattr(report, "_compose", lambda repo, now, shared, chat, owner: ("📊", None))
+    sends = []
+
+    def notify_owner(repo, key, text, **kw):  # rapor kurulup gönderilene kadar (canlılık kontrolü) birkaç dakika geçer
+        sends.append(repo.clock)
+        repo.last = repo.clock + timedelta(minutes=3)
+        return True
+    monkeypatch.setattr(report, "notify_owner", notify_owner)
+    repo = ClockRepo(last)
+    for i in range(50 * 96):  # 50 gün, 15 dakikada bir tur (tur başlangıcı birkaç dakika oynar)
+        repo.clock = start + timedelta(minutes=15 * i + (i * 7) % 6)
+        report.send_weekly_report(repo, now=repo.clock)
+    local = [to_kktc(t) for t in sends]
+    assert len(sends) >= 6 and all(9 <= t.hour < 12 for t in local)
+    assert all((b.date() - a.date()).days == 7 for a, b in zip(local, local[1:]))  # haftada tam bir, hep aynı gün
+    assert all(t.hour == 9 and t.minute < 15 for t in local[1:])  # ilk turdan sonra hep ~09:00
 
 
 def test_without_an_injected_time_the_current_time_decides(monkeypatch):

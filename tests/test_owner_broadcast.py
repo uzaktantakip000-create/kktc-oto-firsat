@@ -207,5 +207,5 @@ def test_weekly_report_is_not_copied_from_the_owner_each_subscriber_gets_their_o
     monkeypatch.setattr(report, "api", lambda token, method, **kw: seen.append(kw["chat_id"]))
     monkeypatch.setattr(report, "_shared", lambda repo, recheck, now: [])
     monkeypatch.setattr(report, "_compose", lambda repo, now, shared, chat, owner: (f"📊 {chat}", None))
-    assert report.send_weekly_report(Repo(), now=datetime(2026, 10, 22, 9, tzinfo=timezone.utc)) is True
+    assert report.send_weekly_report(Repo(), now=datetime(2026, 10, 22, 7, tzinfo=timezone.utc)) is True
     assert [(c["chat_id"], c["text"]) for c in calls] == [(OWNER, f"📊 {OWNER}")] and seen == ["200", "300"]
