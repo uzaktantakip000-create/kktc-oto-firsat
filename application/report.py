@@ -59,8 +59,10 @@ SHORT_REASON = {"km_yuksek": "km yüksek", "tl_fiyat": "fiyat TL (TL ilanlar ucu
                 "deger_supheli": "değer tablosu yeni değişti", "llm_okudu": "yapay zekâ okudu",
                 "fiyat_alani": "fiyat yalnız FB satış kutusunda"}
 PLATFORM_NAMES = {"instagram": "Instagram", "facebook": "Facebook"}
-# Oy satırının işareti. ⚡ ACİL SATICI (alerts.tier 'acil') 20.10.2026'dan beri oy listesinde: o mesaj da 👍/👎 düğmeli; 🟢/🟠'den ayrı görünsün
-VOTE_ICON = {Tier.STRONG.value: "🟢", Tier.ESTIMATED.value: "🟠", URGENT_TIER: "⚡"}
+# Oy satırının işareti. ⚡ ACİL SATICI (alerts.tier 'acil') 20.10.2026'dan beri oy listesinde: o mesaj da 👍/👎 düğmeli; 🟢/🟠'den ayrı görünsün.
+# 🟡 PAZARLIK FIRSATI 27.10.2026'dan beri (anında ve düğmeli giden mesaj; repository.REVIEW_TIERS)
+VOTE_ICON = {Tier.STRONG.value: "🟢", Tier.ESTIMATED.value: "🟠", Tier.NEGOTIABLE.value: "🟡", URGENT_TIER: "⚡"}
+VOTE_RANK = {Tier.NEGOTIABLE.value: 1, URGENT_TIER: 2}  # oy listesinin sırası: 🟢/🟠 (0), sonra 🟡, en sonda ⚡
 VOTE_ASK_OWNER = "Sistemi senin oylarınla ölçüyorum: her birine 👍 (işe yarar) ya da 👎 (yanlış) bas; aşağıdaki numaralı düğmeler de olur."
 VOTE_ASK_SUBSCRIBER = "Her birine 👍 (işe yarar) ya da 👎 (yanlış) bas; oyun kaydedilir. Aşağıdaki numaralı düğmeler de olur."
 
@@ -139,16 +141,19 @@ def _reason(code: str) -> str:
 
 # --- 1. oy bekleyenler ---
 def _urgent_part(rows: list[dict]) -> str:
-    """Sayımda ⚡ payı (20.10.2026): oy listesine ⚡ de girdi; "N fırsat bildirimi" 🟢 sayısı sanılmasın. ⚡ yoksa metin eskisiyle aynı."""
-    n = sum(1 for r in rows if r["tier"] == URGENT_TIER)
-    return f" ({n} tanesi ⚡ acil satıcı)" if n else ""
+    """Sayımda ⚡ payı (20.10.2026): oy listesine ⚡ de girdi; "N fırsat bildirimi" 🟢 sayısı sanılmasın. ⚡ yoksa metin eskisiyle aynı.
+    🟡 payı da aynı nedenle yazılır (27.10.2026)."""
+    parts = [f"{n} tanesi {label}" for tier, label in ((Tier.NEGOTIABLE.value, "🟡 pazarlık"), (URGENT_TIER, "⚡ acil satıcı"))
+             if (n := sum(1 for r in rows if r["tier"] == tier))]
+    return f" ({', '.join(parts)})" if parts else ""
 
 
 def _votes_section(repo: Repository, chat_id: str | None = None, owner: bool = True) -> tuple[_Section, list[dict]]:
     rows = repo.alerted_votes(VOTE_DAYS, chat_id=chat_id, owner=owner)  # yalnız bu kişiye gidenler ve yalnız onun oyu
     # 🟢/🟠 önce, ⚡ sonra (her grup kendi içinde en yeni önce; 20.10.2026): ⚡ günde 8'e dek çıkabilir, 🟢 ise seyrek. Yalnız ilk VOTE_SHOW
-    # satır listelenir; ⚡ öne geçseydi 🟢'ler "… ve N eski bildirim daha"ya düşer, 30 günlük 🟢 oy kapsamı ölçütü (spec §24.5) zarar görürdü
-    todo = sorted((r for r in rows if not r["voted"]), key=lambda r: r["tier"] == URGENT_TIER)
+    # satır listelenir; ⚡ öne geçseydi 🟢'ler "… ve N eski bildirim daha"ya düşer, 30 günlük 🟢 oy kapsamı ölçütü (spec §24.5) zarar görürdü.
+    # 🟡 (27.10.2026) aynı nedenle 🟢/🟠'den sonra, ⚡'den önce
+    todo = sorted((r for r in rows if not r["voted"]), key=lambda r: VOTE_RANK.get(r["tier"], 0))
     if not rows:
         return _Section("oy bekleyen", [f"🗳 Son {VOTE_DAYS} günde fırsat bildirimi gitmedi; oylanacak bir şey yok."]), []
     head = [f"🗳 OY BEKLEYENLER ({len(todo)})",
@@ -294,7 +299,8 @@ def _learned(repo: Repository) -> list[str]:
 
 def _health_lines(repo: Repository, now: datetime, owner: bool = True) -> list[str]:
     sent, counts, late = repo.week_alert_counts(WEEK_DAYS), repo.listing_counts(WEEK_DAYS), late_sources(repo, now)
-    sent_txt = f"{sent.get('guclu', 0)} 🟢" + (f" ve {sent['tahmini']} 🟠" if sent.get("tahmini") else "")
+    parts = [f"{sent.get('guclu', 0)} 🟢"] + [f"{sent[t]} {icon}" for t, icon in (("tahmini", "🟠"), ("pazarlik", "🟡")) if sent.get(t)]
+    sent_txt = f"{', '.join(parts[:-1])} ve {parts[-1]}" if len(parts) > 1 else parts[0]
     state = (f"⚠️ {len(late)} kaynakta gecikme var" + (" (ayrıntı: /durum)" if owner else "")) if late else "tüm kaynaklar zamanında taranıyor"
     sent_part = f"sana {sent_txt} fırsat gitti" if owner else f"{sent_txt} fırsat bildirildi"  # abone sonradan katılmış olabilir
     health = (f"🩺 Sistem: 7 günde {_num(counts['new_n'])} yeni ilan tarandı, {sent_part}, "

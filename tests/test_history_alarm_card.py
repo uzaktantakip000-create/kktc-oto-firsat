@@ -63,6 +63,11 @@ def test_son_unknown_action_and_limit():
     assert history_cmd.last_opportunities(FakeRepo(opps=[opp(fb="pas")] * 15)).count("🟢") == 10
 
 
+def test_son_marks_negotiable_alerts():
+    """27.10.2026: 🟡 PAZARLIK FIRSATI da /son'da, kendi işaretiyle."""
+    assert history_cmd.last_opportunities(FakeRepo(opps=[opp("pazarlik")])).split("\n\n")[1].startswith("🟡 02.10 14:20 · 2017 Mercedes A180")
+
+
 def test_help_mentions_son():
     from application.bot_poll import HELP_OWNER, WELCOME_OWNER
     assert "/son" in HELP_OWNER and "/yardim" in WELCOME_OWNER

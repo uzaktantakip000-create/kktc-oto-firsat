@@ -1202,7 +1202,8 @@ def test_alerted_votes_one_row_per_alerted_listing_newest_first_with_vote_state(
     db.save_alert(a, "c2", "guclu", 2, evaluation_id=None, price_gbp=None)  # iki aboneye gitti: tek satır
     db.save_alert(b, "c1", "tahmini", 3, evaluation_id=None, price_gbp=None)
     db.save_alert(old, "c1", "guclu", 4, evaluation_id=None, price_gbp=None)
-    db.save_alert(digest, "c1", "pazarlik", 5, evaluation_id=None, price_gbp=None)  # özet kaydı: oylanacak bildirim değil
+    db.save_alert(digest, "c1", "pazarlik", 5, evaluation_id=None, price_gbp=None)  # 27.10 öncesi özet kaydı: oylanacak bildirim değil
+    c.execute("UPDATE alerts SET sent_at = '2026-10-20 12:00+00' WHERE listing_id=%s", (digest,))
     c.execute("UPDATE alerts SET sent_at = now() - interval '2 days' WHERE listing_id=%s", (a,))
     c.execute("UPDATE alerts SET sent_at = now() - interval '1 day' WHERE listing_id=%s", (b,))
     c.execute("UPDATE alerts SET sent_at = now() - interval '40 days' WHERE listing_id=%s", (old,))
@@ -1211,6 +1212,27 @@ def test_alerted_votes_one_row_per_alerted_listing_newest_first_with_vote_state(
     assert [(r["id"], r["tier"], r["voted"]) for r in rows] == [(b, "tahmini", False), (a, "guclu", True)]
     assert rows[1]["km"] == 80_000 and rows[1]["median_gbp"] is None  # evaluation_id yok: piyasa ortası bilinmiyor
     assert rows[0]["is_active"] is True and len(db.alerted_votes(60)) == 3
+
+
+def test_negotiable_alerts_are_reviewed_and_voted_since_27_10_but_old_digest_rows_are_not(db):
+    """27.10.2026: 🟡 PAZARLIK FIRSATI anında ve 👍/👎 düğmeli gider: /son, haftalık rapor oy listesi, /oyla ve haftalık sayımda görünür.
+    O günden önceki 'pazarlik' satırları kapalı günlük özetin düğmesiz kaydıdır: hiçbirinde görünmez. İlan hem 🟢 hem 🟡 gittiyse 🟢 gösterilir."""
+    c, sid = db.conn, add_source(db.conn)
+    c.execute("INSERT INTO subscribers (chat_id, status, is_owner) VALUES ('own', 'onayli', TRUE)")
+    live, legacy, both = (add_listing(c, sid, n) for n in ("live", "legacy", "both"))
+    db.save_alert(live, "own", "pazarlik", 1, evaluation_id=None, price_gbp=6000)
+    db.save_alert(legacy, "own", "pazarlik", 2, evaluation_id=None, price_gbp=6000)
+    c.execute("UPDATE alerts SET sent_at = '2026-10-20 12:00+00' WHERE listing_id=%s", (legacy,))
+    db.save_alert(both, "own", "pazarlik", 3, evaluation_id=None, price_gbp=6000)
+    db.save_alert(both, "own", "guclu", 4, evaluation_id=None, price_gbp=6000)
+    c.execute("UPDATE alerts SET sent_at = now() - interval '1 hour' WHERE listing_id=%s AND tier='pazarlik'", (both,))
+
+    assert {(r["id"], r["tier"]) for r in db.recent_opportunities()} == {(live, "pazarlik"), (both, "pazarlik"), (both, "guclu")}
+    assert [(r["id"], r["tier"], r["voted"]) for r in db.alerted_votes(30, chat_id="own")] == [(live, "pazarlik", False), (both, "guclu", False)]
+    assert {(r["id"], r["tier"]) for r in db.owner_vote_queue("own", [str(legacy)])} == {(live, "pazarlik"), (both, "guclu"), (legacy, "acil")}
+    assert db.week_alert_counts(7) == {"guclu": 1, "pazarlik": 2}  # eski özet kaydı sayılmaz
+    c.execute("INSERT INTO feedback (listing_id, action, note) VALUES (%s, 'ilgilendim', 'chat:own')", (live,))
+    assert {r["id"] for r in db.owner_vote_queue("own", [])} == {both}
 
 
 def test_twins_finds_linked_copies_and_similar_listings_elsewhere_without_linking_them(db):

@@ -2,7 +2,8 @@
 temiz bir düzen olarak bottan tekrardan göndermeni istiyorum"). /oyla komutu (yalnız sahip) ve `admin_cli oyla`. YALNIZ SAHİBE (sahip kararı
 22.10.2026 "herkese" yayınının dışında; spec §24.35): sahibin yazdığı komuta cevaptır ve sahibin kişisel oy listesidir.
 
-Sahibe gitmiş (🟢/🟠/⚡) ve SAHİBİN hiç oy vermediği, hâlâ ilanda görünen her araç için TEK mesaj: önce bir başlık, sonra 🟢/🟠, en sonda ⚡;
+Sahibe gitmiş (🟢/🟠/🟡/⚡; 🟡 27.10.2026'dan beri) ve SAHİBİN hiç oy vermediği, hâlâ ilanda görünen her araç için TEK mesaj: önce bir başlık,
+sonra 🟢/🟠, sonra 🟡, en sonda ⚡;
 her grup kendi içinde en yeni önce. Her mesaj 🟢 ile aynı 👍 İşe yarar / 👎 Yanlış (+ telefon varsa WhatsApp) düğmeleriyle gider
 (notify.keyboard; bot_poll fb:ilgilendim / fb:yanlis_fiyat'ı her ilan kimliği için zaten kaydeder). Abonelerin oyu sahibin oyu sayılmaz
 (`OWNER_VOTE_SQL`): abone oylamış olsa da sahip oylamadıysa listede.
@@ -27,13 +28,14 @@ SEEN_RECENT = timedelta(days=2)  # bundan yeni görülen ilan "ilanda" sayılır
 BLOCKED_SOURCES = {"kibrisarabaal.com": "KibrisArabaAl 10.10'dan beri bizi engelliyor"}  # durum satırı: kontrol edilemeyen kaynak
 SOCIAL_NOTE = {"facebook": "Facebook ilanı: satılıp satılmadığını izleyemiyorum",
                "instagram": "Instagram ilanı: Instagram artık taranmıyor, satılıp satılmadığını bilemiyorum"}
-ICON = {"guclu": "🟢", "tahmini": "🟠", "acil": "⚡"}
-ORDER = {"guclu": 0, "tahmini": 0, "acil": 1}
+ICON = {"guclu": "🟢", "tahmini": "🟠", "pazarlik": "🟡", "acil": "⚡"}
+ORDER = {"guclu": 0, "tahmini": 0, "pazarlik": 1, "acil": 2}  # 🟡 PAZARLIK FIRSATI 27.10.2026'dan beri: 🟢/🟠'den sonra, ⚡'den önce
 SEND_GAP_S = 0.4  # Telegram: tek sohbete saniyede ~1 mesaj sınırının altında
 HEADER = ("🗳 OY BEKLEYENLER: {n} araç\n"
           "Sana gönderdiğim ve henüz oylamadığın, hâlâ ilanda görünen bildirimler (satılmış ya da kalkmış olanları koymadım). Her birinin "
           "altındaki 👍 İşe yarar ya da 👎 Yanlış düğmesine bas: 👍 = gerçekten iyi fırsattı, 👎 = fiyat/değer yanlıştı ya da fırsat değildi. "
-          "Sistemin ne kadar doğru çalıştığını yalnız senin oylarınla ölçebiliyorum. Sıra: önce 🟢/🟠, sonra ⚡ acil satıcı; en yeni önce.")
+          "Sistemin ne kadar doğru çalıştığını yalnız senin oylarınla ölçebiliyorum. Sıra: önce 🟢/🟠, sonra 🟡 pazarlık, en sonda ⚡ acil satıcı; "
+          "en yeni önce.")
 NONE_LEFT = "🗳 Oylamadığın ve hâlâ ilanda görünen bildirim yok. Teşekkürler!"
 
 

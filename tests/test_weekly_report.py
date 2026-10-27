@@ -148,6 +148,14 @@ def test_flash_alerts_are_in_the_vote_list_with_their_own_mark_and_counted_apart
     assert data[4:6] == ["fb:ilgilendim:00000000-0000-0000-0000-000000000001", "fb:yanlis_fiyat:00000000-0000-0000-0000-000000000001"]
 
 
+def test_negotiable_alerts_are_in_the_vote_list_after_green_and_before_flash():
+    """27.10.2026: 🟡 PAZARLIK FIRSATI da düğmeli ve oy listesinde, 🟡 işaretiyle; sırası 🟢/🟠'den sonra, ⚡'den önce; payı sayımda yazılır."""
+    votes = [vote_row(1, tier="acil"), vote_row(2, tier="pazarlik"), vote_row(3), vote_row(4, tier="pazarlik", voted=True)]
+    text, _ = build(FakeRepo(votes=votes))
+    assert "Son 30 günde 4 fırsat bildirimi gitti (2 tanesi 🟡 pazarlık, 1 tanesi ⚡ acil satıcı), 1 tanesine oy verdin." in text
+    assert "1) 🟢 2011 BMW" in text and "2) 🟡 2011 BMW 3 Serisi 320i · £7.300 · 14.10" in text and "3) ⚡ 2011 BMW" in text
+
+
 def test_report_lines_show_the_listing_own_price_when_it_is_not_sterling():
     vote = vote_row(1) | {"price_amount": 9650.0, "currency": "USD", "price_gbp": 7300.0}
     near = near_row(1) | {"price_amount": 400000.0, "currency": "TRY", "price_gbp": 7750.0}
@@ -377,6 +385,8 @@ def test_health_is_one_line_and_reports_late_sources(monkeypatch):
     monkeypatch.setattr(report, "late_sources", lambda repo, now=None: [{"name": "A"}, {"name": "B"}])
     text = build(FakeRepo(sent={"guclu": 1, "tahmini": 2}))[0]
     assert "sana 1 🟢 ve 2 🟠 fırsat gitti" in text and "⚠️ 2 kaynakta gecikme var (ayrıntı: /durum)." in text
+    assert "sana 1 🟢, 2 🟠 ve 3 🟡 fırsat gitti" in build(FakeRepo(sent={"guclu": 1, "tahmini": 2, "pazarlik": 3}))[0]
+    assert "sana 0 🟢 ve 1 🟡 fırsat gitti" in build(FakeRepo(sent={"pazarlik": 1}))[0]
 
 
 def test_self_made_changes_are_listed_only_when_there_are_any():

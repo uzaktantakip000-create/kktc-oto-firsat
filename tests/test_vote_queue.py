@@ -55,6 +55,14 @@ def test_order_is_green_first_then_urgent_newest_first_and_the_same_car_is_sent_
     assert got == ["L3", "L4", "L2", "L1"]
 
 
+def test_negotiable_comes_after_green_and_before_urgent_with_its_own_mark():
+    """27.10.2026: 🟡 PAZARLIK FIRSATI da /oyla'da: 🟢/🟠'den sonra, ⚡'den önce; aynı aracın 🟢 kopyası varsa 🟢 kalır."""
+    rows = [row(1, "acil", days=1), row(2, "pazarlik", days=1), row(3, "guclu", days=3), row(4, "pazarlik", days=2, canon="L3")]
+    got = vq.pending(Repo(rows), "1")
+    assert [(r["id"], r["tier"]) for r in got] == [("L3", "guclu"), ("L2", "pazarlik"), ("L1", "acil")]
+    assert vq.message(got[1], 2, 3, NOW).startswith("2/3 🟡 2011 Nissan March")
+
+
 def test_the_urgent_memory_is_passed_to_the_query():
     repo = Repo([], islenen=["a", "b"])
     vq.pending(repo, "42")

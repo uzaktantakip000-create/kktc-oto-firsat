@@ -33,6 +33,12 @@ SENT_ONCE_TIERS = ["guclu", "tahmini"]
 # işaretiyle. alerts.tier üzerinde kısıt yok (migration 001/003: serbest metin; tekillik (listing_id, chat_id, tier)): şema değişmez.
 URGENT_TIER = "acil"
 VOTED_TIERS = [*SENT_ONCE_TIERS, URGENT_TIER]  # oy/gözden geçirme ekranlarının seviyeleri; sıra = ilan iki seviyede de gittiyse gösterilecek olan
+# 🟡 PAZARLIK FIRSATI (27.10.2026'dan beri anında ve 👍/👎 düğmeli, spec §24.41) da sahibin gözden geçirdiği yerlerde görünür: /son
+# (`recent_opportunities`), haftalık raporun oy listesi (`alerted_votes`), /oyla (`owner_vote_queue`). Sıra = gösterilecek seviye: 🟢 > 🟠 > 🟡 > ⚡.
+# Daha önceki 'pazarlik' satırları kapalı günlük özetin (application/digest) düğmesiz kaydıdır: REVIEW_SINCE_SQL ile dışarıda.
+REVIEW_TIERS = [*SENT_ONCE_TIERS, "pazarlik", URGENT_TIER]
+NEGOTIABLE_LIVE_SINCE = "2026-10-27 00:00+02"  # KKTC gece yarısı (kış saati)
+REVIEW_SINCE_SQL = "({a}tier <> 'pazarlik' OR {a}sent_at >= '" + NEGOTIABLE_LIVE_SINCE + "'::timestamptz)"
 RETRACTED = "geri_cekildi"  # alerts.kind: mesajı sonradan silinen yanlış bildirim (10.10.2026 Auris): oylanmaz ama "gitti" sayılır, yeniden gönderilmez
 FROZEN_AFTER_DAYS = 2  # KibrisArabaAl bu kadar gündür okunmadıysa (izin kapısı kapalı / engel) ilanları izlenemeyen kaynak sayılır (expire_unverifiable)
 
@@ -932,9 +938,9 @@ class Repository:
         ).fetchall()
 
     def recent_opportunities(self, limit: int = 10) -> list[dict]:
-        """Gönderilmiş son 🟢/🟠/⚡ fırsatlar (en yeni önce, ilan+seviye başına tek satır) ve SAHİBİN son düğme cevabı (/son komutu; abonenin
+        """Gönderilmiş son 🟢/🟠/🟡/⚡ fırsatlar (en yeni önce, ilan+seviye başına tek satır) ve SAHİBİN son düğme cevabı (/son komutu; abonenin
         basışı "…dedin" diye sahibe yazılmasın). ⚡ (URGENT_TIER) 20.10.2026'dan beri burada: sahip oyladığı her mesajı /son'da görsün;
-        satır application/history_cmd'da ⚡ işaretiyle ayrılır."""
+        satır application/history_cmd'da ⚡ işaretiyle ayrılır. 🟡 27.10.2026'dan beri (REVIEW_TIERS; eski özet kayıtları hariç)."""
         return self.conn.execute(
             f"""SELECT l.id, l.url, l.year, l.brand, l.model, l.price_gbp::float8 AS price_gbp, x.tier, x.sent_at,
                       e.median::float8 AS median_gbp,
@@ -942,11 +948,11 @@ class Repository:
                          AND {OWNER_VOTE_SQL}
                        ORDER BY f.created_at DESC LIMIT 1) AS feedback
                FROM (SELECT listing_id, tier, MIN(sent_at) AS sent_at FROM alerts
-                     WHERE tier = ANY(%s) GROUP BY listing_id, tier) x
+                     WHERE tier = ANY(%s) AND {REVIEW_SINCE_SQL.format(a="")} GROUP BY listing_id, tier) x
                JOIN listings l ON l.id = x.listing_id
                LEFT JOIN LATERAL (SELECT market_median_gbp AS median FROM evaluations WHERE listing_id = l.id
                                   ORDER BY evaluated_at DESC LIMIT 1) e ON TRUE
-               ORDER BY x.sent_at DESC LIMIT %s""", (VOTED_TIERS, limit)).fetchall()
+               ORDER BY x.sent_at DESC LIMIT %s""", (REVIEW_TIERS, limit)).fetchall()
 
     def current_decisions(self, brand_norm: str, model_norm: str, year: int, limit: int = 3) -> list[dict]:
         """/fiyat için: bu marka-model-yıldaki şu an ilanda olan araçların SON kararı (bildirim mesajındaki "piyasa ortası" bu kayıttan
@@ -963,11 +969,13 @@ class Repository:
                LIMIT %s""", (brand_norm, model_norm, year, limit)).fetchall()
 
     def week_alert_counts(self, days: int = 7) -> dict[str, int]:
-        """Son 'days' günde gönderilen fırsat sayısı (ilan bazında): {'guclu': n, 'tahmini': n}. ⚡ ('acil') BİLEREK sayılmaz (20.10.2026):
-        haftalık raporun sağlık satırı 🟢/🟠 sayısıdır ve 30 günlük 🟢 ölçütüyle (spec §24.5) aynı kalmalı; ⚡ oy listesinde ayrıca görünür."""
+        """Son 'days' günde gönderilen fırsat sayısı (ilan bazında): {'guclu': n, 'tahmini': n, 'pazarlik': n}. ⚡ ('acil') BİLEREK sayılmaz
+        (20.10.2026): haftalık raporun sağlık satırı 🟢/🟠 sayısıdır ve 30 günlük 🟢 ölçütüyle (spec §24.5) aynı kalmalı; ⚡ oy listesinde ayrıca
+        görünür. 🟡 (27.10.2026'dan beri anında giden PAZARLIK FIRSATI; eski özet kayıtları hariç) ayrı anahtarda: 🟢 sayısına karışmaz."""
         rows = self.conn.execute(
-            """SELECT tier, count(DISTINCT listing_id) AS n FROM alerts
-               WHERE tier IN ('guclu','tahmini') AND sent_at > NOW() - make_interval(days => %s) GROUP BY tier""", (days,)).fetchall()
+            f"""SELECT tier, count(DISTINCT listing_id) AS n FROM alerts
+               WHERE tier IN ('guclu','tahmini','pazarlik') AND {REVIEW_SINCE_SQL.format(a="")}
+                 AND sent_at > NOW() - make_interval(days => %s) GROUP BY tier""", (days,)).fetchall()
         return {r["tier"]: r["n"] for r in rows}
 
     def week_feedback_counts(self, days: int = 7) -> dict[str, int]:
@@ -979,14 +987,14 @@ class Repository:
 
     # --- haftalık rapor (application/report.py): yalnız okur ---
     def alerted_votes(self, days: int = 30, chat_id: str | None = None, owner: bool = True) -> list[dict]:
-        """Son 'days' günde 🟢/🟠/⚡ bildirimi giden ilanlar (ilan başına tek satır, en yeni önce) ve oylanıp oylanmadığı: denetim dışındaki
+        """Son 'days' günde 🟢/🟠/🟡/⚡ bildirimi giden ilanlar (ilan başına tek satır, en yeni önce) ve oylanıp oylanmadığı: denetim dışındaki
         her düğme cevabı (👍/👎, eski mesajlardaki pas/satılmış/kusurlu) oy sayılır. Kişiye özel (haftalık rapor herkese gider, 08.10.2026):
         `chat_id` verilirse yalnız o sohbete giden bildirimler; oy yalnız O KİŞİNİNKİ (sahip: OWNER_VOTE_SQL, abone: kendi 'chat:' notu).
         Eskiden herkesin oyu sayılıyordu: abone oylayınca ilan sahibin "oy bekleyenler" listesinden düşüyordu.
         Geri çekilen (mesajı silinen, `kind = RETRACTED`) bildirim listelenmez: silinen yanlış mesaj raporda düğmeleriyle yeniden çıkmasın.
         ⚡ ACİL SATICI ('acil', 20.10.2026) da listelenir: o mesaj da artık 👍/👎 düğmeli ve sahip her bildirimi oyla ölçmek istiyor. İlan birden
-        çok seviyede gittiyse satırın seviyesi VOTED_TIERS sırasıyla seçilir (🟢 > 🟠 > ⚡; eskiden MIN(tier) = 'guclu' idi, ama 'acil' harf
-        sırasında öne geçerdi)."""
+        çok seviyede gittiyse satırın seviyesi REVIEW_TIERS sırasıyla seçilir (🟢 > 🟠 > 🟡 > ⚡; eskiden MIN(tier) = 'guclu' idi, ama 'acil' harf
+        sırasında öne geçerdi). 🟡 27.10.2026'dan beri (o günden önceki 'pazarlik' satırı günlük özet kaydıdır, oylanmaz)."""
         voter = OWNER_VOTE_SQL if owner else "f.note = 'chat:' || %(chat)s"
         chat = " AND chat_id = %(chat)s" if chat_id else ""
         return self.conn.execute(
@@ -998,15 +1006,15 @@ class Repository:
                FROM (SELECT listing_id, (array_agg(tier ORDER BY array_position(%(tiers)s::text[], tier)))[1] AS tier,
                             MIN(sent_at) AS sent_at FROM alerts
                      WHERE tier = ANY(%(tiers)s) AND sent_at > NOW() - make_interval(days => %(days)s){chat}
-                       AND kind IS DISTINCT FROM %(retracted)s GROUP BY listing_id) x
+                       AND {REVIEW_SINCE_SQL.format(a="")} AND kind IS DISTINCT FROM %(retracted)s GROUP BY listing_id) x
                JOIN listings l ON l.id = x.listing_id
                ORDER BY x.sent_at DESC""",
-            {"tiers": VOTED_TIERS, "days": days, "chat": str(chat_id) if chat_id else None, "retracted": RETRACTED}).fetchall()
+            {"tiers": REVIEW_TIERS, "days": days, "chat": str(chat_id) if chat_id else None, "retracted": RETRACTED}).fetchall()
 
     def owner_vote_queue(self, owner_chat: str, urgent_ids) -> list[dict]:
-        """/oyla (application/vote_queue, 20.10.2026): SAHİBE gitmiş 🟢/🟠/⚡ (alerts, geri çekilen hariç) + alerts'e yazılmadan önceki ⚡'ler
-        (`urgent_ids`: bot_state 'acil:islenen'; gönderim anı yerine ilk görülme) içinden, ilanı hâlâ aktif ve ne kendisine ne kanoniğine
-        SAHİBİN oyu olmayanlar (abonenin oyu sayılmaz). Satır başına: seviye (🟢 > 🟠 > ⚡), ilk gönderim, gönderimdeki fiyat ve piyasa ortası
+        """/oyla (application/vote_queue, 20.10.2026): SAHİBE gitmiş 🟢/🟠/🟡/⚡ (alerts, geri çekilen ve 27.10 öncesi 🟡 özet kaydı hariç)
+        + alerts'e yazılmadan önceki ⚡'ler (`urgent_ids`: bot_state 'acil:islenen'; gönderim anı yerine ilk görülme) içinden, ilanı hâlâ aktif ve ne kendisine ne kanoniğine
+        SAHİBİN oyu olmayanlar (abonenin oyu sayılmaz). Satır başına: seviye (🟢 > 🟠 > 🟡 > ⚡), ilk gönderim, gönderimdeki fiyat ve piyasa ortası
         (bildirimin değerlendirme satırı; ⚡ öncesi için gönderimden önceki son değerlendirme), durum satırı için kaynak/son görülme."""
         ids = []
         for x in urgent_ids or []:
@@ -1018,11 +1026,13 @@ class Repository:
             f"""WITH sent AS (
                     SELECT listing_id, (array_agg(tier ORDER BY array_position(%(tiers)s::text[], tier)))[1] AS tier, MIN(sent_at) AS sent_at,
                            (array_agg(fiyat_gonderimde ORDER BY sent_at))[1] AS price_sent, (array_agg(evaluation_id ORDER BY sent_at))[1] AS ev_id
-                    FROM alerts WHERE tier = ANY(%(tiers)s) AND chat_id = %(chat)s AND kind IS DISTINCT FROM %(retracted)s GROUP BY listing_id
+                    FROM alerts WHERE tier = ANY(%(tiers)s) AND chat_id = %(chat)s AND {REVIEW_SINCE_SQL.format(a="")}
+                      AND kind IS DISTINCT FROM %(retracted)s GROUP BY listing_id
                     UNION ALL
                     SELECT l.id, %(urgent)s, l.first_seen_at, NULL, NULL FROM listings l
                     WHERE l.id = ANY(%(ids)s::uuid[])
-                      AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.tier = ANY(%(tiers)s) AND a.chat_id = %(chat)s))
+                      AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.listing_id = l.id AND a.tier = ANY(%(tiers)s) AND a.chat_id = %(chat)s
+                                      AND {REVIEW_SINCE_SQL.format(a="a.")}))
                 SELECT l.id, COALESCE(l.duplicate_of, l.id) AS canon, x.tier, x.sent_at, x.price_sent::float8 AS price_sent,
                        l.year, l.brand, l.model, l.brand_norm, l.model_norm, l.km, l.price_gbp::float8 AS price_gbp,
                        l.price_amount::float8 AS price_amount, l.currency, l.url, l.seller_phone, l.last_seen_at, l.last_alive_at, l.posted_at,
@@ -1035,7 +1045,7 @@ class Repository:
                 WHERE l.is_active AND l.price_gbp IS NOT NULL
                   AND NOT EXISTS (SELECT 1 FROM feedback f WHERE f.listing_id IN (l.id, COALESCE(l.duplicate_of, l.id))
                                   AND f.action NOT LIKE 'audit_%%' AND {OWNER_VOTE_SQL})""",
-            {"tiers": VOTED_TIERS, "chat": str(owner_chat), "retracted": RETRACTED, "urgent": URGENT_TIER, "ids": ids}).fetchall()
+            {"tiers": REVIEW_TIERS, "chat": str(owner_chat), "retracted": RETRACTED, "urgent": URGENT_TIER, "ids": ids}).fetchall()
 
     def unnotified_strong(self, rules_version: str, days: int = 14, limit: int = 50) -> list[dict]:
         """Bildirilmemiş 🟢'ler: EN SON değerlendirmesi bu kural sürümüyle 🟢 ve son 'days' günde yapılmış, ilan aktif, kopya/karantina değil,
