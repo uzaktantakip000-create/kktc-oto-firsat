@@ -11,7 +11,7 @@ import re
 
 _RULES: dict[str, list[tuple[str, str]]] = {
     "Toyota": [(r"^yaris cross", "yaris cross"), (r"^corolla cross", "corolla cross"), (r"^(?:corolla )?axio", "axio"),
-               (r"^c ?hr\b", "c-hr"), (r"^rav ?4\b", "rav4")],
+               (r"^c ?hr\b", "c-hr"), (r"^rav(?: ?4)?\b", "rav4")],  # Toyota "RAV" yalnız RAV4
     "Mazda": [(r"^cx ?(\d{1,2})\b", r"cx-\1"), (r"^rx ?(\d)\b", r"rx-\1")],
     "Honda": [(r"^fit aria", "fit aria"), (r"^cr ?v\b", "cr-v"), (r"^cr ?z\b", "cr-z"), (r"^zr ?v\b", "zr-v"), (r"^hr ?v\b", "hr-v")],
     "Volkswagen": [(r"^t ?roc\b", "t-roc"), (r"^t ?cross\b", "t-cross")],
