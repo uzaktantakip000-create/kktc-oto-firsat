@@ -38,7 +38,10 @@ FROZEN_AFTER_DAYS = 2  # KibrisArabaAl bu kadar gündür okunmadıysa (izin kap�
 
 
 def _tiers_blocking(tier: str) -> list[str]:
-    """Bu seviyede göndermeyi engelleyen daha önce gönderilmiş seviyeler."""
+    """Bu seviyede göndermeyi engelleyen daha önce gönderilmiş seviyeler. 🟡 (pazarlik, 27.10.2026'dan beri anında giden PAZARLIK FIRSATI):
+    aynı araba 🟢/🟠 ya da ⚡ olarak zaten gittiyse bir de 🟡 olarak gitmez (tersi değil: 🟡 gitmiş ilan sonradan 🟢 olursa 🟢 gider)."""
+    if tier == "pazarlik":
+        return [*SENT_ONCE_TIERS, URGENT_TIER, tier]
     return SENT_ONCE_TIERS if tier in SENT_ONCE_TIERS else [tier]
 
 
@@ -658,6 +661,7 @@ class Repository:
                       e.exit_price_gbp::float8 AS exit_price_gbp, e.profit_gbp::float8 AS profit_gbp,
                       e.profit_pct::float8 AS profit_pct, e.confidence, e.red_flags, e.year_span,
                       e.archived_share::float8 AS archived_share, e.evidence,
+                      (to_jsonb(e) ->> 'alt_ceyrek_gbp')::float8 AS alt_ceyrek_gbp,  -- mesajda en ucuz çeyrek (migration 019; yoksa NULL)
                       COALESCE(to_jsonb(e) ->> 'method', 'A') AS method,  -- kolon (migration 013) yoksa da çalışır
                       (SELECT MAX(h.changed_at) FROM listing_history h WHERE h.listing_id = l.id AND h.field = 'price_gbp')
                           AS price_changed_at

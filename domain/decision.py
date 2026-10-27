@@ -184,6 +184,17 @@ def _strong_checks(listing: dict, a: Decision, pool: list[dict], s: Settings, bo
     return Decision(a.market, capped, a.blocking, a.warnings, a.gaps + gaps, a.text, a.method, a.estimate)
 
 
+def clean_negotiable(listing: dict, pool: list[dict], s: Settings, book: PriceBook | None = None,
+                     now: datetime | None = None) -> Decision | None:
+    """🟡 PAZARLIK FIRSATI (27.10.2026): 🟢'nin bütün kapılarından geçen, yalnız kâr eşiği `clean_negotiable_threshold` (%15) ve asgari net
+    kârı `clean_negotiable_min_profit_gbp` olan karar; geçmezse None. Kural tek yerde kalsın diye aynı `decide()` gevşetilmiş iki ayarla
+    çağrılır (yeni kapı yok). Mesajdaki rakamlar ilanın kayıtlı değerlendirmesinden gelir; bu yalnız "temiz mi" sorusunun cevabıdır."""
+    relaxed = s.model_copy(update={"strong_threshold": s.clean_negotiable_threshold,
+                                   "min_strong_profit_gbp": s.clean_negotiable_min_profit_gbp})
+    d = decide(listing, pool, relaxed, book, now)
+    return d if d is not None and d.profit.tier is Tier.STRONG and d.sendable else None
+
+
 def _fresh_tl_strong(listing: dict, pool: list[dict], price: float, text: str, warnings: list[str], s: Settings, book: PriceBook | None,
                      now: datetime, strong_checks: bool) -> Decision | None:
     """Taze TL fiyatlı ilanın 🟢 yolu (20.10.2026; `data_gate.tl_fresh`): piyasa £ ilan gibi kurulur (önce TL emsalsiz: eski/tarihsiz TL emsaller

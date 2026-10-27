@@ -210,8 +210,11 @@ def format_alert(ev: Evaluated, note: dict | None = None, twins: list[dict] | No
         head = EST_HEAD
         market = estimate_line(price, m.median_gbp, m.low_gbp) + f" · kâr (temkinli) ~{_gbp(p.profit_gbp)} ({m.n} ilanlık eğri)"
     else:
-        head = (f"🟢 FIRSAT · %{p.profit_pct * 100:.0f} kâr potansiyeli" if p.tier is Tier.STRONG else f"🟡 PAZARLIKLA FIRSAT · %{p.profit_pct * 100:.0f} kâr potansiyeli")
-        market = (f"📊 Piyasa ortası {_gbp(m.median_gbp)} ({m.n} emsal) → satılabilir ~{_gbp(p.exit_price_gbp)} · "
+        head = (f"🟢 FIRSAT · %{p.profit_pct * 100:.0f} kâr potansiyeli" if p.tier is Tier.STRONG
+                else f"🟡 PAZARLIK FIRSATI · %{p.profit_pct * 100:.0f} kâr potansiyeli\n"
+                     "ℹ️ 🟢'nin bütün kontrollerinden geçti ama kâr %20'nin altında: pazarlıkla değerlendir")
+        cheap = f" · en ucuz çeyrek {_gbp(m.p25_gbp)}" if m.p25_gbp else ""  # sahip 27.10.2026: "ortalama fiyatlar yüksek": ilan fiyatı ortası, alt seviye de görünsün
+        market = (f"📊 Piyasa ortası {_gbp(m.median_gbp)}{cheap} ({m.n} emsal) → satılabilir ~{_gbp(p.exit_price_gbp)} · "
                   f"kâr ~{_gbp(p.profit_gbp)} (masraf {_gbp(Settings().fixed_cost_gbp)} düşüldü)")
     lines = [
         head,

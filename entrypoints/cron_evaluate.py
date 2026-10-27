@@ -12,7 +12,7 @@ from application.dedupe import mark_duplicates
 from application.digest import send_daily_digest
 from application.discovery import send_discovery
 from application.estimate_guard import guard_estimates
-from application.evaluate import LazyBook, evaluate_new, load_book, pending_alerts
+from application.evaluate import LazyBook, evaluate_new, load_book, pending_alerts, pending_clean_negotiable
 from application.health import check_fx, check_sources, notify_owner
 from application.llm_reader import deal_notes
 from application import urgent
@@ -233,6 +233,17 @@ def deliver(repo: Repository, token: str, owner: str, settings: Settings, evalua
         except Exception as e:  # not alınamazsa bildirim notsuz gider: gönderim bu nota hiçbir durumda bağlı değil
             print("LLM notu alınamadı:", type(e).__name__)
     sent = send_alerts(repo, token, strong, notes)
+    try:  # 🟡 PAZARLIK FIRSATI (27.10.2026): 🟢'nin bütün kapıları, eşik %15; aynı gönderim kontrolü, günde en çok clean_negotiable_daily_limit
+        quota = settings.clean_negotiable_daily_limit - repo.alerts_sent_since(Tier.NEGOTIABLE.value, 24)
+        if settings.clean_negotiable_alerts and quota > 0:
+            cands = pending_clean_negotiable(repo, settings, book=book, platform=platform)
+            if cands:
+                neg, _ = gonderim_kontrol(repo, cands, "🟡")
+                neg_sent = send_alerts(repo, token, neg, tier=Tier.NEGOTIABLE, max_per_run=quota, s=settings)
+                if neg_sent:
+                    print(f"pazarlık fırsatı: {neg_sent} ilan")
+    except Exception as e:  # yan iş: 🟢 yolunu ve raporları bozmasın
+        print("pazarlık fırsatı gönderimi başarısız:", type(e).__name__, redact(str(e))[:150])
     est_sent = 0
     if settings.estimated_alerts:  # 🟠 tahmini fırsat: ayrı gönderim (tablo yoksa hiç çıkmaz)
         try:

@@ -83,7 +83,15 @@ class Settings(BaseModel):
     book_confirm_nights: int = 2
     book_self_check_max_error: float = 0.25  # öz-kontrolde model ortanca hatası bundan büyükse 🟠 kapanır
     est_burst_limit: int = 15  # tek turda bundan fazla 🟠 çıkarsa arıza say: tek özet mesaj
-    est_daily_limit: int = 3  # sahibin kararı (03.10.2026): 🟠 KONTROL ET günde en çok bu kadar (güven sırasıyla; son 24 saat)
+    est_daily_limit: int = 3
+    # --- 🟡 PAZARLIK FIRSATI (27.10.2026; sahip: "çok az fırsat gönderiliyor", karar "sen seç te mantıklı olsun") ---
+    # 🟢'nin BÜTÜN kapılarından (emsal ≥ 8, en ucuz çeyrek, emsal yılı, 2σ gürültü, temkinli km, yakın km, TL/para birimi, masraf/plaka,
+    # kullanıcı kararları, gönderim kontrolü) geçen ama kârı %15–20 arası ilan, açık etiketle anında gider (decision.clean_negotiable).
+    # Ölçüm (27.10, son 14 gün): bu süzgece yakın ~9 aday, hepsi emsallerin en ucuz çeyreğinde; ~%15 altı/gevşek süzgeç çoğunlukla gürültü.
+    clean_negotiable_alerts: bool = True
+    clean_negotiable_threshold: float = 0.15
+    clean_negotiable_min_profit_gbp: float = 500.0
+    clean_negotiable_daily_limit: int = 1  # günde en çok bu kadar farklı ilan (son 24 saat)  # sahibin kararı (03.10.2026): 🟠 KONTROL ET günde en çok bu kadar (güven sırasıyla; son 24 saat)
 
     @model_validator(mode="after")
     def _consistent_thresholds(self):

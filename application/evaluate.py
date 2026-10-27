@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 from application.decision_record import decision_record
 from domain.comparables import Market
-from domain.decision import Decision, decide, send_allowed
+from domain.decision import Decision, clean_negotiable, decide, send_allowed
 from domain.normalize import is_car_brand
 from domain.price_book import BookRow, PriceBook
 from domain.profit import Confidence, ProfitResult, Tier
@@ -198,13 +198,30 @@ def pending_alerts(repo: Repository, hours: int = 36, tier: Tier = Tier.STRONG, 
         evidence = r.get("evidence") if isinstance(r.get("evidence"), dict) else {}
         market = Market(r["comparables_n"], med, r["market_low_gbp"] or med, r["market_high_gbp"] or med,
                         r["year_span"] or 1, r["archived_share"] or 0.0,
-                        median_km=evidence.get("medyan_km"), median_year=evidence.get("medyan_yil"))  # mesajdaki km/yıl kıyası için
+                        median_km=evidence.get("medyan_km"), median_year=evidence.get("medyan_yil"),  # mesajdaki km/yıl kıyası için
+                        p25_gbp=r.get("alt_ceyrek_gbp"))  # mesajda "en ucuz çeyrek" (27.10.2026)
         profit = ProfitResult(r["exit_price_gbp"], r["profit_gbp"], r["profit_pct"] / 100,
                               Confidence(r["confidence"]), tier)
         flags = [f for f in (r["red_flags"] or []) if f != "tahmini_az_emsal"]  # iç işaret mesajda görünmez
         row = book.row(r.get("brand_norm"), r.get("model_norm"), r["year"], "") if book is not None and r.get("year") else None
         out.append(Evaluated(r, market, profit, [], flags, urgency_signals(text), method=r.get("method") or "A", book_row=row))
     return out
+
+
+def pending_clean_negotiable(repo: Repository, s: Settings, book=None, platform: str | None = None,
+                             now: datetime | None = None) -> list[Evaluated]:
+    """🟡 PAZARLIK FIRSATI adayları (27.10.2026): son değerlendirmesi 🟡 olan, henüz gitmemiş ilanlardan kârı ≥ %15 ve doğrudan emsali ≥ 8
+    olanlar bugünkü havuzla `decision.clean_negotiable`'dan (🟢'nin bütün kapıları, eşik %15) yeniden geçirilir. Yapay zekânın daha önce
+    reddettiği ilan ('verify:<id>' = bad) alınmaz: her turda yeniden okutulup yeniden düşürülmesin."""
+    rows = [ev for ev in pending_alerts(repo, tier=Tier.NEGOTIABLE, platform=platform)
+            if send_allowed(Tier.STRONG, ev.method, ev.market.n) and ev.profit.profit_pct >= s.clean_negotiable_threshold
+            and repo.get_state(f"verify:{ev.listing['id']}") != "bad"]
+    if not rows:
+        return []
+    pool = repo.market_pool(keys=pool_keys([ev.listing for ev in rows]))
+    book = _resolve(book)
+    now = now or datetime.now(timezone.utc)
+    return [ev for ev in rows if clean_negotiable(ev.listing, pool, s, book, now) is not None]
 
 
 def apply_send_floor(evaluated: list[Evaluated], label: str = "") -> list[Evaluated]:
