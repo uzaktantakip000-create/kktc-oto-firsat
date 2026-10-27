@@ -5,12 +5,14 @@ import re
 import httpx
 
 URL = "https://openrouter.ai/api/v1/chat/completions"
-# Tek model (sahibin kararı 21.10.2026: "openrouter dan kullanılan model minimax/minimax-m3.1-flash:free olsun"). Okuyucu, 🟢 doğrulaması,
-# fırsat notu ve görsel okuma hepsi bunu kullanır; ortam değişkeni (OPENROUTER_MODEL / OPENROUTER_READ_MODEL) artık modeli DEĞİŞTİRMEZ
-# (sunucu ile GitHub yedeğinde farklı model kalmasın). Ücretsiz sürüm: 19.10'dan beri kredi bitti (402) iken de çalıştığı sunucuda denendi.
-# Bu model cevaptan önce "düşünür" ve düşünme kapatılamaz ("Reasoning is mandatory"): düşünme düşük tutulur (REASONING), yoksa
-# max_tokens'in tamamı düşünmeye gider, cevap boş kalır (21.10 denemesi: 1500 token, finish=length, içerik 0; effort=low ile 12 sn, 725 token).
-MODEL = "minimax/minimax-m3.1-flash:free"
+# Model (sahibin kararı 27.10.2026: "başka mantıklı ücretsiz model seç openrouter da var"; 21.10'daki minimax/minimax-m3.1-flash:free
+# OpenRouter'dan kaldırıldı, her çağrı http 404). Okuyucu, 🟢 doğrulaması ve fırsat notu MODEL'i kullanır; görsel okuma (yalnız metin
+# modeli görsel okuyamaz) IMAGE_MODEL'i. Ortam değişkeni (OPENROUTER_MODEL / OPENROUTER_READ_MODEL) modeli DEĞİŞTİRMEZ (sunucu ile GitHub
+# yedeğinde farklı model kalmasın). Seçim ölçümü (27.10, 12 gerçek FB ilanı, kural okuyucunun alanlarıyla karşılaştırma): nemotron-3-ultra
+# yıl/km/marka 12/12, fiyat 11/12, hata 0, ~18 sn/çağrı; nemotron-3.5-super-vl 10/12 (2 "yanıt kesildi"); gemma-4 (31b, 26b) hep 429;
+# inkling 403; nemotron-3.5-lightning hep "yanıt kesildi". Düşünme düşük tutulur (REASONING): max_tokens düşünmeye gitmesin.
+MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+IMAGE_MODEL = "nvidia/nemotron-3.5-super-vl:free"  # görsel girişli ücretsiz kardeş model (ekran görüntüsü/foto kart okuma)
 REASONING = {"effort": "low"}
 
 CHECK_PROMPT = """Sen KKTC (Kuzey Kıbrıs) ikinci el araç piyasasını bilen bir uzmansın. Aşağıdaki ilan, benzer ilanlara göre

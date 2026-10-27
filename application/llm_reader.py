@@ -29,13 +29,15 @@ OK_CHECK_EST = "✅ Yapay zekâ ilanı bağımsız okudu: fiyat uyuşuyor, ucuzl
 # çekiliyordu ve sosyal/serbest metin 🟢'lerinin bağımsız ikinci okuması yapılmıyordu. Hesap hatası geçici değildir: sahibe 24 saatte bir
 # uyarı gider (para işini yalnız sahip yapar). Ağ hatası, zaman aşımı, 429 ve 5xx geçicidir: uyarı yok (saatlerce süren 429 serisi hariç:
 # rate_limit_alarm).
-ACCOUNT_ERRORS = {"http 402": "kredisi bitti", "http 401": "anahtarı geçersiz", "http 403": "anahtarı reddediliyor"}
+ACCOUNT_ERRORS = {"http 402": "kredisi bitti", "http 401": "anahtarı geçersiz", "http 403": "anahtarı reddediliyor",
+                  "http 404": "modeli bulunamıyor, kaldırılmış olabilir"}  # 404: minimax ücretsizi kaldırılınca uyarı gelmemişti (27.10.2026)
 ACCOUNT_ALERT = ("⚠️ Yapay zekâ servisi (OpenRouter) {why} ({err}): okuma yapılamıyor. Etkisi: Facebook ve serbest metin 🟢'leri yapay zekâ "
                  "kontrolü olmadan \"kontrol edilmedi\" notuyla gider, fırsat notu eklenmez, Mezunum'da kuralla okunamayan ilanlar bekler. "
                  "{fix}")
 ACCOUNT_FIX = {"http 402": "Çözüm: openrouter.ai → Credits sayfasından kredi yükle (bunu yalnız sen yapabilirsin).",
                "http 401": "Çözüm: OpenRouter'da yeni anahtar oluşturulup sunucuya yazılmalı.",
-               "http 403": "Çözüm: OpenRouter hesabının ve anahtarın durumuna bakılmalı."}
+               "http 403": "Çözüm: OpenRouter hesabının ve anahtarın durumuna bakılmalı.",
+               "http 404": "Çözüm: OpenRouter'da çalışan bir ücretsiz model seçilip koda yazılmalı (infrastructure/llm/openrouter.MODEL)."}
 
 
 # Geçici hata (22.10.2026): ağ hatası ve zaman aşımı (httpx istisna adı: "ReadTimeout", "ConnectError"…), "http 429" (istek sınırı), "http 408"
@@ -156,7 +158,7 @@ class LlmReader:
         if spent >= DAILY_BUDGET_USD:
             self.last_error = "günlük yapay zekâ bütçesi doldu"
             return None
-        text, err, cost = self._image_call(self.api_key, self.model, image, mime)
+        text, err, cost = self._image_call(self.api_key, openrouter.IMAGE_MODEL, image, mime)  # metin modeli görsel okuyamaz
         self.repo.set_state(self._spend_key(), f"{spent + cost:.5f}")
         self.last_error = err or (None if text else "görselde okunur yazı yok")
         call_alarms(self.repo, err, self._now)

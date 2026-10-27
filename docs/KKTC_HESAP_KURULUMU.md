@@ -15,7 +15,7 @@ GitHub'da bu isimlerle **Secret** olarak durur (repo → Settings → Secrets an
 | `TELEGRAM_BOT_TOKEN` | Telegram botu | Evet |
 | `TELEGRAM_CHAT_ID` | Senin Telegram numaran (bildirimler buraya) | Evet |
 | `OPENROUTER_API_KEY` | Yapay zekâ (ilan okuma, fırsat notu) | Önerilir. Yoksa yapay zekâ kısmı çalışmaz |
-| `OPENROUTER_MODEL` | (eski) model adı | 21.10.2026'dan beri KULLANILMIYOR: model kodda sabit (`minimax/minimax-m3.1-flash:free`) |
+| `OPENROUTER_MODEL` | (eski) model adı | 21.10.2026'dan beri KULLANILMIYOR: model kodda sabit (`nvidia/nemotron-3-ultra-550b-a55b:free`, 27.10.2026) |
 | `APIFY_TOKEN` | Instagram/Facebook okuma | **Şimdilik gerekmez.** Yalnız sosyal medya okuma yeniden açılırsa |
 
 ### KibrisArabaAl izni (21.10.2026) — yalnız VPS ortam dosyasına (`/etc/kktc-bot/bot.env`), GitHub'a GİRİLMEZ
@@ -68,7 +68,7 @@ Başka kişi de bildirim almak isterse bota `/start` yazar; sana "Onayla / Redde
 Not: Claude sohbet aboneliğinden AYRIDIR; kullandıkça ödenir. Sistem Anthropic'e doğrudan bağlanmaz; her şey OpenRouter üzerinden gider.
 1. openrouter.ai → hesap aç / giriş → küçük bir kredi yükle (başlangıç için birkaç dolar yeter).
 2. **API Keys → Create Key** → anahtarı nota kaydet (bir daha gösterilmez) → `OPENROUTER_API_KEY`. Anahtara harcama limiti koyabiliyorsan koy.
-3. Model kodda sabit (sahip kararı 21.10.2026): `minimax/minimax-m3.1-flash:free` (ücretsiz). Okuyucu, 🟢 doğrulaması ve fırsat notu bunu kullanır; ayrıca bir şey girmen gerekmez. `OPENROUTER_MODEL` artık kullanılmıyor.
+3. Model kodda sabit (sahip kararı 27.10.2026): `nvidia/nemotron-3-ultra-550b-a55b:free` (ücretsiz; görsel okuma `nvidia/nemotron-3.5-super-vl:free`). 21.10'daki minimax ücretsizi OpenRouter'dan kaldırıldı. Okuyucu, 🟢 doğrulaması ve fırsat notu bunu kullanır; ayrıca bir şey girmen gerekmez. `OPENROUTER_MODEL` artık kullanılmıyor.
 4. Ücretsiz modelin günlük istek sınırı OpenRouter hesabına bağlıdır (hesaba hiç ≥10 $ kredi yüklenmediyse düşüktür); sınıra takılırsa okuma o gün beklenir, bildirim yine gider.
 
 Güvenlik: sistem günlük yapay zekâ harcamasına kendisi $0,40 tavan koyar (`application/llm_reader.py`). Satıcı telefonları ve e-postalar yapay zekâya gönderilmeden önce gizlenir.

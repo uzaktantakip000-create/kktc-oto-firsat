@@ -22,7 +22,8 @@ def alarms(monkeypatch):
     return sent
 
 
-@pytest.mark.parametrize("err,why", [("http 402", "kredisi bitti"), ("http 401", "anahtarı geçersiz"), ("http 403", "anahtarı reddediliyor")])
+@pytest.mark.parametrize("err,why", [("http 402", "kredisi bitti"), ("http 401", "anahtarı geçersiz"), ("http 403", "anahtarı reddediliyor"),
+                                    ("http 404", "modeli bulunamıyor, kaldırılmış olabilir")])  # 404: model kaldırıldı (27.10.2026)
 def test_an_account_error_while_reading_alerts_the_owner_with_its_own_key(alarms, err, why):
     r = reader(FakeRepo(), data=None, err=err, cost=0.0)
     assert r.read("2015 Toyota Vitz 6.500 STG") is None and r.last_error == err

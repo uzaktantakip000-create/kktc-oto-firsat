@@ -302,8 +302,9 @@ def test_deal_note_summary_carries_the_pound_price_and_the_original_currency():
 
 
 def test_one_model_for_everything_and_the_environment_cannot_change_it(monkeypatch):
-    """Sahip 21.10.2026: model minimax/minimax-m3.1-flash:free; sunucu ve GitHub ortam değişkenleri modeli değiştirmez."""
-    assert openrouter.MODEL == openrouter.READ_MODEL == "minimax/minimax-m3.1-flash:free"
+    """Sahip 27.10.2026: model nvidia/nemotron-3-ultra-550b-a55b:free (21.10 minimax ücretsizi kaldırıldı); sunucu ve GitHub ortam değişkenleri modeli değiştirmez."""
+    assert openrouter.MODEL == openrouter.READ_MODEL == "nvidia/nemotron-3-ultra-550b-a55b:free"
+    assert openrouter.IMAGE_MODEL == "nvidia/nemotron-3.5-super-vl:free"
     monkeypatch.setenv("OPENROUTER_API_KEY", "k")
     monkeypatch.setenv("OPENROUTER_READ_MODEL", "baska/model")
     monkeypatch.setenv("OPENROUTER_MODEL", "baska/model")
