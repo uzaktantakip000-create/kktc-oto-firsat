@@ -162,17 +162,90 @@ def box(day="2026-10-11", lines=900, priced=0):
     return Repo({hw.BOX_KEY + day: json.dumps({"lines": lines, "priced": priced})})
 
 
-def test_no_sale_box_price_yesterday_is_reported_with_the_line_count(tmp_path, sent):
-    hw.watch(box(), {"platformlar": {"facebook": fb(posts=0)}}, NOW, folder=tmp_path)
+def test_almost_no_sale_box_price_yesterday_is_reported_with_the_counts(tmp_path, sent):
+    hw.watch(box(priced=1), {"platformlar": {"facebook": fb(posts=0)}}, NOW, folder=tmp_path)
     (k, text), = sent
-    assert k == "fb_satis_kutusu" and text == ("⚠️ Facebook satış kutusu fiyatı dün hiç gelmedi (900 gönderi okundu). "
-                                               "Fiyatlı Facebook ilanı azalır; okuyucu ekibine iletildi.")
+    assert k == "fb_satis_kutusu" and text == ("⚠️ Facebook satış kutusu fiyatı dün neredeyse hiç gelmedi (1/900 gönderide fiyat; olağan ~%25). "
+                                               "Fiyatlı Facebook ilanı azalır; sosyal okuyucu tarafında kontrol edilmeli.")
+    assert "iletildi" not in text  # hiçbir şey okuyucu ekibine iletmiyor
 
 
-def test_sale_box_alert_stays_quiet_when_prices_came_or_few_lines_or_only_today():
-    assert hw.box_alert(box(priced=1), NOW) is None
-    assert hw.box_alert(box(lines=499), NOW) is None  # az satır: tesadüf olabilir
+def test_sale_box_alert_uses_a_ratio_not_exact_zero():
+    assert hw.box_alert(box(priced=0), NOW)[0] == "fb_satis_kutusu"
+    k, text = hw.box_alert(box(lines=1454, priced=6), NOW)  # gerçek kesinti: %0,4
+    assert k == "fb_satis_kutusu" and "6/1454" in text
+    assert hw.box_alert(box(lines=1000, priced=49), NOW) is not None  # %4,9
+    assert hw.box_alert(box(lines=1000, priced=50), NOW) is None  # %5 sınırı: uyarı yok
+    assert hw.box_alert(box(priced=300), NOW) is None  # sağlıklı: %33
+
+
+def test_sale_box_alert_stays_quiet_when_few_lines_or_only_today_or_corrupt():
+    assert hw.box_alert(box(lines=499, priced=0), NOW) is None  # az satır: tesadüf olabilir
     assert hw.box_alert(box(day="2026-10-12"), NOW) is None  # bugün henüz bitmedi
     assert hw.box_alert(Repo(), NOW) is None
     assert hw.box_alert(Repo({hw.BOX_KEY + "2026-10-11": "{bozuk"}), NOW) is None
+    assert hw.box_alert(Repo({hw.BOX_KEY + "2026-10-11": json.dumps({"lines": 900})}), NOW) is None  # priced yok
+    for bad in (None, "0", 0.0, -1, True, [], {}):
+        assert hw.box_alert(Repo({hw.BOX_KEY + "2026-10-11": json.dumps({"lines": 900, "priced": bad})}), NOW) is None
     assert hw.box_alert(box(lines=500), NOW)[0] == "fb_satis_kutusu"
+
+
+# --- kaynak okunmadı (27.10.2026: 40 kaynaktan 12'si 12-23 saat okunmuyordu) ---
+def srcs(**ages):
+    """ages: anahtar sonu -> okunmadan geçen saat (None: son_okuma_utc yok). Hepsi son 7 günde ilan görmüş sayılır."""
+    return {f"fb:{k}": {"arac_7g": 20, "yeni_ilan_7g": 5, "hata": None, "uyelik_gerekli": False, "yeni_gonderi_24s": 3,
+                       "son_okuma_utc": None if h is None else (NOW - h * H).isoformat()} for k, h in ages.items()}
+
+
+def running(rows, round_ago=1.0):
+    f = fb()
+    f["son_tur_utc"] = (NOW - round_ago * H).isoformat()
+    f["kaynaklar"] = rows
+    return f
+
+
+def test_sources_unread_for_more_than_14_hours_are_reported_once_as_a_group_with_aliases():
+    f = running(srcs(a=2, b=15, c=13.9, d=20))
+    (k, text), = [a for a in hw.handoff_alerts(f, None, NOW) if a[0] == "fb_grup_okunmadi"]
+    assert "2 kaynak" in text and "fb-02, fb-04" in text  # sıralı anahtarlara göre: a=01, b=02, c=03, d=04
+    assert "fb:" not in text and "okunmadı" in text
+
+
+def test_unread_sources_alert_needs_a_running_reader_and_active_sources():
+    old = srcs(a=20)
+    assert keys(hw.handoff_alerts(running(old, round_ago=7), None, NOW)) == []  # okuyucu kendisi durmuş: başka alarm var
+    assert keys(hw.handoff_alerts(running(old, round_ago=5.9), None, NOW)) == ["fb_grup_okunmadi"]
+    no_round = running(old)
+    del no_round["son_tur_utc"]
+    assert hw.handoff_alerts(no_round, None, NOW) == []
+    assert hw.handoff_alerts(running(old, round_ago=-1), None, NOW) == []  # ileri tarihli tur: güvenilmez
+    idle = srcs(a=20)
+    idle["fb:a"].update(arac_7g=0, yeni_ilan_7g=0)  # son 7 günde hiçbir şey görülmemiş: ölü kaynak, ayrı konu
+    assert hw.handoff_alerts(running(idle), None, NOW) == []
+    member = srcs(a=20)
+    member["fb:a"]["uyelik_gerekli"] = True
+    assert hw.handoff_alerts(running(member), None, NOW) == []
+    car_only = srcs(a=20)
+    car_only["fb:a"]["yeni_ilan_7g"] = 0  # arac_7g > 0 yeter
+    assert keys(hw.handoff_alerts(running(car_only), None, NOW)) == ["fb_grup_okunmadi"]
+
+
+def test_unread_sources_alert_ignores_missing_or_corrupt_fields():
+    rows = srcs(a=None, b=20)
+    rows["fb:c"] = {"son_okuma_utc": "dün", "arac_7g": 5}
+    rows["fb:d"] = "bozuk"
+    rows["fb:e"] = {"son_okuma_utc": "2026-10-11T10:00:00", "arac_7g": 5}  # saat dilimsiz
+    rows["fb:f"] = {"son_okuma_utc": (NOW - 30 * H).isoformat(), "arac_7g": True, "yeni_ilan_7g": "5"}  # sayı değil: etkin sayılmaz
+    (k, text), = hw.handoff_alerts(running(rows), None, NOW)
+    assert k == "fb_grup_okunmadi" and "1 kaynak" in text and "fb-02" in text
+    assert hw.handoff_alerts(running({}), None, NOW) == []
+    bad = running(rows)
+    bad["kaynaklar"] = ["x"]
+    assert hw.handoff_alerts(bad, None, NOW) == []
+
+
+def test_unread_sources_message_lists_at_most_ten_aliases(sent, tmp_path):
+    f = running(srcs(**{f"g{i:02d}": 20 for i in range(12)}))
+    hw.watch(Repo(), {"platformlar": {"facebook": f}}, NOW, folder=tmp_path)
+    (k, text), = sent
+    assert k == "fb_grup_okunmadi" and "12 kaynak" in text and "fb-10" in text and "fb-11" not in text and "ve 2 tane daha" in text

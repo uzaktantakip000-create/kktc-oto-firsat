@@ -139,6 +139,35 @@ class Repository:
             return False
         return True
 
+    def km_backfill_candidates(self, source_id, limit: int = 3) -> list[dict]:
+        """KKTCarabam tamamlaması: ilan sayfası okunamadığı için km ve ilan tarihi hiç yazılmamış, son 3 günde görülmüş aktif ilanlar (en eski önce).
+        Daha önce denenmiş ilan (listing_history'de field='km_deneme') gelmez: okunamayan/çelişen sayfa tekrar tekrar açılmasın, sıra tıkanmasın.
+        Alanlar, sayfanın kayıtla çelişip çelişmediğini denetlemek içindir."""
+        return self.conn.execute(
+            """SELECT l.id, l.source_item_id, l.url, l.brand, l.model, l.year, l.fuel, l.transmission, l.location, l.seller_handle
+               FROM listings l
+               WHERE l.source_id=%s AND l.is_active AND l.duplicate_of IS NULL AND l.km IS NULL AND l.posted_at IS NULL
+                 AND l.first_seen_at > NOW() - interval '3 days'
+                 AND NOT EXISTS (SELECT 1 FROM listing_history h WHERE h.listing_id = l.id AND h.field = 'km_deneme')
+               ORDER BY l.first_seen_at LIMIT %s""",
+            (source_id, limit),
+        ).fetchall()
+
+    def note_km_attempt(self, listing_id) -> None:
+        """Tamamlama denemesi (sayfa açılmadan ÖNCE yazılır; başarı ya da hata fark etmez, ilan bir daha seçilmez)."""
+        self.conn.execute("INSERT INTO listing_history (listing_id, field, old_value, new_value) VALUES (%s,'km_deneme',NULL,NULL)", (listing_id,))
+
+    def fill_page_fields(self, listing_id, km, posted_at, seller_handle) -> None:
+        """İlan sayfasından gelen alanlar YALNIZ boşsa yazılır (dolu olana dokunulmaz). km yazılırsa listing_history'ye field='km' satırı düşer:
+        `unevaluated_active` önceki değerlendirmeden sonra gelen bu satırı görüp ilanı yeniden değerlendirir."""
+        row = self.conn.execute("SELECT km FROM listings WHERE id=%s", (listing_id,)).fetchone()
+        self.conn.execute(
+            "UPDATE listings SET km=COALESCE(km,%s), posted_at=COALESCE(posted_at,%s), seller_handle=COALESCE(seller_handle,%s) WHERE id=%s",
+            (km, posted_at, seller_handle, listing_id),
+        )
+        if km is not None and row is not None and row["km"] is None:  # km gerçekten bu çağrıyla yazıldı
+            self.conn.execute("INSERT INTO listing_history (listing_id, field, old_value, new_value) VALUES (%s,'km',NULL,%s)", (listing_id, str(km)))
+
     def mark_checked(self, source_id, cursor: str | None, last_post_at, listings_7d: int | None = None) -> None:
         self.conn.execute(
             """UPDATE sources SET last_checked_at=NOW(),
@@ -303,7 +332,7 @@ class Repository:
                  AND l.karantina_nedeni IS NULL
                  AND ({new_sql}
                       {stale_sql}
-                      OR EXISTS (SELECT 1 FROM listing_history h WHERE h.listing_id=l.id AND h.field='price_gbp'
+                      OR EXISTS (SELECT 1 FROM listing_history h WHERE h.listing_id=l.id AND h.field IN ('price_gbp', 'km')
                                  AND h.changed_at > last_ev.at)
                       {version_sql})""",
             args,

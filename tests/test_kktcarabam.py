@@ -62,10 +62,24 @@ def page(i, **replace):
 
 
 class Repo:
-    def __init__(self, known=(), state=None, fail_read=None, fail_write=None):
+    def __init__(self, known=(), state=None, fail_read=None, fail_write=None, candidates=(), fail_attempt=None):
         self.known, self.upserts, self.alive, self.checked = set(known), [], [], 0
         self.state, self.writes = dict(state or {}), []  # bot_state (anahtar -> metin) ve yapılan yazmalar
         self.fail_read, self.fail_write = fail_read, fail_write  # her okuma/yazmada fırlatılacak hata
+        self.candidates, self.fail_attempt = list(candidates), fail_attempt  # tamamlanacak eski ilanlar; deneme kaydında fırlatılacak hata
+        self.asked, self.attempts, self.filled = [], [], []  # (kaynak, sınır) sorguları, denenen ilanlar, yazılan (id, km, tarih, satıcı)
+
+    def km_backfill_candidates(self, source_id, limit=3):
+        self.asked.append((source_id, limit))
+        return [c for c in self.candidates if c["id"] not in self.attempts][:limit]  # denenen bir daha gelmez (gerçek sorgu gibi)
+
+    def note_km_attempt(self, listing_id):
+        if self.fail_attempt:
+            raise self.fail_attempt
+        self.attempts.append(listing_id)
+
+    def fill_page_fields(self, listing_id, km, posted_at, seller_handle):
+        self.filled.append((listing_id, km, posted_at, seller_handle))
 
     def get_state(self, key, default=None):
         if self.fail_read:
@@ -405,7 +419,14 @@ def test_pause_tells_the_owner_once_and_only_when_the_record_was_written(monkeyp
     """Duraklatma kaydı yazılınca sahibe tek uyarı (anahtar kka_detail_pause, 24 saatte bir); kayıt yazılamazsa ya da duraklama sürerken uyarı
     yok; uyarının kendi hatası turu bozmaz. Ek istek yok: açılan ilan sayfası sayısı aynı (3)."""
     sent = []
-    monkeypatch.setattr(kka, "notify_owner", lambda repo, key, text, repeat_hours: sent.append((key, text, repeat_hours)))
+
+    def gated(repo, key, text, repeat_hours):  # gerçek notify_owner gibi: aynı anahtar 24 saat içinde bir daha gitmez
+        if any(k == key for k, _, _ in sent):
+            return False
+        sent.append((key, text, repeat_hours))
+        return True
+
+    monkeypatch.setattr(kka, "notify_owner", gated)
     cards = blocked_cards(6)
     net, repo = Wire(monkeypatch, cards, {}), Repo()
     kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)
@@ -554,7 +575,8 @@ def test_pause_and_photo_address_round_trip_through_the_real_tables(db, monkeypa
     # 24 saat sonra: yeniden denenir
     net3 = Wire(monkeypatch, [swift_card(270011)], {"270011": page(270011)})
     stats = kka.collect_kktcarabam(db, source, now=PAUSE_NOW + timedelta(hours=24, minutes=1))
-    assert net3.opened == ["270011"] and stats.detail_read == 1 and not stats.detail_paused
+    # yeni kartın sayfası hatasız okundu; ardından sayfasız kalmış eski kart 270000 tamamlanmaya çalışılır (sahte sitede sayfası yok: tek deneme, hata)
+    assert net3.opened == ["270011", "270000"] and stats.detail_read == 1 and stats.detail_failed == 1 and not stats.detail_paused
 
 
 def test_failed_list_page_still_raises_as_before_and_touches_no_pause_key(monkeypatch):
@@ -563,3 +585,229 @@ def test_failed_list_page_still_raises_as_before_and_touches_no_pause_key(monkey
     with pytest.raises(RuntimeError, match="liste sayfası alınamadı"):
         kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)
     assert repo.writes == [] and net.opened == []
+
+
+# --- duraklama sürerken de sahibe haber (27.10.2026: duraklama uyarı kodundan önce başlamıştı, sahip hiç duymadı) ---
+def test_a_run_inside_an_existing_pause_tells_the_owner_with_the_end_time(monkeypatch):
+    sent = []
+    monkeypatch.setattr(kka, "notify_owner", lambda repo, key, text, repeat_hours: sent.append((key, text, repeat_hours)))
+    net = Wire(monkeypatch, [swift_card(270001)], {"270001": page(270001)})
+    until = PAUSE_NOW + timedelta(hours=5)
+    repo = Repo(state={KEY: until.isoformat()})
+    kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)
+    assert net.opened == [] and sent == [("kka_detail_pause", kka.PAUSE_ALERT + " Duraklama 06.10 13:07 UTC'ye kadar sürüyor.", 24)]
+    kka.collect_kktcarabam(Repo(), SOURCE, now=PAUSE_NOW)  # duraklama yok: uyarı yok
+    assert len(sent) == 1
+
+
+def test_pause_alert_goes_exactly_once_within_24_hours_whether_it_starts_or_was_already_running(monkeypatch):
+    """Gerçek notify_owner ve gerçek tekrar sınırı: başlangıç uyarısı ile duraklama-sürüyor uyarısı aynı anahtarı paylaşır."""
+    from application import health
+
+    class AlertRepo(Repo):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self.alerted = set()
+
+        def alert_recent(self, key, hours):
+            return key in self.alerted
+
+        def mark_alerted(self, key):
+            self.alerted.add(key)
+
+    telegram = []
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
+    monkeypatch.setattr(health, "api", lambda token, method, **payload: telegram.append(payload["text"]))
+    monkeypatch.setattr(health, "share_with_subscribers", lambda *a, **k: 0)
+    # 1) duraklama bu çalışmada başlıyor, sonraki turlar sürerken: toplam bir uyarı
+    cards = blocked_cards(4)
+    Wire(monkeypatch, cards, {})
+    repo = AlertRepo()
+    kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)
+    for hours in (1, 2, 23):
+        kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW + timedelta(hours=hours))
+    assert len(telegram) == 1 and telegram[0] == kka.PAUSE_ALERT
+    # 2) duraklama uyarı kodundan önce başlamış (kayıt var, uyarı kaydı yok): ilk sürerken tur haber verir, sonrakiler susar
+    Wire(monkeypatch, [swift_card(270001)], {})
+    telegram.clear()
+    repo2 = AlertRepo(state={KEY: (PAUSE_NOW + timedelta(hours=20)).isoformat()})
+    for hours in (0, 1, 2):
+        kka.collect_kktcarabam(repo2, SOURCE, now=PAUSE_NOW + timedelta(hours=hours))
+    assert len(telegram) == 1 and "07.10 04:07 UTC'ye kadar sürüyor" in telegram[0]
+
+
+# --- eski ilanların km/tarih/satıcı tamamlaması (yeni kartların sayfaları hatasız okunduğunda, en çok 3) ---
+def old_row(i, **kw):
+    """Eskiden sayfasız kaydedilmiş ilan satırı (fixture sayfasıyla tutarlı: 2024 Suzuki Swift, Lefkoşa)."""
+    return dict(id=f"L{i}", source_item_id=str(i), url=swift_card(i).url, brand="Suzuki", model="Swift", year=2024, fuel="benzin",
+                transmission="otomatik", location="lefkosa", seller_handle=None) | kw
+
+
+POSTED = datetime(2026, 10, 1, tzinfo=timezone.utc)
+
+
+def test_old_listings_without_km_are_filled_after_a_clean_run_with_the_same_reader(monkeypatch, capsys):
+    rows = [old_row(260001), old_row(260002)]
+    pages = {"270001": page(270001), "260001": page(260001), "260002": page(260002)}
+    net, repo = Wire(monkeypatch, [swift_card(270001)], pages), Repo(candidates=rows)
+    stats = kka.collect_kktcarabam(repo, SOURCE)
+    assert net.opened == ["270001", "260001", "260002"] and net.sleeps == 3  # önce yeni kart, sonra eskiler; her sayfadan önce bekleme
+    assert set(net.sessions) == {net.session}  # tek tarayıcı oturumu
+    assert repo.asked == [("k1", 3)] and repo.attempts == ["L260001", "L260002"]
+    assert repo.filled == [("L260001", 69, POSTED, SELLER), ("L260002", 69, POSTED, SELLER)]
+    assert (stats.detail_read, stats.detail_failed, stats.backfilled) == (3, 0, 2)
+    out = capsys.readouterr().out
+    assert "2 eski ilanın km/tarih/satıcısı ilan sayfasından tamamlandı" in out and SELLER not in out
+    assert saved(repo)["270001"]["km"] == 69  # yeni kart eskisi gibi
+
+
+def test_at_most_three_old_listings_per_run_and_a_filled_one_is_not_asked_for_again(monkeypatch):
+    rows = [old_row(260000 + i) for i in range(6)]
+    net = Wire(monkeypatch, [swift_card(270001)], {c: page(c) for c in ["270001", *[str(260000 + i) for i in range(6)]]})
+    repo = Repo(candidates=rows)
+    kka.collect_kktcarabam(repo, SOURCE)
+    assert net.opened == ["270001", "260000", "260001", "260002"] and len(repo.filled) == 3
+    net2 = Wire(monkeypatch, [swift_card(270002)], {c: page(c) for c in ["270002", *[str(260000 + i) for i in range(6)]]})
+    kka.collect_kktcarabam(repo, SOURCE)  # sonraki tur: denenenler gelmez, sıradakiler gelir
+    assert net2.opened == ["270002", "260003", "260004", "260005"]
+
+
+def test_no_backfill_while_the_detail_pages_are_paused(monkeypatch):
+    net = Wire(monkeypatch, [swift_card(270001)], {"270001": page(270001), "260001": page(260001)})
+    repo = Repo(state={KEY: (PAUSE_NOW + timedelta(hours=5)).isoformat()}, candidates=[old_row(260001)])
+    kka.collect_kktcarabam(repo, SOURCE, now=PAUSE_NOW)
+    assert net.opened == [] and repo.asked == [] and repo.filled == [] and repo.attempts == []
+
+
+def test_no_backfill_when_any_page_of_this_run_failed_or_nothing_was_read(monkeypatch):
+    rows = [old_row(260001)]
+    pages = {"270001": None, "270002": page(270002), "260001": page(260001)}  # bir hata (seri yok), bir okundu
+    net, repo = Wire(monkeypatch, [swift_card(270001), swift_card(270002)], pages), Repo(candidates=rows)
+    stats = kka.collect_kktcarabam(repo, SOURCE)
+    assert (stats.detail_read, stats.detail_failed) == (1, 1) and net.opened == ["270001", "270002"]
+    assert repo.asked == [] and repo.filled == []
+    net2, repo2 = Wire(monkeypatch, blocked_cards(5), {"260001": page(260001)}), Repo(candidates=rows)  # hepsi engelli
+    kka.collect_kktcarabam(repo2, SOURCE, now=PAUSE_NOW)
+    assert len(net2.opened) == 3 and repo2.asked == [] and repo2.filled == []
+    net3, repo3 = Wire(monkeypatch, [swift_card(270009)], {"260001": page(260001)}), Repo(known={"270009"}, candidates=rows)  # yeni kart yok
+    kka.collect_kktcarabam(repo3, SOURCE)
+    assert net3.opened == [] and repo3.asked == [] and repo3.filled == []
+
+
+def test_a_failed_backfill_page_stops_the_backfill_and_is_never_retried(monkeypatch, capsys):
+    rows = [old_row(260001), old_row(260002)]
+    net, repo = Wire(monkeypatch, [swift_card(270001)], {"270001": page(270001), "260001": None, "260002": page(260002)}), Repo(candidates=rows)
+    stats = kka.collect_kktcarabam(repo, SOURCE)
+    assert net.opened == ["270001", "260001"]  # ilk hatada durdu; ikinci ilanın sayfası açılmadı
+    assert repo.attempts == ["L260001"] and repo.filled == [] and (stats.detail_failed, stats.backfilled) == (1, 0)
+    assert "ilan bu tur tamamlanmadı, tekrar denenmeyecek" in capsys.readouterr().out
+    net2 = Wire(monkeypatch, [swift_card(270002)], {"270002": page(270002), "260001": page(260001), "260002": page(260002)})
+    kka.collect_kktcarabam(repo, SOURCE)  # sonraki temiz tur: hatalı ilan bir daha denenmez
+    assert net2.opened == ["270002", "260002"] and [f[0] for f in repo.filled] == ["L260002"]
+
+
+def test_an_attempt_that_cannot_be_recorded_opens_no_page(monkeypatch, capsys):
+    net = Wire(monkeypatch, [swift_card(270001)], {"270001": page(270001), "260001": page(260001)})
+    repo = Repo(candidates=[old_row(260001)], fail_attempt=RuntimeError("yazılamadı: postgresql://u:SIR@host/db"))
+    stats = kka.collect_kktcarabam(repo, SOURCE)  # fırlatmaz
+    out = capsys.readouterr().out
+    assert net.opened == ["270001"] and repo.filled == [] and stats.new == 1 and repo.checked == 1
+    assert "tamamlama denemesi kaydedilemedi (RuntimeError)" in out and "SIR" not in out
+
+
+def test_a_page_that_conflicts_with_the_saved_listing_is_skipped_and_the_next_one_is_still_done(monkeypatch, capsys):
+    rows = [old_row(260001, year=2019), old_row(260002), old_row(260003, brand="Toyota", model="Yaris")]
+    pages = {"270001": page(270001), **{str(i): page(i) for i in (260001, 260002, 260003)}}
+    net, repo = Wire(monkeypatch, [swift_card(270001)], pages), Repo(candidates=rows)
+    stats = kka.collect_kktcarabam(repo, SOURCE)
+    assert [f[0] for f in repo.filled] == ["L260002"] and stats.detail_conflicts == 2 and stats.backfilled == 1
+    out = capsys.readouterr().out
+    assert "ilan 260001: ilan sayfası kayıtla çelişiyor (year)" in out and "ilan 260003: ilan sayfası kayıtla çelişiyor (brand)" in out
+    assert SELLER not in out
+
+
+def test_backfill_leaves_an_existing_seller_alone_and_counts_nothing_when_the_page_adds_nothing(monkeypatch):
+    bare = page(260002).replace("Kilometre:", "Kilometre-yok:").replace("İlan Tarihi:", "Tarih-yok:").replace(SELLER, "x")
+    rows = [old_row(260001, seller_handle="ESKİ SATICI"), old_row(260002, seller_handle="ESKİ SATICI")]
+    net = Wire(monkeypatch, [swift_card(270001)], {"270001": page(270001), "260001": page(260001), "260002": bare})
+    repo = Repo(candidates=rows)
+    stats = kka.collect_kktcarabam(repo, SOURCE)
+    assert repo.filled == [("L260001", 69, POSTED, None)]  # satıcı dolu: dokunulmaz; sayfada hiçbir şey yoksa yazma da yok
+    assert stats.backfilled == 1
+
+
+def test_backfill_respects_the_time_budget_of_the_shared_reader(monkeypatch):
+    net = Wire(monkeypatch, [swift_card(270001)], {"270001": page(270001), "260001": page(260001)})
+    repo = Repo(candidates=[old_row(260001)])
+    ticks = iter([0, 10, kka.DETAIL_BUDGET_SECONDS + 1, 9999])  # bütçe başlangıcı, yeni kartın sayfası, sonra süre doldu
+    stats = kka.collect_kktcarabam(repo, SOURCE, clock=lambda: next(ticks))
+    assert net.opened == ["270001"] and repo.attempts == [] and stats.backfilled == 0 and stats.detail_skipped == 0
+
+
+def test_a_backfill_query_error_does_not_break_the_run(monkeypatch, capsys):
+    net, repo = Wire(monkeypatch, [swift_card(270001)], {"270001": page(270001)}), Repo()
+
+    def boom(*a, **k):
+        raise RuntimeError("sorgu yok: postgresql://u:SIR@host/db")
+
+    repo.km_backfill_candidates = boom
+    stats = kka.collect_kktcarabam(repo, SOURCE)
+    out = capsys.readouterr().out
+    assert stats.new == 1 and repo.checked == 1 and "eksik ilan sayfası alanları aranamadı (RuntimeError)" in out and "SIR" not in out
+
+
+@pytest.mark.db
+def test_backfill_round_trip_through_the_real_tables_and_requeues_the_evaluation(db, monkeypatch):
+    """Gerçek tablolar: sayfasız kaydedilmiş ilanın km/tarih/satıcısı yazılır, dolu alan ezilmez, deneme kaydı ilanı bir daha seçtirmez, değerlendirilmiş
+    ilan km yazılınca yeniden değerlendirme kuyruğuna girer, fiyat/marka/model/yıl değişmez."""
+    c = db.conn
+    sid = c.execute("INSERT INTO sources (platform, name, url, status) VALUES ('web', 'KKTCarabam', 'https://www.kktcarabam.com/kategori/x', 'aktif') "
+                    "RETURNING id").fetchone()["id"]
+    source = {"id": sid, "name": "KKTCarabam"}
+
+    def add(item, **cols):
+        row = dict(brand="Suzuki", model="Swift", brand_norm="Suzuki", model_norm="swift", year=2024, fuel="benzin", transmission="otomatik",
+                   location="lefkosa", price_amount=7999, price_gbp=7999, currency="GBP", is_active=True,
+                   url=swift_card(int(item)).url) | cols
+        names = ["source_id", "source_item_id", *row]
+        return c.execute(f"INSERT INTO listings ({','.join(names)}) VALUES ({','.join(['%s'] * len(names))}) RETURNING id",
+                         [sid, item, *row.values()]).fetchone()["id"]
+
+    def evaluate(lid, hours_ago=1):
+        c.execute("INSERT INTO evaluations (listing_id, evaluated_at, comparables_n, confidence, tier) "
+                  "VALUES (%s, now() - make_interval(hours => %s), 8, 'orta', 'yok')", (lid, hours_ago))
+
+    a, b = add("260001"), add("260002")
+    old = add("260003", first_seen_at=datetime.now(timezone.utc) - timedelta(days=4))  # 3 günden eski: aday değil
+    has_km = add("260004", km=50_000)  # km var: aday değil
+    gone = add("260005", is_active=False)  # pasif: aday değil
+    dup = add("260006", duplicate_of=a)  # mükerrer: aday değil
+    for lid in (a, b, old, has_km):
+        evaluate(lid)
+    assert [r["source_item_id"] for r in db.km_backfill_candidates(sid, 3)] == ["260001", "260002"]  # eskiden yeniye
+    assert db.km_backfill_candidates(sid, 1)[0]["source_item_id"] == "260001" and db.km_backfill_candidates("00000000-0000-0000-0000-000000000000", 3) == []
+    assert db.unevaluated_active() == []  # hepsi yeni değerlendirilmiş
+    pages = {"270001": page(270001), "260001": page(260001), "260002": page(260002, **{"Kilometre:": "Kilometre-yok:"})}
+    Wire(monkeypatch, [swift_card(270001)], pages)
+    stats = kka.collect_kktcarabam(db, source)
+    assert stats.backfilled == 2
+    row_a = c.execute("SELECT km, posted_at, seller_handle, price_gbp::float8 AS p, brand, model, year FROM listings WHERE id=%s", (a,)).fetchone()
+    assert (row_a["km"], row_a["posted_at"], row_a["seller_handle"]) == (69, POSTED, SELLER)
+    assert (row_a["p"], row_a["brand"], row_a["model"], row_a["year"]) == (7999.0, "Suzuki", "Swift", 2024)  # değişmedi
+    row_b = c.execute("SELECT km, posted_at FROM listings WHERE id=%s", (b,)).fetchone()
+    assert row_b["km"] is None and row_b["posted_at"] == POSTED  # sayfada km yok: km boş kaldı
+    hist = {(r["listing_id"], r["field"]) for r in c.execute("SELECT listing_id, field FROM listing_history").fetchall()}
+    assert hist == {(a, "km_deneme"), (b, "km_deneme"), (a, "km")}  # km yazılan tek ilan için 'km' satırı
+    # km'si yazılan 260001 yeniden değerlendirilir (270001: bu turun yeni kartı); km yazılmayan 260002 kuyruğa girmez
+    assert {r["source_item_id"] for r in db.unevaluated_active()} == {"260001", "270001"}
+    evaluate(a, hours_ago=0)  # yeniden değerlendirildi: kuyruktan çıkar
+    assert {r["source_item_id"] for r in db.unevaluated_active()} == {"270001"}
+    assert db.km_backfill_candidates(sid, 3) == []  # a'nın km'si, b'nin tarihi doldu; ikisi de denendi
+    # dolu alan ezilmez, yeni 'km' satırı düşmez
+    db.fill_page_fields(a, 12345, datetime(2020, 1, 1, tzinfo=timezone.utc), "BAŞKA")
+    assert dict(c.execute("SELECT km, seller_handle FROM listings WHERE id=%s", (a,)).fetchone()) == {"km": 69, "seller_handle": SELLER}
+    assert c.execute("SELECT count(*) AS n FROM listing_history WHERE field='km'").fetchone()["n"] == 1
+    assert {r["source_item_id"] for r in db.unevaluated_active()} == {"270001"}
+    untouched = c.execute("SELECT id, km FROM listings WHERE id = ANY(%s) ORDER BY source_item_id", ([old, has_km, gone, dup],)).fetchall()
+    assert [r["km"] for r in untouched] == [None, 50_000, None, None]  # adayı olmayanlara dokunulmadı

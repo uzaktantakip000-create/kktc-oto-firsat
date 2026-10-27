@@ -177,13 +177,15 @@ def parse_line(line: str) -> tuple[str, SocialPost] | str:
     image = photo if isinstance(photo, str) and _CDN.match(photo) else None
     if isinstance(photo_file, str) and photo_file == f"foto/{pid}.jpg" and _PHOTO_FILE.match(photo_file):
         image = FILE_PREFIX + photo_file  # yerel kopya (yalnız bu gönderinin adıyla)
+    extra = doc.get("ek_metin")
+    extra = strip_sharer(extra) if isinstance(extra, str) else extra  # paylaşan satırı "ek_metin"de de gelir (27.10.2026): ad raw_text'e girmesin
     posted, seen = _parse_time(doc.get("paylasim_utc")), _parse_time(doc.get("goruldu_utc"))
     if posted and seen and posted > seen + FUTURE_SLACK:
         posted = None  # gelecekte paylaşılmış olamaz: saat dilimi/okuma hatası (14.10.2026: okuyucu zamanı Facebook yazısından okumaya başladı)
     post = SocialPost(platform=PLATFORM, source_key=page or group, post_id=pid, url=url,
                       posted_at=posted or seen, text=strip_sharer(text)[:MAX_TEXT], image_url=image, dated=posted is not None,
                       seller_posts_14d=radar if type(radar) is int and 1 <= radar <= MAX_RADAR else None,
-                      extra_text=_extra_text(doc.get("ek_metin")),
+                      extra_text=_extra_text(extra),
                       freshness=doc.get("tazelik") if doc.get("tazelik") in FRESHNESS else None,
                       first_post=_first_post(doc.get("ilk_gonderi"), pid))
     return key, post
@@ -191,7 +193,7 @@ def parse_line(line: str) -> tuple[str, SocialPost] | str:
 
 # Facebook'un paylaşılmış fotoğraf gönderisi başlığı ("+16 Photos from <Ad Soyad>'s post"): paylaşanın ADI ilan metnine girmesin
 # (sosyal oturum 27.10.2026: okuyucu da artık siliyor; burada ikinci kez, eski/yeni okuyucudan bağımsız)
-_SHARER = re.compile(r"(?:\+\d+\s*)?Photos from [^\n]{1,80}?'s post", re.I)
+_SHARER = re.compile(r"(?:\+\d+\s*)?Photos from [^\n]{1,80}?['’]s post", re.I)  # düz ve kıvrık kesme işareti
 
 
 def strip_sharer(text: str) -> str:

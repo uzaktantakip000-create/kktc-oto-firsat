@@ -9,8 +9,11 @@ burada yalnız şunlar var:
 - grup sessiz: günlük örneklerde ortalaması en az 5 yeni gönderi olan grup bugün 0 gösteriyor (üyelik iptali, gizlenme; tüm-boş freni tek grubu görmez).
   `yeni_gonderi_24s` okuyucunun gördüğü ana (seen_at) göre sayılır, paylaşım saatine göre değil;
 - kesik metin yüksek: iki gün üst üste gönderilerin %70'inden fazlası kesik (FB sayfa düzeni değişmiş olabilir; 10.10'da oran %43);
-- satış kutusu fiyatı gelmiyor: dünkü (KKTC) aktarımda en az 500 gönderi satırı var ama hiçbirinin "ek_metin"inde fiyat yok (27.10.2026: 24.10'dan
-  beri böyleydi, önceden günde ~900 satır fiyatlıydı; sayaç social_import.BOX_KEY; botun kendi sayacıdır, okuyucunun değil).
+- satış kutusu fiyatı gelmiyor: dünkü (KKTC) aktarımda en az 500 gönderi satırı var ama fiyatlı olanı %5'ten az (27.10.2026: 24.10'dan beri
+  böyleydi, önceden günde ~900 satır, %24-35'i fiyatlıydı; kesinti sırasında bile gürültü satırları yüzünden %0,4-1,2 fiyatlı görünüyor, bu yüzden
+  "hiç yok" değil oran sınırı; sayaç social_import.BOX_KEY; botun kendi sayacıdır, okuyucunun değil);
+- grup okunmadı: okuyucu çalışıyor (son turu 6 saatten yeni) ama son 7 günde ilan/araç görülmüş en az bir Facebook kaynağı 14 saattir okunmadı
+  (tek toplu uyarı, kaynak takma adlarıyla (fb-NN); yalnız izleme, okuma sıklığı ya da kararlar değişmez).
 Günlük örnek (`SAMPLE_KEY`) KKTC 21:00'den sonraki ilk turda bir kez yazılır, son `SAMPLE_KEEP` gün tutulur."""
 import json
 from dataclasses import dataclass
@@ -40,6 +43,10 @@ QUIET_MIN_AVG, QUIET_MIN_DAYS = 5, 3  # grup sessiz: önceki en az 3 günlük ö
 CUT_RATIO, CUT_MIN_POSTS = 0.70, 20
 SCAN_DAYS = 3  # devir klasöründe yalnız son 3 günün dosyaları taranır (dosyalar 14 gün tutulur)
 BOX_MIN_LINES = 500  # satış kutusu: dün en az bu kadar satır okunduysa fiyatsız kutu tesadüf değildir
+BOX_MIN_RATIO = 0.05  # sağlıklı oran %24-35; kesintide %0,4-1,2 (27.10.2026): altı "fiyat gelmiyor" demektir
+UNREAD_AFTER = timedelta(hours=14)  # kaynak okunmadı: son_okuma_utc bundan eskiyse (olağan en uzun ~13 saat: gece boşluğu)
+READER_FRESH = timedelta(hours=6)  # okuyucunun kendisi çalışıyor sayılır: son_tur_utc bundan yeniyse (durmuşsa selfwatch.social_watch uyarır)
+UNREAD_LIST_MAX = 10  # mesajda sayılan takma adların en çok sayısı
 
 
 @dataclass(frozen=True)
@@ -86,6 +93,24 @@ def scan_handoff(folder: Path | str, cursor: tuple[str, int], window_end: dateti
     return HandoffScan(in_window if covered else None, pending)
 
 
+def unread_sources(fb: dict, now: datetime) -> list[str]:
+    """Okuyucu çalışırken (son turu READER_FRESH'ten yeni) UNREAD_AFTER'dan uzun süredir okunmamış, son 7 günde ilan/araç görülmüş kaynakların takma
+    adları ("fb-NN": durum dosyasındaki kaynak anahtarlarının sıralı sırası, grup adı yazılmaz). Kaynak başına alan yok/bozuksa o kaynak atlanır; üyelik
+    gerekenler okunamaz (başka neden), atlanır. Okuyucunun turu eskiyse ya da dosya biçimi bekleneni vermiyorsa boş."""
+    last_round, rows = _time(fb.get("son_tur_utc")), fb.get("kaynaklar")
+    if last_round is None or not timedelta(0) <= now - last_round < READER_FRESH or not isinstance(rows, dict):
+        return []
+    keys = sorted(k for k, v in rows.items() if isinstance(k, str) and isinstance(v, dict))
+    out = []
+    for n, key in enumerate(keys, 1):
+        row = rows[key]
+        read = _time(row.get("son_okuma_utc"))
+        active = (_int(row.get("yeni_ilan_7g")) or 0) > 0 or (_int(row.get("arac_7g")) or 0) > 0
+        if read is not None and active and row.get("uyelik_gerekli") is not True and now - read > UNREAD_AFTER:
+            out.append(f"fb-{n:02d}")
+    return out
+
+
 def handoff_alerts(fb: dict, scan: HandoffScan | None, now: datetime) -> list[tuple[str, str]]:
     """Saf yargı: (uyarı anahtarı, metin) listesi. Alan yok/bozuksa o kontrol atlanır (eski okuyucu sürümü yeni alanları yazmaz)."""
     out = []
@@ -105,6 +130,11 @@ def handoff_alerts(fb: dict, scan: HandoffScan | None, now: datetime) -> list[tu
         if abs(gap) > max(COUNT_SLACK, COUNT_SLACK_PCT * posts):
             out.append(("social_facebook_devir_eksik", f"⚠️ Facebook: okuyucu son 24 saatte {posts} gönderi saydı, devir dosyasında {scan.window_lines} satır var. "
                         "Okuyucu ile bot arasında gönderi kayboluyor olabilir."))
+    unread = unread_sources(fb, now)
+    if unread:
+        shown = ", ".join(unread[:UNREAD_LIST_MAX]) + (f" ve {len(unread) - UNREAD_LIST_MAX} tane daha" if len(unread) > UNREAD_LIST_MAX else "")
+        out.append(("fb_grup_okunmadi", f"⚠️ Facebook: {len(unread)} kaynak {UNREAD_AFTER // timedelta(hours=1)} saatten uzun süredir okunmadı ({shown}); "
+                    "okuyucu çalışıyor görünüyor. Bu kaynaklardan gelecek ilanlar gecikir; sosyal okuyucu tarafında kaynak sırasına bakılmalı."))
     if scan is not None and scan.stale_pending:
         out.append(("social_facebook_aktarim_geride", f"⚠️ Facebook: devir dosyasında 1 saatten eski {scan.stale_pending} gönderi henüz bota aktarılmadı. "
                     "Aktarıcı takılmış olabilir (tur kaydında \"sosyal_devir\" satırına bakılmalı)."))
@@ -147,7 +177,8 @@ def history_alerts(samples: list[dict], names: dict[str, str]) -> list[tuple[str
 
 
 def box_alert(repo, now: datetime) -> tuple[str, str] | None:
-    """Dünkü (KKTC) satış kutusu sayacı (social_import.BOX_KEY): ≥BOX_MIN_LINES satır ve fiyatlı kutu 0 ise uyarı. Sayaç yok/bozuksa None."""
+    """Dünkü (KKTC) satış kutusu sayacı (social_import.BOX_KEY): ≥BOX_MIN_LINES satır ve fiyatlı olanların oranı BOX_MIN_RATIO'dan azsa uyarı.
+    Sayaç yok/bozuksa (lines ya da priced geçerli tamsayı değilse) None."""
     day = (to_kktc(now).date() - timedelta(days=1)).isoformat()
     try:
         got = json.loads(repo.get_state(BOX_KEY + day) or "{}")
@@ -155,11 +186,11 @@ def box_alert(repo, now: datetime) -> tuple[str, str] | None:
         return None
     if not isinstance(got, dict):
         return None
-    lines = _int(got.get("lines"))
-    if lines is None or lines < BOX_MIN_LINES or got.get("priced") != 0:
+    lines, priced = _int(got.get("lines")), _int(got.get("priced"))
+    if lines is None or priced is None or lines < BOX_MIN_LINES or priced / lines >= BOX_MIN_RATIO:
         return None
-    return ("fb_satis_kutusu", f"⚠️ Facebook satış kutusu fiyatı dün hiç gelmedi ({lines} gönderi okundu). "
-            "Fiyatlı Facebook ilanı azalır; okuyucu ekibine iletildi.")
+    return ("fb_satis_kutusu", f"⚠️ Facebook satış kutusu fiyatı dün neredeyse hiç gelmedi ({priced}/{lines} gönderide fiyat; olağan ~%25). "
+            "Fiyatlı Facebook ilanı azalır; sosyal okuyucu tarafında kontrol edilmeli.")
 
 
 def _consecutive(a: str, b: str) -> bool:

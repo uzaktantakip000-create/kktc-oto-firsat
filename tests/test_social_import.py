@@ -215,7 +215,22 @@ def test_sharer_name_of_a_shared_photo_post_never_enters_the_listing_text():
     text = "2020 Mercedes GLC220d 69.000 KM'de +16 Photos from Örnek Kişi's post\nabc123"
     assert "Örnek Kişi" not in strip_sharer(text) and "GLC220d 69.000 KM" in strip_sharer(text)
     assert strip_sharer("Photos from Ali Veli's post") == ""
+    assert strip_sharer("+3 Photos from Ali Veli’s post") == ""  # kıvrık kesme işareti
     assert strip_sharer("2015 Honda Fit 7.500 STG") == "2015 Honda Fit 7.500 STG"
+
+
+def test_sharer_name_in_the_extra_text_never_reaches_the_extra_text_or_raw_text():
+    """Paylaşan satırı "ek_metin"de de gelir (27.10.2026): ad ne ek metne ne de değerlendirilen raw_text'e girer; kutunun öbür satırları kalır."""
+    from application.social_ingest import raw_group_post
+    from application.social_port import SocialSource
+    for sharer in ("Photos from Örnek Kişi's post", "Photos from Örnek Kişi’s post"):
+        doc = json.loads(_line("1000000021")) | {"ek_metin": f"+10\n{sharer}\nabc\n£4.900"}
+        key, post = si.parse_line(json.dumps(doc))
+        assert "Örnek" not in post.extra_text and "Kişi" not in post.extra_text and post.extra_text == "abc\n£4.900"
+        source = SocialSource("facebook", "123456789", "https://www.facebook.com/groups/123456789", "fb-01")
+        raw = raw_group_post(post, source)
+        assert "Örnek" not in raw.text and "Kişi" not in raw.text and "abc" in raw.text
+    assert si.parse_line(json.dumps(json.loads(_line("1000000022")) | {"ek_metin": 5}))[1].extra_text is None  # dize değil: eskisi gibi
 
 
 def test_sale_box_price_is_counted_per_kktc_day(tmp_path):

@@ -15,6 +15,7 @@ DETAIL_PAUSE = timedelta(hours=24)  # hiçbir ilan sayfası okunamayan (hepsi en
 _PAUSE_SKEW = timedelta(minutes=5)  # saat farkı payı: kayıt DETAIL_PAUSE + bu süreden fazla ilerideyse bozuk sayılır (sonsuza kadar duraklamasın)
 PAUSE_ALERT_KEY = "kka_detail_pause"  # sahibe duraklatma uyarısı (notify_owner tekrar sınırı: 24 saatte bir)
 PAUSE_ALERT = "⚠️ KKTCarabam ilan sayfaları engelli (403): 24 saat yalnız liste okunuyor; bu sürede km/tarih/satıcı yok."
+BACKFILL_MAX = 3  # tamamlama: başarılı bir turda en çok bu kadar eski ilanın sayfası (km/tarih/satıcı eksik, son 3 gün)
 
 
 @dataclass
@@ -28,6 +29,7 @@ class KkaStats:
     detail_conflicts: int = 0  # sayfa kartla çelişti (kart değeri kaldı)
     detail_paused: bool = False  # ilan sayfaları duraklatılmıştı (önceki tur tümüyle engellendi): bu tur HİÇ denenmedi
     detail_pause_set: bool = False  # bu tur hiçbir ilan sayfası okunamadı ve üst üste hata sınırına varıldı: duraklatma kaydı yazıldı
+    backfilled: int = 0  # sayfa hatasız okunan yeni kartlardan sonra, eskiden sayfasız kaydedilmiş ilanlardan km/tarih/satıcısı tamamlananlar
 
 
 class _DetailReader:
@@ -46,7 +48,12 @@ class _DetailReader:
         """Üst üste hata sınırına varıldı (engel varsayılır)."""
         return self.in_a_row >= MAX_DETAIL_FAILS_IN_A_ROW
 
-    def read(self, card) -> dict | None:
+    @property
+    def has_room(self) -> bool:
+        """Sayfa sınırı, süre bütçesi ve üst üste hata sınırı yeni bir sayfa açmaya izin veriyor mu (tamamlama bunu `read`ten önce sorar)."""
+        return self.opened < MAX_DETAIL_PAGES and self.clock() <= self.deadline and not self.blocked
+
+    def read(self, card, on_fail: str = "kart eskisi gibi kaydedilecek") -> dict | None:
         """Kartın sayfa alanları; okunamadıysa ya da sınırlar yüzünden açılmadıysa None."""
         if self.opened >= MAX_DETAIL_PAGES or self.clock() > self.deadline or self.blocked:
             self.stats.detail_skipped += 1
@@ -62,7 +69,7 @@ class _DetailReader:
         if detail is None:
             self.stats.detail_failed += 1
             self.in_a_row += 1
-            print(f"KKTCarabam ilan {card.item_id}: ilan sayfası okunamadı ({reason}); kart eskisi gibi kaydedilecek")
+            print(f"KKTCarabam ilan {card.item_id}: ilan sayfası okunamadı ({reason}); {on_fail}")
             return None
         self.in_a_row = 0
         self.stats.detail_read += 1
@@ -105,6 +112,57 @@ def _start_pause(repo: Repository, now: datetime, stats: KkaStats) -> None:
         print(f"KKTCarabam: duraklatma uyarısı gönderilemedi ({type(e).__name__})")
 
 
+def _remind_pause(repo: Repository, until: datetime) -> None:
+    """Duraklama sürerken (bu turda ilan sayfası denenmedi) sahibe uyarı: duraklama, uyarı kodu yayınlanmadan önce başlamış olabilir (27.10.2026:
+    sahip hiç haber almamıştı). `_start_pause` ile AYNI anahtar ve 24 saatlik tekrar sınırı: başlangıçta uyarı gittiyse burada susar, çift uyarı yok."""
+    try:
+        notify_owner(repo, PAUSE_ALERT_KEY, f"{PAUSE_ALERT} Duraklama {until:%d.%m %H:%M} UTC'ye kadar sürüyor.", repeat_hours=24)
+    except Exception as e:
+        print(f"KKTCarabam: duraklatma uyarısı gönderilemedi ({type(e).__name__})")
+
+
+def _backfill(repo: Repository, source: dict, reader: _DetailReader, stats: KkaStats) -> None:
+    """Eskiden ilan sayfası okunamadığı için km/tarih/satıcısız kaydedilmiş ilanları (bilinen kartın sayfası normalde açılmaz) tamamlar. Yalnız bu turun
+    yeni kartlarının sayfaları HATASIZ okunduğunda çağrılır (engel yok, duraklama yok); en çok BACKFILL_MAX ilan, aynı okuyucu (aynı bekleme, süre ve
+    sayfa sınırı, aynı sayaçlar). Her ilan ömründe bir kez denenir (deneme önceden kaydedilir): okunamayan sayfa tekrar denenmez ve ilk hatada kalan
+    ilanlar bu tur açılmaz. Yalnız km, ilan tarihi ve satıcı; boş olanlar doldurulur, dolu olana dokunulmaz. Sayfa ilandaki marka/model/yıl/yakıt/vites/
+    ilçe ile çelişirse ilan atlanır. Fiyat, marka, model ve yıl asla değişmez. Hata turu bozmaz."""
+    try:
+        rows = repo.km_backfill_candidates(source["id"], BACKFILL_MAX)
+    except Exception as e:
+        print(f"KKTCarabam: eksik ilan sayfası alanları aranamadı ({type(e).__name__})")
+        return
+    for row in rows:
+        if not row.get("url") or not reader.has_room:
+            break
+        try:
+            repo.note_km_attempt(row["id"])
+        except Exception as e:
+            print(f"KKTCarabam: tamamlama denemesi kaydedilemedi ({type(e).__name__}); bu tur tamamlama yok")
+            return
+        detail = reader.read(kktcarabam.Card(row["source_item_id"], row["url"], "", ""), on_fail="ilan bu tur tamamlanmadı, tekrar denenmeyecek")
+        if detail is None:
+            break
+        card_data = {k: row.get(k) for k in ("brand", "model", "year", "fuel", "transmission", "location", "seller_handle")} | {"km": None, "posted_at": None}
+        merged, conflicts = kktcarabam.merge_detail(card_data, detail)
+        if conflicts:
+            stats.detail_conflicts += 1
+            print(f"KKTCarabam ilan {row['source_item_id']}: ilan sayfası kayıtla çelişiyor ({', '.join(conflicts)}); ilan olduğu gibi kaldı")
+            continue
+        seller = None if row.get("seller_handle") else merged.get("seller_handle")  # dolu satıcıya dokunulmaz
+        fields = (merged.get("km"), merged.get("posted_at"), seller)
+        if not any(v is not None for v in fields):
+            continue
+        try:
+            repo.fill_page_fields(row["id"], *fields)
+        except Exception as e:
+            print(f"KKTCarabam ilan {row['source_item_id']}: tamamlama yazılamadı ({type(e).__name__})")
+            continue
+        stats.backfilled += 1
+    if stats.backfilled:
+        print(f"KKTCarabam: {stats.backfilled} eski ilanın km/tarih/satıcısı ilan sayfasından tamamlandı")
+
+
 def _print_detail_summary(stats: KkaStats, paused_until: datetime | None = None) -> None:
     if paused_until is not None:  # hiç denenmedi: tek satır (engel/hata özetleri anlamsız)
         print(f"KKTCarabam: ilan sayfaları {paused_until:%d.%m %H:%M} UTC'ye kadar duraklatıldı (önceki tur hepsi engelli); "
@@ -123,7 +181,10 @@ def collect_kktcarabam(repo: Repository, source: dict, clock=time.monotonic, now
     açılmaz. Her kart kendi sayfasından hemen sonra kaydedilir (tur ortasında kesilse de önceki kartlar kayıtlıdır).
     Hiçbir ilan sayfası okunamayıp üst üste hata sınırına varılan tur, ilan sayfalarını 24 saat duraklatır (`bot_state.kka_detail_paused_until`):
     duraklama sürerken yalnız liste okunur, kartlar eskisi gibi kaydedilir; süre dolunca sonraki tur ilan sayfalarını normal dener.
-    Kaydın okunması/yazılması hata verirse davranış eskisi gibidir (ilan sayfaları denenir). `now` yalnız sınama için."""
+    Kaydın okunması/yazılması hata verirse davranış eskisi gibidir (ilan sayfaları denenir). Duraklama sürerken de sahibe (aynı anahtar ve 24 saatlik
+    sınırla, çift uyarı yok) haber verilir: duraklama uyarı kodundan önce başlamış olabilir.
+    Bu turun yeni kartlarının sayfaları HATASIZ okunduysa (en az bir sayfa, hiç hata yok, duraklama yok) sayfasız kaydedilmiş en çok BACKFILL_MAX eski
+    ilanın km/tarih/satıcısı da aynı okuyucuyla tamamlanır (`_backfill`); engelli ya da hatalı turda tamamlama yok. `now` yalnız sınama için."""
     stats = KkaStats()
     now = now or datetime.now(timezone.utc)
     known = repo.known_item_ids(source["id"])
@@ -139,6 +200,8 @@ def collect_kktcarabam(repo: Repository, source: dict, clock=time.monotonic, now
         repo.mark_alive(source["id"], [c.item_id for c in cards if c.item_id in known])  # listede görüldü: canlı
         paused_until = _paused_until(repo, now)
         stats.detail_paused = paused_until is not None
+        if paused_until is not None:
+            _remind_pause(repo, paused_until)
         reader, handled = (None if paused_until else _DetailReader(session, stats, clock)), set()
         for card in cards:
             if card.item_id in known or card.item_id in handled:  # bilinen kartın sayfası açılmaz; aynı numara iki kez işlenmez
@@ -160,6 +223,8 @@ def collect_kktcarabam(repo: Repository, source: dict, clock=time.monotonic, now
             data["photo_urls"] = [card.photo_url] if card.photo_at else []
             if repo.upsert_listing(source["id"], card.item_id, data):
                 stats.new += 1
+        if reader is not None and stats.detail_read and not stats.detail_failed and not reader.blocked:  # bu turun kendi sayfaları hatasız okundu
+            _backfill(repo, source, reader, stats)
     _print_detail_summary(stats, paused_until)
     if reader is not None and not stats.detail_read and reader.blocked:  # hepsi engelli: sonraki turlar boşuna denemesin
         _start_pause(repo, now, stats)
