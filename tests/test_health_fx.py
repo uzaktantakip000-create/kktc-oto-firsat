@@ -192,7 +192,7 @@ def test_busy_source_silent_six_daytime_hours_is_flagged():
     (key, text), = health.volume_problems(VolumeRepo([vol(90, 7, now)]), now)
     assert key == "volume:s1" and "KibrisArabaAl: 7 saattir hiç yeni ilan gelmedi (normalde günde ~90)" in text
     assert health.volume_problems(VolumeRepo([vol(90, 5, now)]), now) == []  # 5 saat: henüz değil
-    assert health.volume_problems(VolumeRepo([vol(6, 30, now, "KKTCar")]), now) == []  # az ilanlı kaynak: sessizlik olağan
+    assert health.volume_problems(VolumeRepo([vol(6, 20, now, "KKTCar")]), now) == []  # az ilanlı kaynak: 20 saat sessizlik olağan
     assert health.volume_problems(VolumeRepo([{"id": "s2", "name": "x", "per_day": 50, "last_new": None}]), now) == []
     # tarama hata veriyorsa (403 vb.) kaynak alarmı söyler; hacim alarmı "tarama çalışıyor görünüyor" diye ikinci, yanlış mesaj atmaz
     assert health.volume_problems(VolumeRepo([vol(90, 7, now)], {"fail:KibrisArabaAl": "2"}), now) == []
@@ -207,3 +207,57 @@ def test_volume_is_not_checked_at_night_or_early_morning():
     assert health.volume_problems(VolumeRepo([vol(90, 9, morning)]), morning) == []
     afternoon = datetime(2026, 10, 12, 14, 30, tzinfo=KKTC).astimezone(timezone.utc)  # 08:00'den beri hiç yok: 6,5 saat
     assert len(health.volume_problems(VolumeRepo([vol(90, 12, afternoon)]), afternoon)) == 1
+
+
+def test_low_volume_source_silent_over_30_hours_is_flagged():
+    """27.10.2026: KKTCar'ın site haritası 20–25.10 dondu (~4 gün yeni ilan yok) ve hiçbir alarm çalmadı: hacim alarmı yalnız günde 30+ ilanlı
+    kaynağa bakıyordu, "🔇 7 gündür yeni ilan yok" ise 7 gün bekliyordu. Az ilanlı kaynakta (günde 2–30) düz saatle 30 saati aşan sessizlik uyarır
+    (olağan en uzun boşluk 17 saat; gerçek arızalar 37 ve 124 saat)."""
+    now = datetime(2026, 10, 22, 12, 0, tzinfo=KKTC).astimezone(timezone.utc)
+    (key, text), = health.volume_problems(VolumeRepo([vol(6, 31, now, "KKTCar")]), now)
+    assert key == "volume:s1" and "KKTCar: 31 saattir hiç yeni ilan gelmedi (normalde günde ~6)" in text and "Site haritası donmuş" in text
+    assert health.volume_problems(VolumeRepo([vol(6, 20, now, "KKTCar")]), now) == []  # 20 saat: olağan boşluk
+    assert health.volume_problems(VolumeRepo([vol(6, 29, now, "KKTCar")]), now) == []
+    assert health.volume_problems(VolumeRepo([vol(6, 124, now, "KKTCar")]), now)  # 4 günlük donma da söylenir
+    night = datetime(2026, 10, 22, 3, 0, tzinfo=KKTC).astimezone(timezone.utc)  # gece mesaj yok; sabah 10:00'da söylenir
+    assert health.volume_problems(VolumeRepo([vol(6, 40, night, "KKTCar")]), night) == []
+
+
+def test_low_volume_rule_skips_dormant_and_failing_sources():
+    now = datetime(2026, 10, 22, 12, 0, tzinfo=KKTC).astimezone(timezone.utc)
+    assert health.volume_problems(VolumeRepo([vol(1.5, 60, now, "KibrisCars")]), now) == []  # durgun kaynak (günde < 2): sessizlik olağan
+    assert health.volume_problems(VolumeRepo([vol(0, 60, now, "x")]), now) == []
+    assert health.volume_problems(VolumeRepo([{"id": "s2", "name": "x", "per_day": None, "last_new": None}]), now) == []
+    # tarama hata veriyor (ör. 403): kaynak alarmı söyler, "tarama çalışıyor" diyen ikinci mesaj gitmez
+    assert health.volume_problems(VolumeRepo([vol(6, 60, now, "KKTCar")], {"fail:KKTCar": "3"}), now) == []
+
+
+def test_low_volume_alert_repeats_at_most_daily(monkeypatch):
+    """check_sources hacim uyarısını 'volume:<id>' anahtarıyla 24 saatte en çok bir kez yollar (her 15 dakikalık turda değil)."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
+    monkeypatch.setattr(health, "share_with_subscribers", lambda *a, **kw: None)
+    sent = []
+    monkeypatch.setattr(health, "api", lambda *a, **kw: sent.append(kw["text"]))
+    now = datetime(2026, 10, 22, 12, 0, tzinfo=KKTC).astimezone(timezone.utc)
+
+    class Repo(VolumeRepo):
+        def __init__(self, rows):
+            super().__init__(rows)
+            self.alerted, self.asked = set(), []
+
+        def stale_sources(self):
+            return []
+
+        def alert_recent(self, key, hours):
+            self.asked.append((key, hours))
+            return key in self.alerted
+
+        def mark_alerted(self, key):
+            self.alerted.add(key)
+
+    repo = Repo([vol(6, 31, now, "KKTCar")])
+    original = health.volume_problems
+    monkeypatch.setattr(health, "volume_problems", lambda r: original(r, now))
+    assert health.check_sources(repo) == 1 and health.check_sources(repo) == 0
+    assert len(sent) == 1 and "KKTCar: 31 saattir" in sent[0] and repo.asked[-1] == ("volume:s1", 24)

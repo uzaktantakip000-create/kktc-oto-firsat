@@ -80,15 +80,20 @@ def _older_than_week(repo: Repository, source: dict) -> bool:
     return repo.conn.execute("SELECT %s < NOW() - interval '7 days' AS old", (source["created_at"],)).fetchone()["old"]
 
 
-VOLUME_MIN_PER_DAY = 30  # hacim alarmı yalnız günde ortalama en az bu kadar yeni ilan getiren kaynakta (KibrisArabaAl ~90, KKTCarabam ~55; KKTCar ~6: hariç)
+VOLUME_MIN_PER_DAY = 30  # gündüz 6 saatlik hacim alarmı yalnız günde ortalama en az bu kadar yeni ilan getiren kaynakta (KibrisArabaAl ~90, KKTCarabam ~55)
 VOLUME_SILENT = timedelta(hours=6)  # bu kaynaklarda gündüz 6 saat hiç yeni ilan yoksa toplayıcı sessizce ilan kaçırıyor olabilir
 VOLUME_DAY_KKTC = (10, 22)  # yalnız bu KKTC saatlerinde bakılır
 VOLUME_DAY_START = 8  # sessizlik en erken KKTC 08:00'den sayılır: gece boşluğu sayılmaz (geçen haftaya karşı: yalnız 09.10 gerçek gecikmesinde çalardı)
+VOLUME_LOW_MIN_PER_DAY = 2  # az ilanlı kaynak (KKTCar ~6) da izlenir; bunun altı durgun kaynak (sessizlik olağan)
+# Az ilanlı kaynakta düz saatle (gece dahil) bu kadar yeni ilan yoksa uyarı; mesaj yine yalnız gündüz gider. KKTCar'ın en uzun olağan boşluğu 17
+# saat, gerçek arızalar 37 ve 124 saat (20–25.10.2026 site haritası dondu, ~4 gün yeni ilan yok, hiçbir alarm çalmadı).
+VOLUME_LOW_SILENT = timedelta(hours=30)
 
 
 def volume_problems(repo: Repository, now: datetime | None = None) -> list[tuple[str, str]]:
     """Kapsam departmanı (10.10.2026): tarama "başarılı" görünür ama yeni ilan gelmez (KKTCar'da site haritası değişince olduğu gibi). Çok ilan
-    getiren kaynakta gündüz VOLUME_SILENT boyunca hiç yeni ilan yoksa sahibe uyarı. Tarama hiç yapılmıyorsa `source_problems` zaten söyler."""
+    getiren kaynakta gündüz VOLUME_SILENT boyunca, az ilan getiren kaynakta (KKTCar) düz saatle VOLUME_LOW_SILENT boyunca hiç yeni ilan yoksa sahibe
+    uyarı (27.10.2026). Tarama hiç yapılmıyorsa `source_problems` zaten söyler. Gölge/sarı, sosyal ve pasif kaynaklar `source_volume`'a hiç girmez."""
     now = now or datetime.now(timezone.utc)
     if not VOLUME_DAY_KKTC[0] <= kktc_hour(now) < VOLUME_DAY_KKTC[1]:
         return []
@@ -101,10 +106,15 @@ def volume_problems(repo: Repository, now: datetime | None = None) -> list[tuple
         last, per_day = s["last_new"], s["per_day"] or 0
         if (repo.get_state(f"fail:{s['name']}", "0") or "0") != "0":  # tarama hata veriyor: kaynak alarmı (source_alarm) söyler; burada
             continue  # "tarama çalışıyor görünüyor" demek yanlış olur (10.10.2026: KibrisArabaAl Cloudflare 403)
-        if per_day >= VOLUME_MIN_PER_DAY and last is not None and now - max(last, day_start) > VOLUME_SILENT:
-            hours = (now - last).total_seconds() / 3600
+        if last is None:
+            continue
+        hours = (now - last).total_seconds() / 3600
+        if per_day >= VOLUME_MIN_PER_DAY and now - max(last, day_start) > VOLUME_SILENT:
             out.append((f"volume:{s['id']}", f"📉 {s['name']}: {hours:.0f} saattir hiç yeni ilan gelmedi (normalde günde ~{per_day:.0f}). "
                         "Tarama çalışıyor görünüyor ama site düzeni değişmiş, ilanlar kaçıyor olabilir."))
+        elif VOLUME_LOW_MIN_PER_DAY <= per_day < VOLUME_MIN_PER_DAY and now - last > VOLUME_LOW_SILENT:
+            out.append((f"volume:{s['id']}", f"📉 {s['name']}: {hours:.0f} saattir hiç yeni ilan gelmedi (normalde günde ~{per_day:.0f}). "
+                        "Site haritası donmuş olabilir; tarama çalışıyor ama yeni ilan görmüyor."))
     return out
 
 
