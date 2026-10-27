@@ -14,7 +14,7 @@ GAP_LABELS = {
     "km_yok": "km yazmıyor",  # ESKİ kayıtlar için etiket: km eksikliği artık 🟢'yi engellemez, uyarı olarak gider (KM_UNKNOWN_WARNING)
     "para_birimi_tahmin": "para birimi tahmin",
     "fiyat_gurultu": "benzerlerin fiyatı çok dağınık: bu ucuzluk olağan fiyat farkı içinde kalabilir",
-    "km_temkinli": "km yazmıyor: benzerlerinin ortasından 45.000 km fazla varsayılınca fırsat kalmıyor",
+    "km_temkinli": "km yazmıyor: benzerlerinin ortasından 45.000 km fazla varsayılınca kâr %20'nin altına iniyor",
     "para_birimi_supheli": "fiyat USD/EUR yazıyor; aynı rakam STG olsaydı fırsat değil (satıcı para birimini yanlış seçmiş olabilir)",
     "tl_fiyat": "fiyat TL: TL ilanlar £ ilanlardan ucuz görünür (eski/tarihsiz ilanda ~%20, yeni ilanda ~%9); bu fark düşülünce fırsat kalmıyor ya da ilan yeni değil; kontrol et",
     "fiyat_asiri_dusuk": "fiyat emsallerin yarısından düşük: yazım hatası ya da tuzak olabilir",

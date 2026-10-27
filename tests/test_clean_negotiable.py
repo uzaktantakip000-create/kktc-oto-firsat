@@ -66,3 +66,17 @@ def test_delivery_sends_at_most_the_daily_limit(monkeypatch):
     assert _deliver(monkeypatch, 0) == [(Tier.NEGOTIABLE, ["aday"], 1)]
     assert _deliver(monkeypatch, 1) == []  # bugün zaten bir tane gitti
     assert _deliver(monkeypatch, 0, enabled=False) == []
+
+
+def test_negotiable_message_explains_itself_without_raw_codes():
+    """Canlı kuru deneme (27.10.2026): %30 kârlı ama km'siz 🟡 mesajı "kâr %20'nin altında" diyordu ve ham `km_temkinli` gösteriyordu."""
+    from dataclasses import replace
+    from application.notify import format_alert
+    from tests.test_notify import ev
+    e = ev(1, tier=Tier.NEGOTIABLE)
+    e = replace(e, warnings=["km_temkinli"], market=replace(e.market, p25_gbp=7200.0))
+    text = format_alert(e)
+    assert text.startswith("🟡 PAZARLIK FIRSATI · %52 kâr potansiyeli\nℹ️ 🟢 kadar kesin değil")
+    assert "🟡 Neden 🟢 değil: km yazmıyor" in text and "km_temkinli" not in text
+    assert "%20'nin altında: pazarlıkla" not in text
+    assert "en ucuz çeyrek £7.200" in text
