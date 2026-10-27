@@ -112,6 +112,35 @@ def test_brand_and_model_names_match_site_keys():
     assert (p.brand, p.model) == ("Land Rover", "Range Rover EVOQUE")
 
 
+@pytest.mark.parametrize("text, brand, model", [  # canlı Facebook gönderilerindeki yazımlar (27.10.2026): eskiden "marka_yok" düşüyordu
+    ("Mazda3 2015 7.500 stg", "Mazda", "3"),
+    ("MAZDA2 2012 otomatik 5.200 stg", "Mazda", "2"),
+    ("MERSEDES C180 2014 12.000 stg", "Mercedes", "C180"),
+    ("MERSEDEZ E220 2012 11.500 stg", "Mercedes", "E220"),
+    ("Mercedez A180 2016 14.000 stg", "Mercedes", "A180"),
+    ("Suziki Swift 2010 3.800 stg", "Suzuki", "Swift"),
+    ("SUZİKİ SWİFT 2010 3.800 stg", "Suzuki", "SWİFT"),
+    ("WOLKSWAGEN GOLF 2013 8.900 stg", "Volkswagen", "GOLF"),
+    ("FORT FOCUS 2011 4.500 stg", "Ford", "FOCUS"),
+    ("Fort Fiesta 2009 2.900 stg", "Ford", "Fiesta"),
+    ("Mazda CX-5 2017 14.500 stg", "Mazda", "CX-5"),  # ayrı yazım değişmez
+])
+def test_misspelled_and_glued_brands(text, brand, model):
+    p = parse_freetext(text)
+    assert (p.brand, p.model) == (brand, model) and p.year > 2000 and p.price_amount > 2000
+
+
+@pytest.mark.parametrize("text", [
+    "Fort kale yolu üzerinde 2015 yapımı ev 75.000 stg",  # "fort" sıradan sözcük
+    "FORT 2011 4.500 stg",  # Focus/Fiesta yok: marka sayılmaz
+    "Mazda323 1998 1.200 stg",  # yapışık rakam tek hane değil
+    "Corolla 2015 7.500 stg",  # modelden marka çıkarılmaz
+])
+def test_brand_aliases_do_not_create_false_brands(text):
+    assert parse_freetext(text) is None
+    assert diagnose(text) == "marka_yok"
+
+
 def test_slash_thousands_in_post():
     p = parse_freetext("Mercedes Benz C180 model 2013\n180/000 km\n12/800 £")
     assert (p.model, p.km, p.price_amount) == ("C180", 180000, 12800)

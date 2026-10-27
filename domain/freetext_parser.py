@@ -16,8 +16,15 @@ _BRANDS = [  # (aranan kelime, marka)
     "mitsubishi", "subaru", "lexus", "jeep", "land rover", "range rover", "mini", "mg", "dacia", "chevrolet", "daihatsu",
     "isuzu", "porsche", "tesla", "alfa romeo", "jaguar", "smart", "saab", "ssangyong", "cupra", "byd", "chery",
 ]
-_BRAND_RE = re.compile(r"(?<![a-zçğıöşü0-9])(" + "|".join(re.escape(b) for b in sorted(_BRANDS, key=len, reverse=True))
-                       + r")(?![a-zçğıöşü0-9])", re.I)
+# Facebook'ta görülen yanlış yazımlar (27.10.2026): yazım -> aranan kelime. Mercedes yazımları normalize._BRANDS'takilerle aynı.
+_BRAND_ALIASES = {"mersedes": "mercedes", "mersedez": "mercedes", "mercedez": "mercedes", "suziki": "suzuki",
+                  "wolkswagen": "volkswagen"}
+# Bitişik "Mazda3"/"MAZDA2": model rakamı markaya yapışık; model o rakam olur (normalize "Mazda 3" ile aynı anahtar).
+# "FORT" yalnız arkasından Focus/Fiesta geliyorsa Ford'dur: tek başına "fort" sıradan bir sözcük.
+_BRAND_RE = re.compile(r"(?<![a-zçğıöşü0-9])((?:"
+                       + "|".join(re.escape(b) for b in sorted([*_BRANDS, *_BRAND_ALIASES], key=len, reverse=True))
+                       + r")(?![a-zçğıöşü0-9])|mazda(?=[2356](?![a-zçğıöşü0-9]))"
+                       r"|fort(?=[^\S\n]+(?:focus|fiesta)(?![a-zçğıöşü0-9])))", re.I)
 # ilan olmayan / araç olmayan gönderiler
 _SKIP = re.compile(r"kiral[ıi]k|aran[ıi]yor|al[ıi]n[ıi]r|al[ıi]yoruz|almak\s+istiyorum", re.I)  # ilan türü: kiralık / alım ilanı
 _SKIP_TITLE = re.compile(r"jant|lastik|tekne|bisiklet|motosiklet|yedek\s+par[çc]a|bah[çc]e", re.I)  # araç olmayan ürün (başlıkta)
@@ -252,6 +259,7 @@ def parse_freetext(text: str, default_steering: str | None = None, max_year: int
 
     out = ParsedCaption()
     brand = fold(brand_m.group(1))  # .title() Türkçe İ'yi bozuyordu: "NİSSAN" -> "Ni̇ssan"
+    brand = "ford" if brand == "fort" else _BRAND_ALIASES.get(brand, brand)
     out.brand = "Land Rover" if brand == "range rover" else brand.upper() if brand in _UPPER_BRANDS else brand.title()
     after = no_phone[brand_m.end():]
     words = [w for w in re.finditer(r"[A-Za-zÇĞİÖŞÜçğıöşü]*\d*[A-Za-zÇĞİÖŞÜçğıöşü0-9\-]*", after[:60]) if w.group()]
