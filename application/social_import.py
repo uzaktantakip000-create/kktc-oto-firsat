@@ -21,12 +21,14 @@ import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from application.collect_facebook import group_default_steering
 from application.social_ingest import ReadBudget, ingest_facebook
 from application.social_port import SocialPost, SocialSource
+from domain.kktc_time import to_kktc
+from domain.price import price_tokens
 from domain.source_links import key_of_url
 
 VERSION = 1
@@ -58,6 +60,9 @@ FILE_PREFIX = "file:"
 PHOTO_READS = 20  # tur başına en çok fotoğraf okuması (okuyucunun tur tavanıyla aynı)
 PHOTO_MAX_BYTES = 400_000
 _PHOTO_FILE = re.compile(r"^foto/[A-Za-z0-9]{5,60}\.jpg$")
+# Satış kutusu fiyatının gelip gelmediği (27.10.2026: 24.10'dan beri "ek_metin"de hiç fiyat yok, önceden günde ~900 satır; bot fark etmedi):
+# aktarım anının KKTC gününe göre okunan gönderi satırı ve "ek_metin"i para birimli tutar taşıyanı sayılır. Yargı handoff_watch.box_alert'te.
+BOX_KEY = "devir_kutu:"  # + "YYYY-MM-DD" (KKTC günü) -> {"lines", "priced"}
 
 
 @dataclass
@@ -223,7 +228,7 @@ def source_map(rows: list[dict]) -> dict[str, dict]:
 
 
 def import_facebook(repo, devir_dir: Path | str, *, limit: int = MAX_LINES, log: Callable[[str], None] = lambda _: None,
-                    make_reader=None) -> ImportReport:
+                    make_reader=None, now: datetime | None = None) -> ImportReport:
     """Bir aktarım turu. repo: Repository (sources, get_state/set_state, upsert_listing, mark_checked, count_recent).
     Fotoğraf kopyası olan satır varsa görüntü okuyucu kurulur (make_reader; yoksa llm_reader.from_env): yalnız fotoğraf okur, turda en çok
     PHOTO_READS; anahtar yoksa ya da günlük bütçe dolduysa ilan fiyatsız kalır.
@@ -238,12 +243,15 @@ def import_facebook(repo, devir_dir: Path | str, *, limit: int = MAX_LINES, log:
         return rep
     sources = source_map(repo.sources(PLATFORM, ALL_STATUSES))
     by_key: dict[str, list[SocialPost]] = {}
+    box_lines = box_priced = 0
     for line in lines:
         got = parse_line(line)
         if isinstance(got, str):
             _count(rep.skipped, got)
             continue
         key, post = got
+        box_lines += 1
+        box_priced += box_has_price(post.extra_text)
         row = sources.get(key)
         if row is None:
             _count(rep.skipped, "bilinmeyen_anahtar")
@@ -275,9 +283,29 @@ def import_facebook(repo, devir_dir: Path | str, *, limit: int = MAX_LINES, log:
         rep.linked += _link_first_posts(repo, row["id"], posts, log)
     rep.sources = len(by_key)
     repo.set_state(STATE_KEY, json.dumps({"dosya": new_cursor[0], "satir": new_cursor[1]}))
+    _note_box(repo, now or datetime.now(timezone.utc), box_lines, box_priced)
     for line in rep.summary():
         log(line)
     return rep
+
+
+def box_has_price(extra: str | None) -> bool:
+    """Satış kutusu satırlarında para birimli bir tutar var mı (€6,500, £4.900, TRY650,000, 650.000 TL; ayrıştırıcının fiyat adayı belirteci)."""
+    return bool(extra) and any(t.currency for t in price_tokens(extra))
+
+
+def _note_box(repo, now: datetime, lines: int, priced: int) -> None:
+    """Günün satış kutusu sayacına ekler (BOX_KEY). Bozuk eski değer sıfırdan sayılır."""
+    if not lines:
+        return
+    key = BOX_KEY + to_kktc(now).date().isoformat()
+    try:
+        old = json.loads(repo.get_state(key) or "{}")
+    except ValueError:
+        old = {}
+    old = old if isinstance(old, dict) else {}
+    was_lines, was_priced = (v if type(v) is int and v >= 0 else 0 for v in (old.get("lines"), old.get("priced")))
+    repo.set_state(key, json.dumps({"lines": was_lines + lines, "priced": was_priced + priced}))
 
 
 def _link_first_posts(repo, source_id, posts: list[SocialPost], log) -> int:

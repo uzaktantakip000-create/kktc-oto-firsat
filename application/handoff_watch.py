@@ -8,7 +8,9 @@ burada yalnız şunlar var:
 - aktarım geride: devir dosyasında 1 saatten eski, henüz aktarılmamış satır var (aktarıcı takıldı ya da her turda çöküyor);
 - grup sessiz: günlük örneklerde ortalaması en az 5 yeni gönderi olan grup bugün 0 gösteriyor (üyelik iptali, gizlenme; tüm-boş freni tek grubu görmez).
   `yeni_gonderi_24s` okuyucunun gördüğü ana (seen_at) göre sayılır, paylaşım saatine göre değil;
-- kesik metin yüksek: iki gün üst üste gönderilerin %70'inden fazlası kesik (FB sayfa düzeni değişmiş olabilir; 10.10'da oran %43).
+- kesik metin yüksek: iki gün üst üste gönderilerin %70'inden fazlası kesik (FB sayfa düzeni değişmiş olabilir; 10.10'da oran %43);
+- satış kutusu fiyatı gelmiyor: dünkü (KKTC) aktarımda en az 500 gönderi satırı var ama hiçbirinin "ek_metin"inde fiyat yok (27.10.2026: 24.10'dan
+  beri böyleydi, önceden günde ~900 satır fiyatlıydı; sayaç social_import.BOX_KEY; botun kendi sayacıdır, okuyucunun değil).
 Günlük örnek (`SAMPLE_KEY`) KKTC 21:00'den sonraki ilk turda bir kez yazılır, son `SAMPLE_KEEP` gün tutulur."""
 import json
 from dataclasses import dataclass
@@ -18,6 +20,7 @@ from pathlib import Path
 from application.health import notify_owner
 from application.social_import import (
     ALL_STATUSES,
+    BOX_KEY,
     HANDOFF_DIR,
     PLATFORM,
     STATE_KEY,
@@ -36,6 +39,7 @@ SAMPLE_KEEP = 8
 QUIET_MIN_AVG, QUIET_MIN_DAYS = 5, 3  # grup sessiz: önceki en az 3 günlük örneğin ortalaması ≥5 yeni gönderi
 CUT_RATIO, CUT_MIN_POSTS = 0.70, 20
 SCAN_DAYS = 3  # devir klasöründe yalnız son 3 günün dosyaları taranır (dosyalar 14 gün tutulur)
+BOX_MIN_LINES = 500  # satış kutusu: dün en az bu kadar satır okunduysa fiyatsız kutu tesadüf değildir
 
 
 @dataclass(frozen=True)
@@ -142,6 +146,22 @@ def history_alerts(samples: list[dict], names: dict[str, str]) -> list[tuple[str
     return out
 
 
+def box_alert(repo, now: datetime) -> tuple[str, str] | None:
+    """Dünkü (KKTC) satış kutusu sayacı (social_import.BOX_KEY): ≥BOX_MIN_LINES satır ve fiyatlı kutu 0 ise uyarı. Sayaç yok/bozuksa None."""
+    day = (to_kktc(now).date() - timedelta(days=1)).isoformat()
+    try:
+        got = json.loads(repo.get_state(BOX_KEY + day) or "{}")
+    except ValueError:
+        return None
+    if not isinstance(got, dict):
+        return None
+    lines = _int(got.get("lines"))
+    if lines is None or lines < BOX_MIN_LINES or got.get("priced") != 0:
+        return None
+    return ("fb_satis_kutusu", f"⚠️ Facebook satış kutusu fiyatı dün hiç gelmedi ({lines} gönderi okundu). "
+            "Fiyatlı Facebook ilanı azalır; okuyucu ekibine iletildi.")
+
+
 def _consecutive(a: str, b: str) -> bool:
     try:
         return datetime.fromisoformat(b).date() - datetime.fromisoformat(a).date() == timedelta(days=1)
@@ -165,6 +185,8 @@ def watch(repo, data: dict | None, now: datetime, folder: Path | str | None = No
     daily = fb.get("gunluk") if isinstance(fb.get("gunluk"), dict) else {}
     scan = scan_handoff(folder or HANDOFF_DIR, _cursor(repo.get_state(STATE_KEY)), _time(daily.get("pencere_bitis_utc")), now)
     alerts = handoff_alerts(fb, scan, now)
+    box = box_alert(repo, now)
+    alerts += [box] if box is not None else []
     sample = daily_sample(fb, now) if kktc_hour(now) >= SAMPLE_HOUR else None
     samples = _samples(repo)
     if sample is not None and (not samples or samples[-1]["gun"] != sample["gun"]):

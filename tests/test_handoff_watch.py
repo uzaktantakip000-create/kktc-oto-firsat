@@ -155,3 +155,24 @@ def test_selfwatch_runs_the_check_only_in_kktc_daytime(monkeypatch):
     selfwatch.handoff_check(Repo(), night)
     selfwatch.handoff_check(Repo(), NOW)
     assert calls == [NOW]
+
+
+# --- satış kutusu fiyatı (botun kendi sayacı, 27.10.2026) ---
+def box(day="2026-10-11", lines=900, priced=0):
+    return Repo({hw.BOX_KEY + day: json.dumps({"lines": lines, "priced": priced})})
+
+
+def test_no_sale_box_price_yesterday_is_reported_with_the_line_count(tmp_path, sent):
+    hw.watch(box(), {"platformlar": {"facebook": fb(posts=0)}}, NOW, folder=tmp_path)
+    (k, text), = sent
+    assert k == "fb_satis_kutusu" and text == ("⚠️ Facebook satış kutusu fiyatı dün hiç gelmedi (900 gönderi okundu). "
+                                               "Fiyatlı Facebook ilanı azalır; okuyucu ekibine iletildi.")
+
+
+def test_sale_box_alert_stays_quiet_when_prices_came_or_few_lines_or_only_today():
+    assert hw.box_alert(box(priced=1), NOW) is None
+    assert hw.box_alert(box(lines=499), NOW) is None  # az satır: tesadüf olabilir
+    assert hw.box_alert(box(day="2026-10-12"), NOW) is None  # bugün henüz bitmedi
+    assert hw.box_alert(Repo(), NOW) is None
+    assert hw.box_alert(Repo({hw.BOX_KEY + "2026-10-11": "{bozuk"}), NOW) is None
+    assert hw.box_alert(box(lines=500), NOW)[0] == "fb_satis_kutusu"

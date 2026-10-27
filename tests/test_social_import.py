@@ -216,3 +216,20 @@ def test_sharer_name_of_a_shared_photo_post_never_enters_the_listing_text():
     assert "Örnek Kişi" not in strip_sharer(text) and "GLC220d 69.000 KM" in strip_sharer(text)
     assert strip_sharer("Photos from Ali Veli's post") == ""
     assert strip_sharer("2015 Honda Fit 7.500 STG") == "2015 Honda Fit 7.500 STG"
+
+
+def test_sale_box_price_is_counted_per_kktc_day(tmp_path):
+    """27.10.2026: satış kutusu fiyatı 24.10'dan beri gelmiyordu, bot fark etmedi. Okunan gönderi satırı ve "ek_metin"i fiyatlı olan, aktarım
+    anının KKTC gününe sayılır (bilinmeyen gruptaki satır da: sayaç okuyucunun çıktısını ölçer); bozuk satır sayılmaz."""
+    _file(tmp_path, NOW, _line("1000000001", ek_metin="2018 Honda Civic\n€6,500\nGirne"), _line("1000000002", ek_metin="Girne, Cyprus"),
+          _line("1000000003"), _line("1000000004", group=OTHER, ek_metin="TRY650,000"), "{bozuk")
+    repo = FakeRepo(_rows())
+    si.import_facebook(repo, tmp_path, now=NOW)
+    assert json.loads(repo.state[si.BOX_KEY + "2026-10-09"]) == {"lines": 4, "priced": 2}
+    _file(tmp_path, NOW, _line("1000000005", ek_metin="£4.900"))
+    si.import_facebook(repo, tmp_path, now=NOW + timedelta(hours=2))
+    assert json.loads(repo.state[si.BOX_KEY + "2026-10-09"]) == {"lines": 5, "priced": 3}
+    _file(tmp_path, NOW, _line("1000000006", ek_metin="£4.900"))
+    si.import_facebook(repo, tmp_path, now=datetime(2026, 10, 9, 22, 30, tzinfo=timezone.utc))  # KKTC 10.10 01:30
+    assert json.loads(repo.state[si.BOX_KEY + "2026-10-10"]) == {"lines": 1, "priced": 1}
+    assert not si.box_has_price("2018 Honda Civic otomatik\n+6\nGirne") and not si.box_has_price(None)
