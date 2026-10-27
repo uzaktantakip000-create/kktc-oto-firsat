@@ -45,11 +45,20 @@ class LlmRead:
 
 
 def _squash(text: str) -> str:
-    return re.sub(r"\s+", "", tr_lower(text or ""))
+    return re.sub(r"\s+", "", fold(text or ""))  # Türkçe harf de katlanır: ilan "arizali", alıntı "arızalı" yazabilir
 
 
 def quote_in_text(quote, text: str) -> bool:
     return isinstance(quote, str) and len(quote.strip()) >= 2 and _squash(quote) in _squash(text)
+
+
+def problem_quote_in_text(quote, text: str) -> bool:
+    """Fırsat notundaki sorun alıntısı ilanda geçiyor mu? En az 6 harf/rakam ve bir harf şart: "km", "ac", "2015" gibi kırıntı her metinde
+    bulunur ve uydurma riski geçirirdi (gözden geçirme 27.10.2026)."""
+    if not quote_in_text(quote, text):
+        return False
+    q = _squash(quote)
+    return len(re.sub(r"[^a-z0-9]", "", q)) >= 6 and re.search(r"[a-z]", q) is not None
 
 
 def deal_doubt(note, text: str) -> str | None:
@@ -59,10 +68,9 @@ def deal_doubt(note, text: str) -> str | None:
     if not isinstance(note, dict) or note.get("gercek_firsat_mi") is not False:
         return None
     quote = note.get("sorun_alinti")
-    if not quote_in_text(quote, text):
+    if not problem_quote_in_text(quote, text):
         return None
-    risks = note.get("risk_notlari") or []
-    return str(risks[0] if isinstance(risks, list) and risks else " ".join(quote.split()))[:160]
+    return f"ilanda “{' '.join(quote.split())[:120]}” yazıyor"  # modelin kendi cümlesi değil, ilandaki doğrulanmış alıntı gösterilir
 
 
 def _number_tokens(quote: str) -> set[int]:

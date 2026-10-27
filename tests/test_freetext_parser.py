@@ -247,3 +247,9 @@ def test_masked_km_never_misreads_phones_years_or_ranges(text, km):
 def test_masked_price_is_not_unmasked():
     """Gizli hane açma yalnız km içindir: "2.xxx stg" fiyat sayılmaz (fiyat yok = ilan yok, eskisi gibi)."""
     assert parse_freetext("Suzuki Swift 2008 85xxx km fiyat 2.xxx stg") is None
+
+
+@pytest.mark.parametrize("text", ["MERSEDES-BENZ C180 2014 12.000 stg", "MERCEDEZ-BENZ C180 2014 12.000 stg", "Mersedez-Benz C180 2014 12.000 stg"])
+def test_hyphenated_misspelled_mercedes_keeps_the_real_model(text):
+    r = parse_freetext(text)
+    assert r.brand == "Mercedes-Benz" and r.model == "C180"

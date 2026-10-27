@@ -231,9 +231,11 @@ def alert_failure(error: BaseException) -> None:
     if not os.environ.get("TELEGRAM_BOT_TOKEN") or not os.environ.get("TELEGRAM_CHAT_ID"):
         return
     try:
+        os.environ.setdefault("PGCONNECT_TIMEOUT", "30")  # veritabanı ulaşılmazsa uyarı yolu da TCP zaman aşımını beklemesin (open_snapshot gibi)
         repo = Repository(require("DATABASE_URL"))
         try:
-            notify_owner(repo, FAIL_ALERT_KEY, f"⚠️ Veritabanı yedeği alınamadı ({type(error).__name__}).", repeat_hours=24)
+            notify_owner(repo, FAIL_ALERT_KEY, f"⚠️ Veritabanı yedeği alınamadı ({type(error).__name__}); sunucu 20 dakika arayla 2 kez "
+                                               "yeniden dener.", repeat_hours=24)
         finally:
             repo.conn.close()
     except Exception as e:

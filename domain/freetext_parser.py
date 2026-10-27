@@ -18,7 +18,8 @@ _BRANDS = [  # (aranan kelime, marka)
 ]
 # Facebook'ta görülen yanlış yazımlar (27.10.2026): yazım -> aranan kelime. Mercedes yazımları normalize._BRANDS'takilerle aynı.
 _BRAND_ALIASES = {"mersedes": "mercedes", "mersedez": "mercedes", "mercedez": "mercedes", "suziki": "suzuki",
-                  "wolkswagen": "volkswagen"}
+                  "wolkswagen": "volkswagen", "mersedes-benz": "mercedes-benz", "mersedez-benz": "mercedes-benz",
+                  "mercedez-benz": "mercedes-benz"}  # tireli yazım: "-BENZ" model sanılmasın (gözden geçirme, 27.10)
 # Bitişik "Mazda3"/"MAZDA2": model rakamı markaya yapışık; model o rakam olur (normalize "Mazda 3" ile aynı anahtar).
 # "FORT" yalnız arkasından Focus/Fiesta geliyorsa Ford'dur: tek başına "fort" sıradan bir sözcük.
 _BRAND_RE = re.compile(r"(?<![a-zçğıöşü0-9])((?:"

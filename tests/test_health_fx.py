@@ -231,7 +231,7 @@ def test_low_volume_source_silent_over_30_hours_is_flagged():
     (olağan en uzun boşluk 17 saat; gerçek arızalar 37 ve 124 saat)."""
     now = datetime(2026, 10, 22, 12, 0, tzinfo=KKTC).astimezone(timezone.utc)
     (key, text), = health.volume_problems(VolumeRepo([vol(6, 31, now, "KKTCar")]), now)
-    assert key == "volume:s1" and "KKTCar: 31 saattir hiç yeni ilan gelmedi (normalde günde ~6)" in text and "Site haritası donmuş" in text
+    assert key == "volume:s1" and "KKTCar: 31 saattir hiç yeni ilan gelmedi (normalde günde ~6)" in text and "site haritası) donmuş" in text
     assert health.volume_problems(VolumeRepo([vol(6, 20, now, "KKTCar")]), now) == []  # 20 saat: olağan boşluk
     assert health.volume_problems(VolumeRepo([vol(6, 29, now, "KKTCar")]), now) == []
     assert health.volume_problems(VolumeRepo([vol(6, 124, now, "KKTCar")]), now)  # 4 günlük donma da söylenir
@@ -241,7 +241,8 @@ def test_low_volume_source_silent_over_30_hours_is_flagged():
 
 def test_low_volume_rule_skips_dormant_and_failing_sources():
     now = datetime(2026, 10, 22, 12, 0, tzinfo=KKTC).astimezone(timezone.utc)
-    assert health.volume_problems(VolumeRepo([vol(1.5, 60, now, "KibrisCars")]), now) == []  # durgun kaynak (günde < 2): sessizlik olağan
+    assert health.volume_problems(VolumeRepo([vol(1.5, 60, now, "KibrisCars")]), now) == []  # durgun kaynak (günde < 3): sessizlik olağan
+    assert health.volume_problems(VolumeRepo([vol(2.0, 40, now, "Mezunum Satiyorum")]), now) == []  # düzensiz az ilanlı kaynak (günde 1-2)
     assert health.volume_problems(VolumeRepo([vol(0, 60, now, "x")]), now) == []
     assert health.volume_problems(VolumeRepo([{"id": "s2", "name": "x", "per_day": None, "last_new": None}]), now) == []
     # tarama hata veriyor (ör. 403): kaynak alarmı söyler, "tarama çalışıyor" diyen ikinci mesaj gitmez

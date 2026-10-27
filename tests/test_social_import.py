@@ -233,3 +233,15 @@ def test_sale_box_price_is_counted_per_kktc_day(tmp_path):
     si.import_facebook(repo, tmp_path, now=datetime(2026, 10, 9, 22, 30, tzinfo=timezone.utc))  # KKTC 10.10 01:30
     assert json.loads(repo.state[si.BOX_KEY + "2026-10-10"]) == {"lines": 1, "priced": 1}
     assert not si.box_has_price("2018 Honda Civic otomatik\n+6\nGirne") and not si.box_has_price(None)
+
+
+def test_group_sale_listing_keeps_facebooks_own_listing_link():
+    """27.10.2026: Facebook satış ilanlarını "Buy and sell" sekmesine taşıdı; okuyucu kimliği ve bağlantıyı /commerce/listing/<kimlik>/ yazar.
+    Bağlantı yalnız kimlikle birebir aynıysa kullanılır; başka adres gelirse grup gönderisi bağlantısı kurulur (eskisi gibi)."""
+    from application.social_import import parse_line
+    base = {"surum": 1, "platform": "facebook", "anahtar": "fb:123456789", "gonderi": "28834308402858918",
+            "metin": "2015 Honda Fit 7.500 STG", "paylasim_utc": None, "goruldu_utc": "2026-10-27T12:00:00+00:00"}
+    _, post = parse_line(json.dumps({**base, "url": "https://www.facebook.com/commerce/listing/28834308402858918/"}))
+    assert post.url == "https://www.facebook.com/commerce/listing/28834308402858918/"
+    _, other = parse_line(json.dumps({**base, "url": "https://evil.example/commerce/listing/28834308402858918/"}))
+    assert other.url == "https://www.facebook.com/groups/123456789/posts/28834308402858918/"

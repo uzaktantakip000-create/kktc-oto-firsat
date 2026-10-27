@@ -80,8 +80,10 @@ def test_deal_doubt_needs_a_quote_that_is_in_the_ad():
     """🟢 fırsat notundaki şüphe yalnız ilandan birebir alıntıyla (büyük/küçük harf ve boşluk farkı sayılmaz) gösterilir (27.10.2026)."""
     text = "Honda Civic 2014,  Motor\nARIZALI, ucuza acil"
     bad = {"gercek_firsat_mi": False, "risk_notlari": ["motor arızası yazıyor"], "sorun_alinti": "motor arızalı"}
-    assert deal_doubt(bad, text) == "motor arızası yazıyor"
-    assert deal_doubt({**bad, "risk_notlari": []}, text) == "motor arızalı"  # neden yoksa alıntının kendisi
+    assert deal_doubt(bad, text) == "ilanda “motor arızalı” yazıyor"  # modelin cümlesi değil, ilandaki alıntı
+    assert deal_doubt({**bad, "risk_notlari": ["gümrük masrafı ödenmemiş olabilir"]}, text) == "ilanda “motor arızalı” yazıyor"
+    assert deal_doubt({**bad, "sorun_alinti": "motor arizali"}, text) is not None  # Türkçe harfsiz yazım da eşleşir
+    assert deal_doubt({**bad, "sorun_alinti": "ac"}, text) is None and deal_doubt({**bad, "sorun_alinti": "2014"}, text) is None  # kırıntı
     assert deal_doubt({**bad, "sorun_alinti": "şanzıman arızalı"}, text) is None  # ilanda yok: uydurma
     assert deal_doubt({**bad, "sorun_alinti": None}, text) is None
     assert deal_doubt({**bad, "sorun_alinti": 5}, text) is None

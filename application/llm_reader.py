@@ -5,10 +5,11 @@ Yapay zekâ asla tek başına 🟢 üretmez; yalnızca düşürebilir. Hata/büt
 Ayrıca 🟢 mesajının kısa "fırsat notu" (deal_notes) aynı günlük bütçeden düşer. Model tek: infrastructure/llm/openrouter.MODEL (21.10.2026)."""
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from application.evaluate import Evaluated
 from domain.data_gate import km_unknown
+from domain.kktc_time import to_kktc
 from domain.llm_read import MISMATCH_LABELS, LlmRead, compare, parse_llm_read
 from domain.profit import Tier
 from infrastructure.db.repository import Repository
@@ -125,13 +126,22 @@ def call_alarms(repo, err: str | None, now: datetime | None = None) -> None:
 # Günlük sayılar (day_key: llm_ok:<gün>, llm_err:<gün>; bütçe doluyken çağrı yok, sayılmaz) hata varsa sabah nabzında (status.llm_line).
 SILENT_KEY = "llm_hata_seri"
 SILENT_MIN_CALLS, SILENT_MIN_HOURS = 5, 3
+SILENT_IDLE = timedelta(hours=6)  # seri bu kadar süre hiç çağrı görmediyse yeniden başlar: gece tek hata + sabah 4 hata "8 saattir" demesin
 SILENT_ALERT = ("⚠️ Yapay zekâ {h} saattir işe yarar cevap vermiyor (son hata: {err}). Facebook 🟢'leri yapay zekâ kontrolü olmadan gidiyor, "
                 "fırsat notu eklenmiyor.")
 
 
+def _last_call(raw) -> datetime | None:
+    try:
+        return datetime.fromisoformat(json.loads(raw)["last"]) if raw else None
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
 def day_key(kind: str, now: datetime) -> str:
-    """Günlük çağrı sayısı anahtarı: kind 'ok' ya da 'err' (llm_spend gibi UTC günü)."""
-    return f"llm_{kind}:{now:%Y-%m-%d}"
+    """Günlük çağrı sayısı anahtarı: kind 'ok' ya da 'err'. KKTC günü: sabah nabzı (KKTC 08-12) "bugün"ü KKTC takvimiyle okur (UTC günü
+    gece 03:00'te başlıyor, satır yalnız birkaç gece saatini kapsıyordu; gözden geçirme 27.10.2026)."""
+    return f"llm_{kind}:{to_kktc(now):%Y-%m-%d}"
 
 
 def day_count(repo, kind: str, now: datetime) -> int:
@@ -156,8 +166,12 @@ def outcome_alarm(repo, err: str | None, now: datetime | None = None, streak: bo
                 repo.set_state(SILENT_KEY, "")
             return
         since, n = _rate_streak(raw) or (now, 0)
+        last = _last_call(raw)
+        if last is not None and now - last > SILENT_IDLE:
+            since, n = now, 0
         n += 1
-        repo.set_state(SILENT_KEY, json.dumps({"since": since.isoformat(), "n": n, "last_err": err}, ensure_ascii=False))
+        repo.set_state(SILENT_KEY, json.dumps({"since": since.isoformat(), "n": n, "last_err": err, "last": now.isoformat()},
+                                              ensure_ascii=False))
         hours = (now - since).total_seconds() / 3600
         if n >= SILENT_MIN_CALLS and hours >= SILENT_MIN_HOURS and err not in ACCOUNT_ERRORS and err != RATE_LIMITED:
             from application.health import notify_owner  # tembel: health → notify → ... döngüsü olmasın

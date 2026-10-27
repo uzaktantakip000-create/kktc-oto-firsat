@@ -169,6 +169,8 @@ def parse_line(line: str) -> tuple[str, SocialPost] | str:
     if page:  # Facebook sayfası (sosyal oturum 0be07c6): bağlantı yine anahtar + kimlikten kurulur; reel yalnız dosyadaki adres tam reel biçimiyse
         reel = f"https://www.facebook.com/reel/{pid}/"  # Facebook'un kendi reel bağlantısı (okuyucu kimliği href="/reel/<kimlik>/"den alır)
         url = reel if doc.get("url") in (reel, f"https://www.facebook.com/{page}/reel/{pid}/") else f"https://www.facebook.com/{page}/posts/{pid}/"
+    elif doc.get("url") == f"https://www.facebook.com/commerce/listing/{pid}/":
+        url = doc["url"]  # grubun satış ilanı (Buy and sell): Facebook'un kendi ilan bağlantısı, kimlik aynı (sosyal oturum 27.10.2026)
     else:
         url = f"https://www.facebook.com/groups/{group}/posts/{pid}/"
     photo, radar, photo_file = doc.get("foto_url"), doc.get("satici_gonderi_14g"), doc.get("foto_dosya")

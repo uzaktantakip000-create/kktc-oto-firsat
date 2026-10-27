@@ -85,7 +85,7 @@ VOLUME_MIN_PER_DAY = 30  # gündüz 6 saatlik hacim alarmı yalnız günde ortal
 VOLUME_SILENT = timedelta(hours=6)  # bu kaynaklarda gündüz 6 saat hiç yeni ilan yoksa toplayıcı sessizce ilan kaçırıyor olabilir
 VOLUME_DAY_KKTC = (10, 22)  # yalnız bu KKTC saatlerinde bakılır
 VOLUME_DAY_START = 8  # sessizlik en erken KKTC 08:00'den sayılır: gece boşluğu sayılmaz (geçen haftaya karşı: yalnız 09.10 gerçek gecikmesinde çalardı)
-VOLUME_LOW_MIN_PER_DAY = 2  # az ilanlı kaynak (KKTCar ~6) da izlenir; bunun altı durgun kaynak (sessizlik olağan)
+VOLUME_LOW_MIN_PER_DAY = 3  # az ilanlı kaynak (KKTCar ~6-9) da izlenir; altı durgun ya da düzensiz kaynak (Mezunum günde 1-2: 30 sa sessizlik olağan)
 # Az ilanlı kaynakta düz saatle (gece dahil) bu kadar yeni ilan yoksa uyarı; mesaj yine yalnız gündüz gider. KKTCar'ın en uzun olağan boşluğu 17
 # saat, gerçek arızalar 37 ve 124 saat (20–25.10.2026 site haritası dondu, ~4 gün yeni ilan yok, hiçbir alarm çalmadı).
 VOLUME_LOW_SILENT = timedelta(hours=30)
@@ -115,7 +115,7 @@ def volume_problems(repo: Repository, now: datetime | None = None) -> list[tuple
                         "Tarama çalışıyor görünüyor ama site düzeni değişmiş, ilanlar kaçıyor olabilir."))
         elif VOLUME_LOW_MIN_PER_DAY <= per_day < VOLUME_MIN_PER_DAY and now - last > VOLUME_LOW_SILENT:
             out.append((f"volume:{s['id']}", f"📉 {s['name']}: {hours:.0f} saattir hiç yeni ilan gelmedi (normalde günde ~{per_day:.0f}). "
-                        "Site haritası donmuş olabilir; tarama çalışıyor ama yeni ilan görmüyor."))
+                        "Tarama çalışıyor ama yeni ilan görmüyor: sitenin ilan listesi (site haritası) donmuş olabilir."))
     return out
 
 

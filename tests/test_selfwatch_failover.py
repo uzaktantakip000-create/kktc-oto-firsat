@@ -11,7 +11,7 @@ from tests.test_runner_gate import GOOD, SECRET_DSN, Collect, Tick, collect_worl
 from tests.test_selfwatch import NOW, Repo, ago, tg  # noqa: F401  (tg: pytest fixture)
 
 DOWN_52 = ("⚠️ Sunucu turları durdu (son tur 52 dk önce); GitHub devraldı, siteler taranıyor. "
-           "Facebook grupları sunucu dönene kadar okunmuyor (okuyucu sunucuda).")
+           "Sunucu tamamen kapalıysa Facebook grupları da okunmuyor (okuyucu sunucuda).")
 FO_TICK, FO_BROWSER = selfwatch.FO_TICK_KEY, selfwatch.FO_BROWSER_KEY
 
 
@@ -117,7 +117,7 @@ def test_recovery_says_so_once_with_the_outage_length_and_closes_the_incident(mo
     where(monkeypatch, "vps")
     repo = Repo({FO_TICK: ago(70)})
     selfwatch.after_tick(repo, True, NOW)
-    assert tg == ["✅ Sunucu turları yeniden çalışıyor (kesinti ~70 dk; bu arada GitHub siteleri taradı). Facebook grupları yeniden okunuyor."]
+    assert tg == ["✅ Sunucu turları yeniden çalışıyor (kesinti ~70 dk; bu arada GitHub siteleri taradı)."]
     assert repo.state[FO_TICK] == ""
     selfwatch.after_tick(repo, True, NOW + timedelta(minutes=15))
     selfwatch.after_tick(repo, True, NOW + timedelta(minutes=30))

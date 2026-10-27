@@ -357,7 +357,7 @@ def test_unattended_failure_tells_the_owner_once_a_day(tmp_path, monkeypatch, ca
     monkeypatch.setattr(backup, "notify_owner", lambda repo, key, text, repeat_hours: sent.append((key, text, repeat_hours)))
     state, made, _ = patch_db(monkeypatch, snapshot_error=psycopg.OperationalError(f"bağlanılamadı {SECRET_DSN}"))
     assert backup.main(["--dizin", str(tmp_path / "y"), "--sakla", "4"]) == 1
-    assert sent == [("backup_failed", "⚠️ Veritabanı yedeği alınamadı (OperationalError).", 24)]
+    assert sent == [("backup_failed", "⚠️ Veritabanı yedeği alınamadı (OperationalError); sunucu 20 dakika arayla 2 kez yeniden dener.", 24)]
     assert state == {} and made == [SECRET_DSN]  # yalnız uyarının tekrar sınırı için bağlantı; backup_last_ok yazılmadı
     assert "GIZLISIFRE123" not in capsys.readouterr().err
 

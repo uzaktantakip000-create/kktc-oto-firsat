@@ -24,7 +24,7 @@ değerlendir. Metinde yazmayan bir şeyi varsayma ya da tahmin etme (yazmayan ha
 Sadece şu JSON'u döndür, başka metin yazma:
 {"gercek_firsat_mi": true/false, "risk_notlari": ["..."], "sorun_alinti": "ilandan birebir alıntı"|null, "fiyat_yorumu": "1 cümle", "sorulacak_sorular": ["..."]}
 Kurallar: gercek_firsat_mi=false SADECE ilan metni açıkça bir sorun yazıyorsa (hasar/kaza, değişen/boyalı parça, motor/şanzıman arızası, pert,
-su basmış, borç/haciz, gümrüksüz/evraksız, kredi/taksit devri, satılmış). O zaman sorun_alinti o sorunu anlatan ifadenin ilandan BİREBİR
+su basmış, borç/haciz, gümrüksüz/evraksız, kredi/taksit devri, peşinat ya da taksit tutarı fiyat gibi yazılmış, satılmış). O zaman sorun_alinti o sorunu anlatan ifadenin ilandan BİREBİR
 alıntısıdır ve risk_notlari'nın ilki bu sorunu kısaca anlatır. Metinde açık bir sorun yoksa gercek_firsat_mi=true ve sorun_alinti=null.
 'Hasarsız, kazasız, boyasız, bakımlı, masrafsız' gibi temiz ifadeler sorun DEĞİLDİR.
 

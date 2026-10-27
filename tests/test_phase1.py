@@ -29,7 +29,7 @@ def test_ai_doubt_line_shown_first_among_notes():
     e.listing["raw_text"] = "Toyota Vitz 2015, Motor\n  ARIZALI, acil satılık"
     note = {"gercek_firsat_mi": False, "risk_notlari": ["motor arızalı"], "sorun_alinti": "motor arızalı"}
     text = notify.format_alert(e, note)
-    assert "⚠️ Yapay zekâ şüpheli buldu: motor arızalı" in text and "🔎" not in text
+    assert "⚠️ Yapay zekâ şüpheli buldu: ilanda “motor arızalı” yazıyor" in text and "🔎" not in text
     ok = notify.format_alert(e, {"gercek_firsat_mi": True, "risk_notlari": ["kontrol et"]})
     assert "şüpheli" not in ok and "🔎" not in ok  # yapay zekâ olumluysa mesaj kısa kalır; yalnız ŞÜPHE uyarısı gösterilir
 

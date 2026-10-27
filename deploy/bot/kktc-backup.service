@@ -1,5 +1,5 @@
 [Unit]
-Description=KKTC Oto Fırsat - haftalık veritabanı yedeği (entrypoints.backup: tüm tablolar CSV, son 4 yedek saklanır)
+Description=KKTC Oto Fırsat - haftalık veritabanı yedeği (entrypoints.backup: tüm tablolar CSV, son 28 günün yedekleri ve her durumda en yeni 4'ü saklanır)
 After=network-online.target
 Wants=network-online.target
 # bot.env yoksa ya da boşsa hiç çalıştırma

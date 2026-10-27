@@ -139,7 +139,8 @@ def test_hours_without_a_usable_answer_warn_the_owner(alarms):
         failing(repo, DAY + i * H, err=err).read("x")
     assert alarms == []  # 4 çağrı: henüz değil
     failing(repo, DAY + 3 * H, err="http 503").read("x")  # 5. çağrı, 3 saattir sonuç yok
-    assert json.loads(repo.state[lr.SILENT_KEY]) == {"since": DAY.isoformat(), "n": 5, "last_err": "http 503"}
+    assert json.loads(repo.state[lr.SILENT_KEY]) == {"since": DAY.isoformat(), "n": 5, "last_err": "http 503",
+                                                       "last": (DAY + 3 * H).isoformat()}
     assert alarms == [("llm_sessiz", "⚠️ Yapay zekâ 3 saattir işe yarar cevap vermiyor (son hata: http 503). Facebook 🟢'leri yapay zekâ "
                                      "kontrolü olmadan gidiyor, fırsat notu eklenmiyor.", 24)]  # tekrar sınırı notify_owner'da (24 saat)
 
@@ -156,7 +157,8 @@ def test_an_unparsable_answer_extends_the_streak_and_only_a_parsed_read_or_a_not
     for i in range(4):
         r = lr.LlmReader(repo, "k", "m", call=lambda *a: (["bozuk"], None, 0.0), now=DAY + i * H)  # model cevap verdi, okuma çıkmadı
         assert r.read("x") is None and r.last_error == "çıktı geçersiz"
-    assert json.loads(repo.state[lr.SILENT_KEY]) == {"since": DAY.isoformat(), "n": 4, "last_err": "çıktı geçersiz"}
+    assert json.loads(repo.state[lr.SILENT_KEY]) == {"since": DAY.isoformat(), "n": 4, "last_err": "çıktı geçersiz",
+                                                       "last": (DAY + 3 * H).isoformat()}
     assert reader(repo).read(TEXT) is not None
     assert repo.state[lr.SILENT_KEY] == ""
     failing(repo, DAY + 5 * H, err="ReadTimeout").read("x")
@@ -202,3 +204,17 @@ def test_a_failing_silence_alert_never_breaks_reading(monkeypatch, capsys):
     for i in range(5):
         assert failing(repo, DAY + i * H, err="http 500").read("x") is None
     assert "yapay zekâ sessizlik uyarısı yazılamadı: RuntimeError" in capsys.readouterr().out
+
+
+def test_a_streak_restarts_after_hours_without_any_call(alarms):
+    """Gözden geçirme 27.10.2026: gece tek hata, sonra 6+ saat hiç çağrı yok, sabah 4 hata: "8 saattir" uyarısı yanlış olurdu; seri yeniden başlar."""
+    repo = FakeRepo()
+    failing(repo, DAY, err="ReadTimeout").read("x")
+    for i in range(4):
+        failing(repo, DAY + 8 * H + i * MIN, err="ReadTimeout").read("x")
+    assert alarms == [] and json.loads(repo.state[lr.SILENT_KEY])["since"] == (DAY + 8 * H).isoformat()
+
+
+def test_daily_counts_use_the_kktc_calendar_day():
+    late = datetime(2026, 10, 27, 22, 30, tzinfo=timezone.utc)  # KKTC 28.10 01:30
+    assert lr.day_key("ok", late) == "llm_ok:2026-10-28"

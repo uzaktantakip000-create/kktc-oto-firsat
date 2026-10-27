@@ -199,7 +199,7 @@ def test_deal_note_cost_goes_to_the_shared_daily_budget_and_the_note_is_cached()
     assert repo.state[SPEND] == "0.00200" and reader(repo).spent_today() == 0.002  # okuyucu da aynı harcamayı görür
     again = lr.deal_notes(repo, [green()], "k", "m", call=call, now=DAY)  # sonraki tur: aynı ilan, aynı fiyat
     assert again == {1: SUSPICIOUS} and len(call.seen) == 1 and repo.state[SPEND] == "0.00200"  # önbellekten: soru ve ücret yok
-    assert "⚠️ Yapay zekâ şüpheli buldu: hasar kaydı olabilir" in notify.format_alert(green(), again[1])  # önbellekteki not mesaja aynen girer
+    assert "⚠️ Yapay zekâ şüpheli buldu: ilanda “5.000 STG” yazıyor" in notify.format_alert(green(), again[1])  # önbellekteki not mesaja aynen girer
 
 
 def test_deal_note_is_asked_again_when_the_price_changes():
