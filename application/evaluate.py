@@ -212,10 +212,13 @@ def pending_clean_negotiable(repo: Repository, s: Settings, book=None, platform:
                              now: datetime | None = None) -> list[Evaluated]:
     """🟡 PAZARLIK FIRSATI adayları (27.10.2026): son değerlendirmesi 🟡 olan, henüz gitmemiş ilanlardan kârı ≥ %15 ve doğrudan emsali ≥ 8
     olanlar bugünkü havuzla `decision.clean_negotiable`'dan (🟢'nin bütün kapıları, eşik %15) yeniden geçirilir. Yapay zekânın daha önce
-    reddettiği ilan ('verify:<id>' = bad) alınmaz: her turda yeniden okutulup yeniden düşürülmesin."""
+    reddettiği ilan ('verify:<id>' = bad) alınmaz: her turda yeniden okutulup yeniden düşürülmesin. Havuz yalnız gönderim kontrolünün
+    tazelik adımından geçen aday varsa yüklenir (taze olmayan zaten orada elenirdi; her turda ~1 MB boşuna veri çekilmesin)."""
+    from application.send_gate import _fresh_candidates  # send_gate bu modülü içe aktarıyor: döngü olmasın diye burada
     rows = [ev for ev in pending_alerts(repo, tier=Tier.NEGOTIABLE, platform=platform)
             if send_allowed(Tier.STRONG, ev.method, ev.market.n) and ev.profit.profit_pct >= s.clean_negotiable_threshold
             and repo.get_state(f"verify:{ev.listing['id']}") != "bad"]
+    rows = _fresh_candidates(repo, rows) if rows else []
     if not rows:
         return []
     pool = repo.market_pool(keys=pool_keys([ev.listing for ev in rows]))

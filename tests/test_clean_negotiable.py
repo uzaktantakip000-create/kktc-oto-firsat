@@ -80,3 +80,27 @@ def test_negotiable_message_explains_itself_without_raw_codes():
     assert "🟡 Neden 🟢 değil: km yazmıyor" in text and "km_temkinli" not in text
     assert "%20'nin altında: pazarlıkla" not in text
     assert "en ucuz çeyrek £7.200" in text
+
+
+def _pending(monkeypatch, cands):
+    """Sahte repo, havuz okuması sayılır (Supabase çıkış kotası, 27.10.2026: her turda ~67 aday için ~1 MB çekiliyordu, ~1'i taze)."""
+    from application import evaluate
+    from tests.test_send_gate import cand
+    evs = [cand(i, tier=Tier.NEGOTIABLE, seen_h=h) for i, h in cands]
+    for e in evs:
+        e.listing.update(brand_norm="toyota", model_norm="corolla")
+    monkeypatch.setattr(evaluate, "pending_alerts", lambda *a, **k: list(evs))
+    monkeypatch.setattr(evaluate, "clean_negotiable", lambda listing, pool, s, book, now: object())
+    pools = []
+    repo = type("R", (), {"get_state": lambda self, k: None, "resurfaced_kktcarabam": lambda self, ids: set(),
+                          "market_pool": lambda self, keys: pools.append(keys) or []})()
+    out = evaluate.pending_clean_negotiable(repo, Settings())
+    return [e.listing["id"] for e in out], len(pools)
+
+
+def test_pool_is_not_read_when_no_candidate_is_fresh(monkeypatch):
+    assert _pending(monkeypatch, [(1, 100), (2, 200)]) == ([], 0)  # taze olmayan gönderim kontrolünde zaten elenirdi
+
+
+def test_only_fresh_candidates_are_rechecked_with_the_pool(monkeypatch):
+    assert _pending(monkeypatch, [(1, 100), (2, 1)]) == ([2], 1)
