@@ -1,4 +1,4 @@
-from domain.llm_read import compare, parse_llm_read
+from domain.llm_read import compare, deal_doubt, parse_llm_read
 
 TEXT = "2016 Honda Fit 1.3 otomatik\n53.000 km\nFiyat: 7.500£ nakit\nSağ direksiyon, Girne"
 
@@ -74,3 +74,17 @@ def test_brand_spelling_variants_are_not_a_mismatch():
     assert r.brand == "Mercedes"
     for spelled in ("Mercedes-Benz", "Mercedes - Benz", "MERCEDES"):
         assert "okuma_marka" not in compare({**LISTING, "brand": spelled}, r)[0]
+
+
+def test_deal_doubt_needs_a_quote_that_is_in_the_ad():
+    """🟢 fırsat notundaki şüphe yalnız ilandan birebir alıntıyla (büyük/küçük harf ve boşluk farkı sayılmaz) gösterilir (27.10.2026)."""
+    text = "Honda Civic 2014,  Motor\nARIZALI, ucuza acil"
+    bad = {"gercek_firsat_mi": False, "risk_notlari": ["motor arızası yazıyor"], "sorun_alinti": "motor arızalı"}
+    assert deal_doubt(bad, text) == "motor arızası yazıyor"
+    assert deal_doubt({**bad, "risk_notlari": []}, text) == "motor arızalı"  # neden yoksa alıntının kendisi
+    assert deal_doubt({**bad, "sorun_alinti": "şanzıman arızalı"}, text) is None  # ilanda yok: uydurma
+    assert deal_doubt({**bad, "sorun_alinti": None}, text) is None
+    assert deal_doubt({**bad, "sorun_alinti": 5}, text) is None
+    assert deal_doubt({k: v for k, v in bad.items() if k != "sorun_alinti"}, text) is None  # eski önbellek notu
+    assert deal_doubt({**bad, "gercek_firsat_mi": True}, text) is None
+    assert deal_doubt(None, text) is None and deal_doubt(bad, "") is None

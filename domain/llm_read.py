@@ -52,6 +52,19 @@ def quote_in_text(quote, text: str) -> bool:
     return isinstance(quote, str) and len(quote.strip()) >= 2 and _squash(quote) in _squash(text)
 
 
+def deal_doubt(note, text: str) -> str | None:
+    """🟢 fırsat notundaki şüphe (openrouter.CHECK_PROMPT): yalnız model "gerçek fırsat değil" deyip sorunu ilandan BİREBİR alıntıladıysa (alıntı
+    ilan metninde geçiyor: büyük/küçük harf ve boşluk farkı sayılmaz) mesajda gösterilecek kısa neden; yoksa None. Model metinde olmayan riskler
+    uyduruyordu (27.10.2026: "masrafları vardır"dan gümrük masrafı, yazan km'ye "gizli"). Alıntısız eski önbellek notları da None."""
+    if not isinstance(note, dict) or note.get("gercek_firsat_mi") is not False:
+        return None
+    quote = note.get("sorun_alinti")
+    if not quote_in_text(quote, text):
+        return None
+    risks = note.get("risk_notlari") or []
+    return str(risks[0] if isinstance(risks, list) and risks else " ".join(quote.split()))[:160]
+
+
 def _number_tokens(quote: str) -> set[int]:
     return {int(re.sub(r"\D", "", t)) for t in re.findall(r"\d{1,3}(?:[.,]\d{3})+|\d+", quote)}
 

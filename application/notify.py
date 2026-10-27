@@ -8,6 +8,7 @@ from application.evaluate import Evaluated, confidence_label
 from domain.comparables import Market, effective_km
 from domain.data_gate import DATE_SEEN, DATE_UNSURE, GAP_LABELS, KM_LOWER, KM_UNKNOWN_WARNING
 from domain.kktc_time import kktc_hour
+from domain.llm_read import deal_doubt
 from domain.photo_date import kktcarabam_photo_time
 from domain.profit import Tier
 from domain.red_flags import customs_stated
@@ -235,9 +236,9 @@ def format_alert(ev: Evaluated, note: dict | None = None, twins: list[dict] | No
         lines.append("⚠️ Dikkat: " + ", ".join(warnings))
     if m.archived_share > 0.6:
         lines.append(f"ℹ️ Emsallerin %{m.archived_share * 100:.0f}'i satılmış ilan (sitenin son ilan fiyatı; gerçek satış fiyatı olmayabilir)")
-    if note and note.get("gercek_firsat_mi") is False:  # yapay zekâ şüpheli buldu: mesaj yine gider ama uyarı görünür
-        risks = note.get("risk_notlari") or []
-        lines.append("⚠️ Yapay zekâ şüpheli buldu" + (": " + str(risks[0])[:160] if risks else ""))
+    doubt = deal_doubt(note, l.get("raw_text") or "")  # yapay zekâ şüpheli buldu VE sorunu ilandan alıntıladı: mesaj yine gider ama uyarı görünür
+    if doubt:
+        lines.append("⚠️ Yapay zekâ şüpheli buldu: " + doubt)
     age = posted_age_text(l.get("posted_at"), l.get("platform"), signals=l.get("urgency_signals"))
     if age:
         lines.append(age)

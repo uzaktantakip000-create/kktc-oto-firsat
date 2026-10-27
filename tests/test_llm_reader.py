@@ -172,7 +172,8 @@ def test_free_text_site_listing_is_verified_but_structured_site_is_not():
 # --- 🟢 fırsat notu (deal_notes): okuyucuyla aynı günlük bütçe + (ilan, fiyat) başına tek soru ---
 DAY = datetime(2026, 10, 2, 9, tzinfo=timezone.utc)
 SPEND = "llm_spend:2026-10-02"
-SUSPICIOUS = {"gercek_firsat_mi": False, "risk_notlari": ["hasar kaydı olabilir"], "fiyat_yorumu": "ucuz", "sorulacak_sorular": []}
+SUSPICIOUS = {"gercek_firsat_mi": False, "risk_notlari": ["hasar kaydı olabilir"], "sorun_alinti": "5.000 STG", "fiyat_yorumu": "ucuz",
+              "sorulacak_sorular": []}  # alıntı ilan metninde geçmeli (domain/llm_read.deal_doubt)
 
 
 def green(price=5000):

@@ -25,11 +25,27 @@ def test_comparable_list_is_no_longer_in_the_message():
 
 
 def test_ai_doubt_line_shown_first_among_notes():
-    note = {"gercek_firsat_mi": False, "risk_notlari": ["fiyat çok düşük, hasar olabilir"]}
-    text = notify.format_alert(ev(), note)
-    assert "⚠️ Yapay zekâ şüpheli buldu: fiyat çok düşük" in text and "🔎" not in text
-    ok = notify.format_alert(ev(), {"gercek_firsat_mi": True, "risk_notlari": ["kontrol et"]})
+    e = ev()
+    e.listing["raw_text"] = "Toyota Vitz 2015, Motor\n  ARIZALI, acil satılık"
+    note = {"gercek_firsat_mi": False, "risk_notlari": ["motor arızalı"], "sorun_alinti": "motor arızalı"}
+    text = notify.format_alert(e, note)
+    assert "⚠️ Yapay zekâ şüpheli buldu: motor arızalı" in text and "🔎" not in text
+    ok = notify.format_alert(e, {"gercek_firsat_mi": True, "risk_notlari": ["kontrol et"]})
     assert "şüpheli" not in ok and "🔎" not in ok  # yapay zekâ olumluysa mesaj kısa kalır; yalnız ŞÜPHE uyarısı gösterilir
+
+
+def test_ai_doubt_without_quote_from_the_ad_is_not_shown():
+    """27.10.2026: model ilanda yazmayan risk uyduruyordu ("masrafları vardır" -> gümrük masrafı). Şüphe ancak ilandan birebir alıntıyla görünür;
+    alıntısız eski önbellek notu da uyarı basmaz."""
+    e = ev()
+    e.listing["raw_text"] = "Toyota Vitz 2015, bakımları yapıldı, masrafları vardır"
+    for note in ({"gercek_firsat_mi": False, "risk_notlari": ["gümrük masrafı olabilir"]},  # eski not: alıntı yok
+                 {"gercek_firsat_mi": False, "risk_notlari": ["gümrük masrafı"], "sorun_alinti": "gümrük masrafı ödenmedi"},  # uydurma alıntı
+                 {"gercek_firsat_mi": False, "risk_notlari": ["x"], "sorun_alinti": None},
+                 {"gercek_firsat_mi": False, "risk_notlari": ["x"], "sorun_alinti": "  "}):
+        assert "şüpheli" not in notify.format_alert(e, note)
+    del e.listing["raw_text"]  # metni olmayan ilan: alıntı doğrulanamaz
+    assert "şüpheli" not in notify.format_alert(e, {"gercek_firsat_mi": False, "risk_notlari": ["x"], "sorun_alinti": "masraf"})
 
 
 class LiveRepo:
