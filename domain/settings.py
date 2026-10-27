@@ -1,6 +1,6 @@
 from pydantic import BaseModel, model_validator
 
-RULES_VERSION = "2026-10-24"  # 24.10: tutarı yazmayan masraf ("masrafları vardır") 🟢 değil en fazla 🟡 (red_flags.cost_unknown). 20.10: taze TL fiyatı 🟢 olabilir (decision._fresh_tl_strong) + yer tutucu km bilinmiyor (comparables.PLACEHOLDER_KM). Değerleme kuralları değişince artır (günde en çok bir kez): sonraki TAM turda bildirime aday ilanlar yeni kurallarla yeniden değerlendirilir (EKLEME-YALNIZ: eski satır silinmez), kalanı 3 günlük yeniden bakışla yenilenir
+RULES_VERSION = "2026-10-27"  # 27.10: açık üstü/kupe emsali sedan/hatch ilanın piyasasına karışmaz (normalize.body_type, comparables). 24.10: tutarı yazmayan masraf ("masrafları vardır") 🟢 değil en fazla 🟡 (red_flags.cost_unknown). 20.10: taze TL fiyatı 🟢 olabilir (decision._fresh_tl_strong) + yer tutucu km bilinmiyor (comparables.PLACEHOLDER_KM). Değerleme kuralları değişince artır (günde en çok bir kez): sonraki TAM turda bildirime aday ilanlar yeni kurallarla yeniden değerlendirilir (EKLEME-YALNIZ: eski satır silinmez), kalanı 3 günlük yeniden bakışla yenilenir
 
 
 class Settings(BaseModel):

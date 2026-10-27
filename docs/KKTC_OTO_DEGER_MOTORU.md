@@ -41,6 +41,7 @@ Emsal = aynı **marka + model** (normalize) ve:
 - direksiyon: aynı (RHD ve LHD ASLA karışmaz); yazmıyorsa sağ (RHD) sayılır
 - yakıt: aynı (hibrit/dizel/benzin/elektrik; "elektrik" = "elektrikli"). GEVŞETİLMEZ: iki ilanda da yazıyorsa ve farklıysa emsal olmaz; yazmıyorsa elenmez
 - motor hacmi: iki ilanda da biliniyorsa fark en çok 0,3 litre (316i ile 340i karışmaz); bilinmiyorsa elenmez
+- kasa tipi (RULES_VERSION 2026-10-27): açık üstü (cabrio/convertible/roadster) ve kupe yalnız aynı kasayla emsal olur; kasası yazmayan ilan sıradan sedan/hatch sayılır ve açık üstü/kupe emsal almaz (`normalize.body_type`: yalnız model alanı ve ilan adresindeki ad; açıklama metni taranmaz). Ölçüm: BMW 3 2008 sedanın 32 emsalinin 7'si Cabrio'ydu, piyasa ortası £7.500 → £7.350; son 14 günün 2.534 değerlendirmesinde yeni 🟢/🟠 0, kaybolan 🟢/🟠 0, 5 🟡 düştü (hepsi cabrio emsalle şişmiş BMW 3), 1 🟡 eklendi
 - zaman: ilanın KENDİ tarihi (yayın tarihi; yoksa site verisi tarihi; o da yoksa sisteme giriş tarihi) son 90 gün içinde olmalı. Hâlâ yayında olan ama 60 günden eski ilan sayılmaz (satılamamış, istenen fiyat piyasa fiyatı değil)
 - pasif ilan (kaldırılmış/arşiv): yalnızca "satıldı" işaretliyse emsal olur; belirsiz "arşiv/kaldırıldı" ilanlar sayılmaz (`domain/comparables.py`)
 - tekrarlar (duplicate_of dolu) çıkarılır; aynı aracın birden fazla ilanı 1 sayılır

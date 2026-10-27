@@ -249,3 +249,9 @@ def test_unread_sources_message_lists_at_most_ten_aliases(sent, tmp_path):
     hw.watch(Repo(), {"platformlar": {"facebook": f}}, NOW, folder=tmp_path)
     (k, text), = sent
     assert k == "fb_grup_okunmadi" and "12 kaynak" in text and "fb-10" in text and "fb-11" not in text and "ve 2 tane daha" in text
+
+
+def test_unread_sources_message_uses_source_names_when_known():
+    f = running(srcs(a=20, b=2))
+    (k, text), = hw.handoff_alerts(f, None, NOW, {"fb:a": "Örnek Araba Grubu"})
+    assert k == "fb_grup_okunmadi" and "Örnek Araba Grubu" in text and "fb-01" not in text

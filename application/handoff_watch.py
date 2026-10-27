@@ -13,7 +13,7 @@ burada yalnız şunlar var:
   böyleydi, önceden günde ~900 satır, %24-35'i fiyatlıydı; kesinti sırasında bile gürültü satırları yüzünden %0,4-1,2 fiyatlı görünüyor, bu yüzden
   "hiç yok" değil oran sınırı; sayaç social_import.BOX_KEY; botun kendi sayacıdır, okuyucunun değil);
 - grup okunmadı: okuyucu çalışıyor (son turu 6 saatten yeni) ama son 7 günde ilan/araç görülmüş en az bir Facebook kaynağı 14 saattir okunmadı
-  (tek toplu uyarı, kaynak takma adlarıyla (fb-NN); yalnız izleme, okuma sıklığı ya da kararlar değişmez).
+  (tek toplu uyarı, kaynak adlarıyla (ad bilinmiyorsa fb-NN); yalnız izleme, okuma sıklığı ya da kararlar değişmez).
 Günlük örnek (`SAMPLE_KEY`) KKTC 21:00'den sonraki ilk turda bir kez yazılır, son `SAMPLE_KEEP` gün tutulur."""
 import json
 from dataclasses import dataclass
@@ -93,9 +93,9 @@ def scan_handoff(folder: Path | str, cursor: tuple[str, int], window_end: dateti
     return HandoffScan(in_window if covered else None, pending)
 
 
-def unread_sources(fb: dict, now: datetime) -> list[str]:
-    """Okuyucu çalışırken (son turu READER_FRESH'ten yeni) UNREAD_AFTER'dan uzun süredir okunmamış, son 7 günde ilan/araç görülmüş kaynakların takma
-    adları ("fb-NN": durum dosyasındaki kaynak anahtarlarının sıralı sırası, grup adı yazılmaz). Kaynak başına alan yok/bozuksa o kaynak atlanır; üyelik
+def unread_sources(fb: dict, now: datetime) -> list[tuple[str, str]]:
+    """Okuyucu çalışırken (son turu READER_FRESH'ten yeni) UNREAD_AFTER'dan uzun süredir okunmamış, son 7 günde ilan/araç görülmüş kaynaklar:
+    (kaynak anahtarı, takma ad "fb-NN" = durum dosyasındaki anahtarların sıralı sırası; mesajda kaynak adı bilinmiyorsa bu yazılır). Kaynak başına alan yok/bozuksa o kaynak atlanır; üyelik
     gerekenler okunamaz (başka neden), atlanır. Okuyucunun turu eskiyse ya da dosya biçimi bekleneni vermiyorsa boş."""
     last_round, rows = _time(fb.get("son_tur_utc")), fb.get("kaynaklar")
     if last_round is None or not timedelta(0) <= now - last_round < READER_FRESH or not isinstance(rows, dict):
@@ -107,12 +107,13 @@ def unread_sources(fb: dict, now: datetime) -> list[str]:
         read = _time(row.get("son_okuma_utc"))
         active = (_int(row.get("yeni_ilan_7g")) or 0) > 0 or (_int(row.get("arac_7g")) or 0) > 0
         if read is not None and active and row.get("uyelik_gerekli") is not True and now - read > UNREAD_AFTER:
-            out.append(f"fb-{n:02d}")
+            out.append((key, f"fb-{n:02d}"))
     return out
 
 
-def handoff_alerts(fb: dict, scan: HandoffScan | None, now: datetime) -> list[tuple[str, str]]:
-    """Saf yargı: (uyarı anahtarı, metin) listesi. Alan yok/bozuksa o kontrol atlanır (eski okuyucu sürümü yeni alanları yazmaz)."""
+def handoff_alerts(fb: dict, scan: HandoffScan | None, now: datetime, names: dict[str, str] | None = None) -> list[tuple[str, str]]:
+    """Saf yargı: (uyarı anahtarı, metin) listesi. Alan yok/bozuksa o kontrol atlanır (eski okuyucu sürümü yeni alanları yazmaz).
+    `names`: kaynak anahtarı -> ad (okunmayan kaynak uyarısında; yoksa takma ad)."""
     out = []
     devir, daily = fb.get("devir"), fb.get("gunluk")
     daily = daily if isinstance(daily, dict) else {}
@@ -130,7 +131,7 @@ def handoff_alerts(fb: dict, scan: HandoffScan | None, now: datetime) -> list[tu
         if abs(gap) > max(COUNT_SLACK, COUNT_SLACK_PCT * posts):
             out.append(("social_facebook_devir_eksik", f"⚠️ Facebook: okuyucu son 24 saatte {posts} gönderi saydı, devir dosyasında {scan.window_lines} satır var. "
                         "Okuyucu ile bot arasında gönderi kayboluyor olabilir."))
-    unread = unread_sources(fb, now)
+    unread = [(names or {}).get(key) or alias for key, alias in unread_sources(fb, now)]
     if unread:
         shown = ", ".join(unread[:UNREAD_LIST_MAX]) + (f" ve {len(unread) - UNREAD_LIST_MAX} tane daha" if len(unread) > UNREAD_LIST_MAX else "")
         out.append(("fb_grup_okunmadi", f"⚠️ Facebook: {len(unread)} kaynak {UNREAD_AFTER // timedelta(hours=1)} saatten uzun süredir okunmadı ({shown}); "
@@ -215,7 +216,9 @@ def watch(repo, data: dict | None, now: datetime, folder: Path | str | None = No
         return
     daily = fb.get("gunluk") if isinstance(fb.get("gunluk"), dict) else {}
     scan = scan_handoff(folder or HANDOFF_DIR, _cursor(repo.get_state(STATE_KEY)), _time(daily.get("pencere_bitis_utc")), now)
-    alerts = handoff_alerts(fb, scan, now)
+    names = ({k: r["name"] for k, r in source_map(repo.sources(PLATFORM, ALL_STATUSES)).items()}
+             if unread_sources(fb, now) else None)  # kaynak adları yalnız okunmayan kaynak varsa okunur
+    alerts = handoff_alerts(fb, scan, now, names)
     box = box_alert(repo, now)
     alerts += [box] if box is not None else []
     sample = daily_sample(fb, now) if kktc_hour(now) >= SAMPLE_HOUR else None
@@ -223,7 +226,7 @@ def watch(repo, data: dict | None, now: datetime, folder: Path | str | None = No
     if sample is not None and (not samples or samples[-1]["gun"] != sample["gun"]):
         samples = (samples + [sample])[-SAMPLE_KEEP:]
         repo.set_state(SAMPLE_KEY, json.dumps(samples))
-        names = {k: r["name"] for k, r in source_map(repo.sources(PLATFORM, ALL_STATUSES)).items()}
+        names = names or {k: r["name"] for k, r in source_map(repo.sources(PLATFORM, ALL_STATUSES)).items()}
         alerts += history_alerts(samples, names)
     for key, text in alerts:
         notify_owner(repo, key, text, repeat_hours=REPEAT_H)
