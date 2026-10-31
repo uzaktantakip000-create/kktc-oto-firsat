@@ -67,6 +67,9 @@ class SocialPost:
     # boşluk, noktalama, emoji farkı yok; en az 20 karakter; aynı ya da başka grup) gördüğü İLK gönderinin kimliği. Satır o ilk gönderinin
     # kendisiyse yok. Aktarıcı bu ilanı o gönderinin ilanının kopyası yapar (koşullar: Repository.link_first_post).
     first_post: str | None = None
+    # yalnız Facebook devir satırı "metin_kesik" (sosyal oturum 2b13520, 31.10.2026): metin kesik ("See more" açılamadı ya da kesik işaretli;
+    # okuyucu sondaki "…"yı siler). Alan yalnız kesikse yazılır; yoksa (eski satır da) False. Metnin son kısmından okunan fiyat kullanılmaz.
+    truncated: bool = False
 
 
 @dataclass

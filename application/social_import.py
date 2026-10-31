@@ -187,7 +187,7 @@ def parse_line(line: str) -> tuple[str, SocialPost] | str:
                       seller_posts_14d=radar if type(radar) is int and 1 <= radar <= MAX_RADAR else None,
                       extra_text=_extra_text(extra),
                       freshness=doc.get("tazelik") if doc.get("tazelik") in FRESHNESS else None,
-                      first_post=_first_post(doc.get("ilk_gonderi"), pid))
+                      first_post=_first_post(doc.get("ilk_gonderi"), pid), truncated=doc.get("metin_kesik") is True)
     return key, post
 
 

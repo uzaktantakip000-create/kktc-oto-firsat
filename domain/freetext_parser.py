@@ -212,6 +212,20 @@ def body_price(text: str) -> tuple[float, str] | None:
     return (price[0], price[1]) if price else None
 
 
+CUT_TAIL = 30  # kesik metnin (devir "metin_kesik") güvenilmeyen son karakterleri: sayı, para birimi ya da "bin" yarıda kalmış olabilir
+
+
+def price_in_cut_tail(text: str, tail: int = CUT_TAIL) -> bool:
+    """Gövdenin fiyatı son `tail` karaktere bağlı mı: o kısım atılınca fiyat kayboluyor ya da değişiyor mu? Facebook'ta "See more" açılmayan
+    gönderide metin sözcük/sayı ortasında bitebilir ("£12,500" -> "£12,5"; "12.500 STG" -> "12.500"; "Fiyat 8 bin" -> "Fiyat 8"; sosyal oturum
+    31.10.2026: açılması gereken gönderilerin %63'ü kesik kaldı). Fiyatı olmayan gövde False."""
+    full = body_price(text)
+    if full is None:
+        return False
+    body = (text or "").rstrip()
+    return body_price(body[:max(0, len(body) - tail)]) != full
+
+
 def _km_value(token: str) -> int | None:
     m = re.fullmatch(r"(\d{1,3})[^\S\n]*(?:bin|k)", token, re.I)
     digits = int(m.group(1)) * 1000 if m else int(re.sub(r"[.,]", "", token))

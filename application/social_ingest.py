@@ -17,7 +17,7 @@ from application.social_port import ListingSink, SocialPost, SocialSource
 from domain.caption_parser import is_sold_post, sold_ilan_no
 from domain.data_gate import DATE_SEEN, DATE_UNSURE, FIELD_PRICE  # fiyat yalnız FB satış kutusunda (ilk hafta en fazla 🟡); tarih belirsiz (anlık
 # bildirim yok); paylaşım saati okunamadı (mesaj "paylaşıldı" demez)
-from domain.freetext_parser import body_price, diagnose
+from domain.freetext_parser import body_price, diagnose, price_in_cut_tail
 from domain.price import TL_CAR_MIN
 from infrastructure.collectors.facebook_groups import RawGroupPost
 from infrastructure.collectors.instagram_apify import RawPost
@@ -97,6 +97,14 @@ def price_only_in_field(post: SocialPost, data: dict) -> bool:
     return body_price(post.text) != (data["price_amount"], data["currency"])
 
 
+def cut_tail_price(post: SocialPost, data: dict) -> bool:
+    """Kesik metinde (devir "metin_kesik") okunan fiyat gövdenin son kısmına bağlı: sayı ya da birim yarıda kalmış olabilir, kullanılmaz
+    (31.10.2026). Satış kutusundan gelen fiyat (kutu satırları kesilmez) ve kesik olmayan metin etkilenmez."""
+    if not post.truncated or data.get("price_amount") is None or data.get("extraction_by") == "llm":
+        return False
+    return body_price(post.text) == (data["price_amount"], data["currency"]) and price_in_cut_tail(post.text)
+
+
 def raw_instagram_post(post: SocialPost, source: SocialSource) -> RawPost:
     return RawPost(shortcode=post.post_id, url=post.url, posted_at=post.posted_at, caption=post.text,
                    photo_url=post.image_url, owner=(post.owner or source.key).lower())
@@ -147,6 +155,10 @@ def ingest_facebook(posts: Iterable[SocialPost], source: SocialSource, sink: Lis
             st.fetched += 1
             fresh = raw.post_id not in known
             data = listing_data(raw, hint)
+            cut = data is not None and cut_tail_price(post, data)
+            if cut:  # fiyat kesik metnin sonundan: fiyatsız sayılır (fotoğraf yine okunabilir; yapay zekâ aynı kesik yazıyı okumaz)
+                data = None
+                _count(st.reasons, "kesik_fiyat")
             if data is not None:
                 st.parsed += 1
             if data is not None and data["km"] is None and reader and text_llm and budget.km_left > 0 and llm_open() and fresh:
@@ -157,8 +169,8 @@ def ingest_facebook(posts: Iterable[SocialPost], source: SocialSource, sink: Lis
                     st.km_read += 1
             why = None
             if data is None:
-                why = diagnose(raw.text)
-                if reader and text_llm and why in LLM_RETRY and llm_open() and fresh:  # araç gönderisi ama kural okuyamadı: yapay zekâ bir kez dener
+                why = "fiyat_yok" if cut else diagnose(raw.text)
+                if reader and text_llm and why in LLM_RETRY and llm_open() and fresh and not cut:  # araç gönderisi ama kural okuyamadı: yapay zekâ bir kez dener
                     data = llm_listing_data(raw, hint, reader)
                     if data:
                         st.llm_read += 1
@@ -174,7 +186,7 @@ def ingest_facebook(posts: Iterable[SocialPost], source: SocialSource, sink: Lis
                 elif data is None and why == "fiyat_yok":
                     _count(st.reasons, "foto_url_yok")  # okuyucu görsel adresi vermedi (şablon kontrolü için sayaç)
                 if data is None and priceless and why == "fiyat_yok":
-                    data = priceless_data(raw, hint)
+                    data = priceless_data(raw, hint, drop_price=cut)
                     if data is not None:
                         st.priceless += 1
                         why = None

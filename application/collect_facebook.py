@@ -59,11 +59,12 @@ def listing_data(post: RawGroupPost, source: dict) -> dict | None:
     return data
 
 
-def priceless_data(post: RawGroupPost, source: dict) -> dict | None:
+def priceless_data(post: RawGroupPost, source: dict, drop_price: bool = False) -> dict | None:
     """Fiyatı yazmayan araç gönderisi (marka + yıl okunur, fiyat yok): fiyatsız ilan satırı (11.10.2026, "📞 FİYAT SOR"). Fiyat alanları boş,
-    `urgency_signals` = ["fiyatsiz"]: değerlendirmeye ve emsal havuzuna girmez (ikisi de fiyat ister); yalnız application/ask_price okur."""
+    `urgency_signals` = ["fiyatsiz"]: değerlendirmeye ve emsal havuzuna girmez (ikisi de fiyat ister); yalnız application/ask_price okur.
+    drop_price: okunan fiyat güvenilmez (kesik metnin sonundan, social_ingest.cut_tail_price): fiyat yok sayılır."""
     p = parse_freetext(post.text, default_steering=group_default_steering(source), allow_no_price=True)
-    if p is None or p.price_amount is not None:
+    if p is None or (p.price_amount is not None and not drop_price):
         return None
     return {
         "url": post.url, "posted_at": post.posted_at, "raw_text": post.text, "photo_urls": [],
