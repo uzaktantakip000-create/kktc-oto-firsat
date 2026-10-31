@@ -51,7 +51,7 @@ def _load_tried(repo) -> dict[str, int]:
 
 def collect_kibrisarabaal(repo: Repository, source: dict, max_new: int = 10, now: datetime | None = None,
                           max_seconds: float | None = RUN_SECONDS, client=None, sleep=None, clock=None) -> KaaStats:
-    """Kapı kapalıysa (izin yok, VPS değil, iletişim adresi yok, engel beklemesi/durdurma, robots.txt yasak) siteye HİÇ istek atılmaz:
+    """Kapı kapalıysa (izin yok, VPS değil, tarayıcı kimliği taklidi, engel beklemesi/durdurma, robots.txt yasak) siteye HİÇ istek atılmaz:
     stats.skipped dolu döner (cron_collect bunu ne hata ne başarı sayar; /durum'da nötr satır). Açıksa: harita -> en yeni max_new yeni ilan.
     `client`/`sleep`/`clock` yalnız testler için (sahte istemci ve saat)."""
     now = now or datetime.now(timezone.utc)

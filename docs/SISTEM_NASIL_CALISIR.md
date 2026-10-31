@@ -21,7 +21,7 @@ Siteyi her seferinde baştan okumaz.
 
 ## Hangi güvenlikler var?
 - Siteler nazik hızda okunur.
-- **KibrisArabaAl (21.10.2026'dan beri):** site 10.10'dan beri bizi engelliyor; izni gelene kadar hiç okunmuyor (izin kapısı kapalı, /durum'da "⏸ izin bekleniyor"). İzin gelince yalnız sunucudan, kimliğimizi ve iletişim adresimizi söyleyerek, robots.txt'e uyarak (en az 10 sn aralık), saatte en çok 60 / günde 300 istekle ve yalnız yeni ilanları okur; eski ilanları yeniden açmaz. Site engel verirse 24 saat durur (ayrıntı: KKTC_OTO_SISTEM_SPEC.md §24.34).
+- **KibrisArabaAl (21.10.2026'dan beri):** site 10.10'dan beri bizi engelliyor; sahip 01.11.2026'da sitenin iznini aldı, izin kapısı açıldı. Yalnız sunucudan, kimliğimizi (KKTCOtoBot) söyleyerek, robots.txt'e uyarak (en az 10 sn aralık), saatte en çok 60 / günde 300 istekle ve yalnız yeni ilanları okur; eski ilanları yeniden açmaz. Site engel verirse 24 saat durur (ayrıntı: KKTC_OTO_SISTEM_SPEC.md §24.34).
 - Bir site bir anda "tüm ilanlar kalktı" derse veya okuma bozulursa robot durur ve alarm verir; yanlış toplu silme yapmaz.
 - Şüpheli ilanlar (bozuk fiyat, peşinat/taksit, hasarlı, çok eksik bilgi) fırsat sayılmaz.
 - Yapay zekâ yalnızca okuyucu ve kontrolcüdür; tek başına fırsat ilan etmez.

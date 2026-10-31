@@ -2,7 +2,8 @@
 10.10.2026'dan beri site botu 403 ile engelliyor; engel AŞILMAZ, tek meşru yol sitenin izni. İzin gelene kadar kapı KAPALI: hiçbir yerden
 (toplayıcı, bildirim öncesi canlılık kontrolü, admin_cli kaa, GitHub turları) siteye TEK istek gitmez. Kapı ancak üç şartla açık:
 KAA_IZIN=1, VPS'te (runner_gate.on_vps; GitHub turları hiç okumaz) ve engel beklemesi/durdurma yok. Açıkken her istek PoliteClient'tan geçer:
-- dürüst kimlik: "KKTCOtoBot/1.0 (+mailto:<BOT_CONTACT_EMAIL>)" + From başlığı (adres yoksa ÇALIŞMAZ), düz httpx, proxy yok (trust_env=False);
+- dürüst kimlik: "KKTCOtoBot/1.0" (BOT_CONTACT_EMAIL varsa "(+mailto:<adres>)" + From başlığı; sahip 01.11.2026: site adres istemedi, isteğe
+  bağlı), düz httpx, proxy yok (trust_env=False);
   KAA_USER_AGENT tam değiştirir ama tarayıcı kimliği (Mozilla/...) olamaz; site anahtar verirse KAA_ACCESS_TOKEN (+ KAA_TOKEN_HEADER);
 - robots.txt günde en çok bir kez okunur (bot_state 'kaa_robots'): can_fetch("KKTCOtoBot") ve max(10 sn, Crawl-delay) aralık;
   401/403 = her şey yasak, 5xx = bu tur yok;
@@ -26,7 +27,7 @@ from infrastructure.collectors import kibrisarabaal
 from infrastructure.collectors.kibrisarabaal import AGENT, ROBOTS, SITEMAP, Blocked
 
 GATE_ENV = "KAA_IZIN"  # "1" = sahip izin geldiğini söyledi (yalnız VPS ortam dosyasında)
-CONTACT_ENV = "BOT_CONTACT_EMAIL"  # sitenin bize ulaşacağı adres: User-Agent ve From başlığında
+CONTACT_ENV = "BOT_CONTACT_EMAIL"  # isteğe bağlı: sitenin bize ulaşacağı adres (User-Agent ve From başlığında)
 UA_ENV = "KAA_USER_AGENT"  # isteğe bağlı: sitenin istediği kimlik (tam değiştirir)
 TOKEN_ENV, TOKEN_HEADER_ENV = "KAA_ACCESS_TOKEN", "KAA_TOKEN_HEADER"  # site anahtar verirse; başlık adı yoksa Authorization
 BLOCKED_SINCE = "10.10"  # /durum metni: engelin başladığı gün
@@ -89,21 +90,21 @@ def contact() -> str | None:
 
 
 def user_agent() -> str | None:
-    """Dürüst kimlik; iletişim adresi yoksa ya da KAA_USER_AGENT tarayıcı taklidiyse None (çalışılmaz)."""
-    email = contact()
-    if not email:
-        return None
+    """Dürüst kimlik; KAA_USER_AGENT tarayıcı taklidiyse None (çalışılmaz). İletişim adresi isteğe bağlı (sahip 01.11.2026)."""
     override = (os.environ.get(UA_ENV) or "").strip()
     if override:
         return None if "mozilla/" in override.lower() else override
-    return f"{AGENT}/1.0 (+mailto:{email})"
+    email = contact()
+    return f"{AGENT}/1.0 (+mailto:{email})" if email else f"{AGENT}/1.0"
 
 
 def headers() -> dict[str, str] | None:
     ua = user_agent()
     if ua is None:
         return None
-    out = {"User-Agent": ua, "From": contact()}
+    out = {"User-Agent": ua}
+    if email := contact():
+        out["From"] = email
     token = (os.environ.get(TOKEN_ENV) or "").strip()
     if token:
         out[(os.environ.get(TOKEN_HEADER_ENV) or "").strip() or "Authorization"] = token
@@ -149,8 +150,6 @@ def idle_reason(repo, now: datetime | None = None) -> str | None:
         return f"izin bekleniyor ({BLOCKED_SINCE}'dan beri engelli, istek atılmıyor)"
     if not on_vps():
         return "yalnız sunucuda okunur, burada istek atılmıyor"
-    if contact() is None:
-        return "izin açık ama iletişim adresi (BOT_CONTACT_EMAIL) eksik, istek atılmıyor"
     if user_agent() is None:
         return "KAA_USER_AGENT tarayıcı kimliği taklidi gibi (kabul edilmez), istek atılmıyor"
     try:

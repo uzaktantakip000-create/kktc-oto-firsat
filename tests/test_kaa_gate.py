@@ -164,7 +164,6 @@ CLOSED_CASES = {
     "izin yok (varsayılan)": ({}, {}),
     "izin var ama GitHub/yerel (VPS değil)": ({"KAA_IZIN": "1", "BOT_CONTACT_EMAIL": "bot@example.org", "KKTC_RUNNER": ""}, {}),
     "izin 1 değil": ({"KAA_IZIN": "evet", "KKTC_RUNNER": "vps", "BOT_CONTACT_EMAIL": "bot@example.org"}, {}),
-    "iletişim adresi yok": ({"KAA_IZIN": "1", "KKTC_RUNNER": "vps"}, {}),
     "tarayıcı kimliği taklidi": ({"KAA_IZIN": "1", "KKTC_RUNNER": "vps", "BOT_CONTACT_EMAIL": "bot@example.org",
                                   "KAA_USER_AGENT": "Mozilla/5.0 (Windows NT 10.0) Chrome/120"}, {}),
     "engel beklemesi": ({"KAA_IZIN": "1", "KKTC_RUNNER": "vps", "BOT_CONTACT_EMAIL": "bot@example.org"},
@@ -217,13 +216,13 @@ def test_polite_client_itself_refuses_when_the_gate_closes(monkeypatch):
         web.get(site.SITEMAP)
 
 
-def test_missing_contact_is_logged_once(monkeypatch, capsys):
+def test_idle_reason_is_logged_once(monkeypatch, capsys):
     monkeypatch.setenv("KAA_IZIN", "1")
-    monkeypatch.setenv("KKTC_RUNNER", "vps")
+    monkeypatch.setenv("KKTC_RUNNER", "")  # VPS değil
     repo = Repo()
     for _ in range(3):
-        assert "BOT_CONTACT_EMAIL" in kaa.collect_kibrisarabaal(repo, SOURCE, now=NOW, client=Exploding()).skipped
-    assert capsys.readouterr().out.count("BOT_CONTACT_EMAIL") == 1
+        assert "sunucuda" in kaa.collect_kibrisarabaal(repo, SOURCE, now=NOW, client=Exploding()).skipped
+    assert capsys.readouterr().out.count("sunucuda") == 1
 
 
 # --- 2. dürüst kimlik ---
@@ -248,11 +247,15 @@ def test_user_agent_override_and_access_token(monkeypatch):
     assert kaa_gate.user_agent() is None and kaa_gate.headers() is None
 
 
-def test_bad_contact_is_rejected(monkeypatch):
+def test_contact_is_optional(monkeypatch):
+    """Sahip 01.11.2026: site iletişim adresi istemedi. Adres yoksa ya da bozuksa kimlik yalnız bot adıdır, From başlığı yok."""
     open_gate(monkeypatch)
     for bad in ("", "adres-yok", "a@b", "a b@c.org"):
         monkeypatch.setenv("BOT_CONTACT_EMAIL", bad)
-        assert kaa_gate.user_agent() is None
+        assert kaa_gate.user_agent() == "KKTCOtoBot/1.0" and "From" not in kaa_gate.headers()
+    monkeypatch.delenv("BOT_CONTACT_EMAIL")
+    assert kaa_gate.headers() == {"User-Agent": "KKTCOtoBot/1.0"}
+    assert kaa_gate.idle_reason(Repo()) is None  # kapı adres olmadan açık
 
 
 def test_client_is_plain_httpx_without_proxies_or_browser_fingerprint():

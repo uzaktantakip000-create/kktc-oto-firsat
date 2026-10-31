@@ -105,7 +105,7 @@ def fill_engine() -> None:
 
 
 def backfill_kaa() -> None:
-    """kibrisarabaal geçmiş ilanlarını doldurur. YALNIZ izin kapısı açıkken (application/kaa_gate: KAA_IZIN=1, VPS, iletişim adresi, engel
+    """kibrisarabaal geçmiş ilanlarını doldurur. YALNIZ izin kapısı açıkken (application/kaa_gate: KAA_IZIN=1, VPS, dürüst kimlik, engel
     yok); kapalıysa siteye tek istek atmadan nedenini yazıp çıkar. Kota (saatte 60, günde 300) ve robots.txt aralığı burada da geçerli:
     kota dolunca durur, sonraki çalıştırmada kaldığı yerden devam eder. Kullanım: admin_cli kaa [en_fazla_ilan]"""
     from application.collect_kibrisarabaal import collect_kibrisarabaal

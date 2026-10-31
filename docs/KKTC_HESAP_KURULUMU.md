@@ -24,7 +24,7 @@ KibrisArabaAl 10.10.2026'dan beri bizi engelliyor. Sitenin izni gelene kadar kap
 | Değişken | Ne için | Gerekli mi? |
 |---|---|---|
 | `KAA_IZIN` | `1` = site izin verdi, okumayı aç. Yoksa ya da başka değerse kapalı | İzin gelince |
-| `BOT_CONTACT_EMAIL` | Sitenin bize ulaşacağı e-posta. Botun kimliğinde görünür: `KKTCOtoBot/1.0 (+mailto:adres)` | **Evet**: yoksa kapı açık olsa da okunmaz |
+| `BOT_CONTACT_EMAIL` | Sitenin bize ulaşacağı e-posta. Botun kimliğinde görünür: `KKTCOtoBot/1.0 (+mailto:adres)` | Hayır (isteğe bağlı; sahip 01.11.2026: site istemedi). Yoksa kimlik yalnız `KKTCOtoBot/1.0` |
 | `KAA_USER_AGENT` | Site belli bir kimlik isterse onun tamamı. Tarayıcı kimliği (`Mozilla/...`) kabul edilmez | Hayır |
 | `KAA_ACCESS_TOKEN` | Site bir erişim anahtarı verirse | Hayır |
 | `KAA_TOKEN_HEADER` | Anahtarın gideceği başlık adı (ör. `X-Api-Key`); boşsa `Authorization` | Hayır |
