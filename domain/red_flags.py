@@ -10,7 +10,7 @@ BLOCKING = {
     "airbag açık/patlak": r"airbag(ler)?\s*(a[çc][ıi]k|patlak|patlam[ıi][şs]|yok)",
     "vuruk/su basmış": r"\bvuruk\b|su bas(m[ıi][şs]|k[ıi]n)|sel (hasar|bask[ıi]n)",
     "hasarlı": r"hasarl[ıi]|kazal[ıi]|hasar kay[ıi]tl[ıi]",
-    "motor/şanzıman sorunlu": r"motor(u)? (sorunlu|arizal[ıi]|bozuk)|[sş]anz[ıi]man(ı)? (sorunlu|ar[ıi]zal[ıi]|bozuk)",
+    "motor/şanzıman sorunlu": r"motor(u)? (sorunlu|ar[ıi]zal[ıi]|bozuk)|[sş]anz[ıi]man(ı)? (sorunlu|ar[ıi]zal[ıi]|bozuk)",
     "as is / parça": r"\bas is\b|par[çc]a ara[çc]|par[çc]alik|[çc][ıi]kma motor|y[üu]r[üu]m[ıi]yor|[çc]al[ıi][şs]m[ıi]yor",
     "kira/taksit": r"\baylik\b|\baylık\b|taksit(le)? (ile )?sat[ıi][şs]|pe[şs]inat",
     # alıcı krediyi devralıyorsa / senetle satılıyorsa ilandaki fiyat araç bedeli değildir; "senet yok/istenmez" olumsuzlamaları tetiklemez

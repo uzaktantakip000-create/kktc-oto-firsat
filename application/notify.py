@@ -4,7 +4,7 @@ from urllib.parse import quote
 
 import httpx
 
-from application.evaluate import Evaluated, confidence_label
+from application.evaluate import CHEAP_VERIFY, Evaluated, confidence_label
 from domain.comparables import Market, effective_km
 from domain.data_gate import DATE_SEEN, DATE_UNSURE, GAP_LABELS, KM_LOWER, KM_UNKNOWN_WARNING
 from domain.kktc_time import kktc_hour
@@ -198,12 +198,18 @@ def km_text(listing: dict, missing: str = "km yok") -> str:
     return f"{listing['km']:,}{plus} km".replace(",", ".")
 
 
+CHEAP_HEAD = ("🔍 ÇOK UCUZ — ÖNCE TEYİT ET · %{pct:.0f} kâr potansiyeli\n"
+              "ℹ️ 🟢 değil: fiyat benzerlerine göre inanılmayacak kadar ucuz. Gerçekse iyi fırsat; ama yazım hatası, eksik bilgi ya da "
+              "tuzak olabilir: önce arayıp fiyatı ve aracın durumunu teyit et")  # sahip 01.11.2026 (decision.cheap_to_verify)
+
+
 def format_alert(ev: Evaluated, note: dict | None = None, twins: list[dict] | None = None) -> str:
     """Sahibin kararı (03.10.2026): her mesaj = araç, fiyat, piyasa ortası + emsal sayısı, tek satır "neden", link (+ 2 düğme). Güven etiketi, 🆕, telefon
     satırı (WhatsApp düğmesi var), emsal listesi ve gümrük hatırlatması kalktı. KALANLAR güvenlik/veri uyarısıdır (km şüpheli, para birimi tahmin,
     yapay zekâ şüphesi, doğrulama işareti...): bunlar kısaltılmaz."""
     l, m, p = ev.listing, ev.market, ev.profit
     est = p.tier is Tier.ESTIMATED
+    verify = ev.kind == CHEAP_VERIFY and p.tier is Tier.NEGOTIABLE
     price = float(l["price_gbp"])
     km = km_text(l)
     steering = " · SOL DİREKSİYON" if l.get("steering") == "LHD" else ""
@@ -212,6 +218,7 @@ def format_alert(ev: Evaluated, note: dict | None = None, twins: list[dict] | No
         market = estimate_line(price, m.median_gbp, m.low_gbp) + f" · kâr (temkinli) ~{_gbp(p.profit_gbp)} ({m.n} ilanlık eğri)"
     else:
         head = (f"🟢 FIRSAT · %{p.profit_pct * 100:.0f} kâr potansiyeli" if p.tier is Tier.STRONG
+                else CHEAP_HEAD.format(pct=p.profit_pct * 100) if verify
                 else f"🟡 PAZARLIK FIRSATI · %{p.profit_pct * 100:.0f} kâr potansiyeli\n"
                      "ℹ️ 🟢 kadar kesin değil, ama temkinli hesapla da en az %15 kâr kalıyor: pazarlıkla değerlendir")
         cheap = f" · en ucuz çeyrek {_gbp(m.p25_gbp)}" if m.p25_gbp else ""  # sahip 27.10.2026: "ortalama fiyatlar yüksek": ilan fiyatı ortası, alt seviye de görünsün
@@ -230,7 +237,7 @@ def format_alert(ev: Evaluated, note: dict | None = None, twins: list[dict] | No
     lines += ev.checks
     gaps = [w for w in ev.warnings if w in GAP_LABELS] if p.tier is Tier.NEGOTIABLE else []  # 🟡: kayıttaki eksik kodu ham görünmesin (27.10.2026)
     if gaps:
-        lines.append("🟡 Neden 🟢 değil: " + "; ".join(GAP_LABELS[g] for g in gaps))
+        lines.append(("🔍 Şüphe: " if verify else "🟡 Neden 🟢 değil: ") + "; ".join(GAP_LABELS[g] for g in gaps))
     warnings = _dikkat(l, [w for w in ev.warnings if w not in gaps])
     if warnings:
         lines.append("⚠️ Dikkat: " + ", ".join(warnings))
@@ -360,7 +367,7 @@ def _burst_summary(repo: Repository, token: str, fresh: list[Evaluated], subs: l
     return len(fresh) if done else 0
 
 
-def _record_alert(repo: Repository, listing_id, chat_id: str, tier: str, msg_id, *, evaluation_id, price_gbp) -> None:
+def _record_alert(repo: Repository, listing_id, chat_id: str, tier: str, msg_id, *, evaluation_id, price_gbp, kind: str = "") -> None:
     """Mesaj Telegram'a GİTTİ: kaydını yaz. Yazılamazsa bir kez daha dene; yine olmazsa `bot_state`'e yedek iz bırak (`alert_exists` ve
     `pending_strong` bunu da sayar), logla ve sahibe 24 saatte en çok 1 uyarı yaz. Aksi halde ilanın kaydı olmadığı için her turda (15 dk)
     aynı mesaj yeniden giderdi. Kapsam: yalnız `alerts` tablosuna özgü sorunlar (eksik sütun, kısıt hatası). Veritabanı bağlantısı tümden
@@ -368,7 +375,8 @@ def _record_alert(repo: Repository, listing_id, chat_id: str, tier: str, msg_id,
     err: Exception | None = None
     for _ in range(2):
         try:
-            repo.save_alert(listing_id, chat_id, tier, msg_id, evaluation_id=evaluation_id, price_gbp=price_gbp)
+            repo.save_alert(listing_id, chat_id, tier, msg_id, evaluation_id=evaluation_id, price_gbp=price_gbp,
+                            **({"kind": kind} if kind else {}))  # alerts.kind: 🔍 ÇOK UCUZ — TEYİT ET (günlük sınırı ayrı sayılır)
             return
         except Exception as e:
             err = e
@@ -541,7 +549,7 @@ def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes:
                 print(f"bildirim gönderilemedi ({mask_chat(sub['chat_id'])}): {e.status} {e.description}")
                 continue
             _record_alert(repo, ev.listing["id"], sub["chat_id"], ev.profit.tier.value, res["message_id"],
-                          evaluation_id=ev.listing.get("evaluation_id"), price_gbp=float(ev.listing["price_gbp"]))
+                          evaluation_id=ev.listing.get("evaluation_id"), price_gbp=float(ev.listing["price_gbp"]), kind=ev.kind)
             delivered = True
         if delivered:
             sent += 1

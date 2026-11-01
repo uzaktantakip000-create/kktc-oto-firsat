@@ -110,7 +110,7 @@ class FakeRepo:
     def purge_personal_data(self):
         return 0, 0, 0
 
-    def alerts_sent_since(self, tier, hours=24):
+    def alerts_sent_since(self, tier, hours=24, kind=None):
         return 0
 
 
@@ -166,6 +166,7 @@ def wire(monkeypatch, w, *, llm_configured=True, orange_floor_open=False):
 
     monkeypatch.setattr(cron_evaluate, "pending_alerts", pending)
     monkeypatch.setattr(cron_evaluate, "pending_clean_negotiable", lambda *a, **k: [])  # 🟡 PAZARLIK FIRSATI ayrı sınanır (test_clean_negotiable)
+    monkeypatch.setattr(cron_evaluate, "pending_cheap_verify", lambda *a, **k: [])  # 🔍 ÇOK UCUZ ayrı sınanır (test_cheap_verify)
 
     def new_client():
         w.clients += 1

@@ -195,6 +195,25 @@ def clean_negotiable(listing: dict, pool: list[dict], s: Settings, book: PriceBo
     return d if d is not None and d.profit.tier is Tier.STRONG and d.sendable else None
 
 
+PRICE_DOUBTS = ("fiyat_gurultu", "fiyat_asiri_dusuk", "km_temkinli")  # 🔍 ÇOK UCUZ — TEYİT ET'in kabul ettiği (ve mesajda yazdığı) şüpheler
+
+
+def cheap_to_verify(listing: dict, pool: list[dict], s: Settings, book: PriceBook | None = None,
+                    now: datetime | None = None) -> Decision | None:
+    """🔍 ÇOK UCUZ — ÖNCE TEYİT ET (01.11.2026, sahip): ilan 🟢 değil, ama YALNIZ fiyat-inanılırlığı kapıları gevşetilince (2σ gürültü kapalı,
+    temkinli km kapalı, "emsallerin yarısından düşük" sınırı `cheap_verify_min_ratio`) 🟢'nin bütün öbür kapılarından geçiyorsa (kâr ≥ %20,
+    asgari net kâr, emsal ≥ 8, en ucuz çeyrek, emsal yılı, TL/para birimi, masraf/plaka, tuzak kelimeleri, kullanıcı kararları) gevşek karar
+    döner; yoksa None. clean_negotiable gibi aynı `decide()` gevşetilmiş ayarla çağrılır (yeni kapı yok). Gerçek 🟢 ilan için None: o 🟢
+    yolundan gider. Mesajdaki rakamlar ilanın kayıtlı değerlendirmesinden gelir; bu yalnız "fiyat şüphesi dışında temiz mi" sorusunun cevabıdır."""
+    strict = decide(listing, pool, s, book, now)
+    if strict is None or strict.profit.tier is Tier.STRONG:
+        return None
+    relaxed = s.model_copy(update={"strong_max_z": math.inf, "unknown_km_check": False,
+                                   "absurd_price_ratio": min(s.absurd_price_ratio, s.cheap_verify_min_ratio)})
+    d = decide(listing, pool, relaxed, book, now)
+    return d if d is not None and d.profit.tier is Tier.STRONG and d.sendable else None
+
+
 def _fresh_tl_strong(listing: dict, pool: list[dict], price: float, text: str, warnings: list[str], s: Settings, book: PriceBook | None,
                      now: datetime, strong_checks: bool) -> Decision | None:
     """Taze TL fiyatlı ilanın 🟢 yolu (20.10.2026; `data_gate.tl_fresh`): piyasa £ ilan gibi kurulur (önce TL emsalsiz: eski/tarihsiz TL emsaller

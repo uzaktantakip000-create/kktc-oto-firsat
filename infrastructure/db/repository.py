@@ -855,10 +855,12 @@ class Repository:
                  AND (l.posted_at IS NULL OR l.posted_at > l.first_seen_at - interval '4 days')
                ORDER BY l.first_seen_at""", (days,)).fetchall()
 
-    def alerts_sent_since(self, tier: str, hours: int = 24) -> int:
-        """Son `hours` saatte bu seviyede bildirim gönderilen FARKLI ilan sayısı (🟠 günlük sınırı için)."""
-        return self.conn.execute("SELECT count(DISTINCT listing_id) AS n FROM alerts WHERE tier=%s AND sent_at > NOW() - make_interval(hours => %s)",
-                                 (tier, hours)).fetchone()["n"]
+    def alerts_sent_since(self, tier: str, hours: int = 24, kind: str | None = None) -> int:
+        """Son `hours` saatte bu seviyede bildirim gönderilen FARKLI ilan sayısı (🟠 günlük sınırı için). `kind` verilirse yalnız o mesaj
+        türü (🔍 ÇOK UCUZ — TEYİT ET'in ayrı günlük sınırı)."""
+        kind_sql = " AND kind = %s" if kind is not None else ""
+        return self.conn.execute("SELECT count(DISTINCT listing_id) AS n FROM alerts WHERE tier=%s AND sent_at > NOW() - make_interval(hours => %s)"
+                                 + kind_sql, (tier, hours, *((kind,) if kind is not None else ()))).fetchone()["n"]
 
     def feedback_votes(self) -> int:
         """Fırsat mesajlarındaki SAHİP düğme oyları (denetim ve "satılmış" bildirimi hariç): öğrenme kapısı bunu sayar (application/learning.py)."""
@@ -1226,13 +1228,14 @@ class Repository:
             return True
         return tier in SENT_ONCE_TIERS and self.get_state(unsaved_alert_key(listing_id, chat_id)) is not None
 
-    def save_alert(self, listing_id, chat_id: str, tier: str, msg_id, *, evaluation_id, price_gbp) -> None:
+    def save_alert(self, listing_id, chat_id: str, tier: str, msg_id, *, evaluation_id, price_gbp, kind: str | None = None) -> None:
         """Bildirim kaydı. `evaluation_id`: bildirimi doğuran değerlendirme satırı; `price_gbp`: gönderildiği andaki fiyat (£).
-        İkisi de ZORUNLU anahtar (bilinmiyorsa açıkça None): unutulan bir çağıran sessizce NULL yazmasın (migration 019)."""
+        İkisi de ZORUNLU anahtar (bilinmiyorsa açıkça None): unutulan bir çağıran sessizce NULL yazmasın (migration 019).
+        `kind`: aynı seviyenin ayrı mesaj türü (application.evaluate.CHEAP_VERIFY: 🟡 seviyesinde 🔍 ÇOK UCUZ — TEYİT ET); yoksa NULL (eskisi gibi)."""
         self.conn.execute(
-            "INSERT INTO alerts (listing_id,chat_id,tier,telegram_msg_id,evaluation_id,fiyat_gonderimde) "
-            "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
-            (listing_id, chat_id, tier, str(msg_id), evaluation_id, price_gbp),
+            "INSERT INTO alerts (listing_id,chat_id,tier,telegram_msg_id,evaluation_id,fiyat_gonderimde,kind) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING",
+            (listing_id, chat_id, tier, str(msg_id), evaluation_id, price_gbp, kind),
         )
 
     def urgent_sent(self, listing_ids, days: int) -> list[dict]:

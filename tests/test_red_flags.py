@@ -24,3 +24,9 @@ def test_unquantified_cost():
                   "kaporta masrafı var", "masrafsız, servis bakımlı", "hiçbir masrafı yoktur"):
         assert not cost_unknown(minor), minor
     assert warning_flags("ufak tefek masrafı var") == ["ufak masraf var"]
+
+
+def test_engine_fault_with_turkish_dotless_i_is_blocking():
+    """01.11.2026: motor kalıbı yalnız "arizali" yazımını tanıyordu; Türkçe yazılan "motor arızalı" tuzak sayılmıyordu (şanzımanınki doğruydu)."""
+    for text in ("motor arızalı", "Motoru arızalı satılık", "motor arizali", "şanzıman arızalı"):
+        assert blocking_flags(text) == ["motor/şanzıman sorunlu"], text

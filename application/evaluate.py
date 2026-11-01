@@ -1,9 +1,9 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 
 from application.decision_record import decision_record
 from domain.comparables import Market
-from domain.decision import Decision, clean_negotiable, decide, send_allowed
+from domain.decision import PRICE_DOUBTS, Decision, cheap_to_verify, clean_negotiable, decide, send_allowed
 from domain.normalize import is_car_brand
 from domain.price_book import BookRow, PriceBook
 from domain.profit import Confidence, ProfitResult, Tier
@@ -38,6 +38,10 @@ class Evaluated:
     checks: list[str] = field(default_factory=list)  # ✅ ile gösterilen doğrulama satırları
     method: str = "A"  # A = doğrudan emsal, B = değer tablosu eğrisi (🟠)
     book_row: BookRow | None = None  # mesajda "📘 Değer tablosu" satırı için
+    kind: str = ""  # CHEAP_VERIFY: 🟡 seviyesinde giden 🔍 ÇOK UCUZ — TEYİT ET mesajı (notify.format_alert başlığı)
+
+
+CHEAP_VERIFY = "ucuz_teyit"
 
 
 Assessment = Decision  # eski ad (karar mantığı artık domain/decision.py'de)
@@ -227,6 +231,26 @@ def pending_clean_negotiable(repo: Repository, s: Settings, book=None, platform:
     book = _resolve(book)
     now = now or datetime.now(timezone.utc)
     return [ev for ev in rows if clean_negotiable(ev.listing, pool, s, book, now) is not None]
+
+
+def pending_cheap_verify(repo: Repository, s: Settings, book=None, platform: str | None = None,
+                         now: datetime | None = None) -> list[Evaluated]:
+    """🔍 ÇOK UCUZ — ÖNCE TEYİT ET adayları (01.11.2026, sahip): son değerlendirmesi 🟡 olan, henüz gitmemiş ilanlardan kârı ≥ %20, doğrudan
+    emsali ≥ 8 ve kayıtlı şüphesi fiyat-inanılırlığı (`PRICE_DOUBTS`) olanlar bugünkü havuzla `decision.cheap_to_verify`'dan yeniden geçirilir
+    (öbür bütün 🟢 kapıları). Yapay zekânın reddettiği ilan alınmaz; havuz yalnız taze aday varsa yüklenir (pending_clean_negotiable gibi).
+    Dönenler 🟡 seviyesinde, `kind=CHEAP_VERIFY` ile işaretli (mesaj başlığı ve günlük sınır ayrı)."""
+    from application.send_gate import _fresh_candidates  # send_gate bu modülü içe aktarıyor: döngü olmasın diye burada
+    rows = [ev for ev in pending_alerts(repo, tier=Tier.NEGOTIABLE, platform=platform)
+            if send_allowed(Tier.STRONG, ev.method, ev.market.n) and ev.profit.profit_pct >= s.strong_threshold
+            and any(w in PRICE_DOUBTS for w in ev.warnings)
+            and repo.get_state(f"verify:{ev.listing['id']}") != "bad"]
+    rows = _fresh_candidates(repo, rows) if rows else []
+    if not rows:
+        return []
+    pool = repo.market_pool(keys=pool_keys([ev.listing for ev in rows]))
+    book = _resolve(book)
+    now = now or datetime.now(timezone.utc)
+    return [replace(ev, kind=CHEAP_VERIFY) for ev in rows if cheap_to_verify(ev.listing, pool, s, book, now) is not None]
 
 
 def apply_send_floor(evaluated: list[Evaluated], label: str = "") -> list[Evaluated]:

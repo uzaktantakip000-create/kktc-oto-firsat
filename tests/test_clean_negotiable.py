@@ -48,6 +48,7 @@ def _deliver(monkeypatch, sent_last_24h: int, enabled: bool = True):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setattr(cron_evaluate, "pending_alerts", lambda *a, **k: [])
     monkeypatch.setattr(cron_evaluate, "pending_clean_negotiable", lambda repo, s, book=None, platform=None: ["aday"])
+    monkeypatch.setattr(cron_evaluate, "pending_cheap_verify", lambda repo, s, book=None, platform=None: [])
     monkeypatch.setattr(cron_evaluate, "gonderim_kontrol", lambda repo, evs, label: (list(evs), []))
     monkeypatch.setattr(cron_evaluate.urgent, "run", lambda *a, **k: 0)
 
@@ -56,7 +57,7 @@ def _deliver(monkeypatch, sent_last_24h: int, enabled: bool = True):
         return len(evs)
 
     monkeypatch.setattr(cron_evaluate, "send_alerts", send_alerts)
-    repo = type("R", (), {"alerts_sent_since": lambda self, tier, hours=24: sent_last_24h if tier == "pazarlik" else 0})()
+    repo = type("R", (), {"alerts_sent_since": lambda self, tier, hours=24, kind=None: sent_last_24h if tier == "pazarlik" and kind is None else 0})()
     s = Settings(clean_negotiable_alerts=enabled, estimated_alerts=False)
     cron_evaluate.deliver(repo, "t", "1", s, [], lambda: None)
     return [c for c in calls if c[0] is Tier.NEGOTIABLE]

@@ -141,4 +141,6 @@ Tek karar noktası: `domain/decision.py::decide()` (otomatik tarama, "ilanı bot
 
 - **Tutarı yazmayan masraf** (`masraf_belirsiz`; RULES_VERSION "2026-10-24"): metin "aracın masraf(lar)ı var(dır)/mevcut" diyor ve öncesindeki 25 karakterde küçültücü/tanımlayıcı (ufak, tefek, küçük, az, biraz, kozmetik, kaporta, boya, lastik, ön düzen, rakam) yoksa 🟢 en fazla 🟡 (`red_flags.cost_unknown`). Düşük fiyat masrafın karşılığı olabilir. Ders: 06.10'da "ARACIN MASRAFLARI VARDIR" diyen 2013 C180 £8.500 %37 kârla 🟢 gitti (eski uyarı kalıbı yalnız "masrafı var"ı tanıyordu). Ölçüm: son 30 günün 36 🟢 ilanından yalnız bu biri etkilenir.
 
+- **🔍 ÇOK UCUZ — ÖNCE TEYİT ET** (01.11.2026, sahip; karar kuralı DEĞİL, gönderim türü; spec §24.48): kârı ≥ %20, ≥ 8 emsalli ve 🟢 olmamasının tek nedeni `fiyat_gurultu` / `fiyat_asiri_dusuk` (0,35 ≤ fiyat/medyan < 0,50) / `km_temkinli` olan taze ilan, öbür bütün 🟢 kapılarından geçiyorsa 🟡 seviyesinde, şüphesi yazılı ayrı başlıkla gider (`decision.cheap_to_verify`; günde ≤3).
+
 Mesaj: 🟢 FIRSAT ya da 🟠 KONTROL ET; araç, fiyat, yer/kaynak/km/vites, piyasa ortası + emsal sayısı + masraf düşüldü, tek satır "neden", uyarılar (varsa), ilan tarihi, link; düğmeler: 👍 İşe yarar / 👎 Yanlış (+ telefon biliniyorsa 📲 WhatsApp); 10 oydan önce öğrenme (otomatik kaynak düşürme/kara liste) yok.
