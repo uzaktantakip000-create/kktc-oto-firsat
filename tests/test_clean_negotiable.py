@@ -104,3 +104,19 @@ def test_pool_is_not_read_when_no_candidate_is_fresh(monkeypatch):
 
 def test_only_fresh_candidates_are_rechecked_with_the_pool(monkeypatch):
     assert _pending(monkeypatch, [(1, 100), (2, 1)]) == ([2], 1)
+
+
+def test_recorded_absurd_price_is_not_rechecked(monkeypatch):
+    """30.10.2026 Focus "100 bin tl": kayıtlı değerlendirme fiyatı emsallerin yarısından düşük bulmuştu (fiyat_asiri_dusuk); yeni bir emsal
+    havuzu kaydırınca yeniden kontrol sınırı kılpayı geçti ve 🟡 gitti (mesaj kayıttaki rakamları gösterdi). Böyle aday hiç alınmaz."""
+    from application import evaluate
+    from tests.test_send_gate import cand
+    evs = [cand(i, tier=Tier.NEGOTIABLE, seen_h=1) for i in (1, 2)]
+    evs[0].warnings.append("fiyat_asiri_dusuk")
+    for e in evs:
+        e.listing.update(brand_norm="ford", model_norm="focus")
+    monkeypatch.setattr(evaluate, "pending_alerts", lambda *a, **k: list(evs))
+    monkeypatch.setattr(evaluate, "clean_negotiable", lambda listing, pool, s, book, now: object())
+    repo = type("R", (), {"get_state": lambda self, k: None, "resurfaced_kktcarabam": lambda self, ids: set(),
+                          "market_pool": lambda self, keys: []})()
+    assert [e.listing["id"] for e in evaluate.pending_clean_negotiable(repo, Settings())] == [evs[1].listing["id"]]

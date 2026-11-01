@@ -101,3 +101,12 @@ def test_record_and_evaluate_new_carry_the_tl_factor():
 
 def test_gap_label_explains_both_cases():
     assert "TL" in GAP_LABELS["tl_fiyat"] and "eski" in GAP_LABELS["tl_fiyat"] and "yeni" in GAP_LABELS["tl_fiyat"]
+
+
+def test_absurd_check_uses_the_unscaled_market():
+    """30.10.2026 Focus "100 bin tl" (£1.507): £ medyanının yarısından ucuzdu (0,455) ama ×0,89 piyasada oran 0,511'e çıktı ve sınırı geçti.
+    Taze TL'nin 🟢 yolu, katsayısız £ medyanının yarısından ucuz ilanda hiç açılmaz: eski yol (TL en fazla 🟡, fiyat_asiri_dusuk kaydı)."""
+    price = 8700 * 0.47  # £ medyanına göre 0,47 (yarıdan az); 0,89 katında 0,53 (yarıdan fazla)
+    assert price / (8700 * S.tl_fresh_factor) > S.absurd_price_ratio > price / 8700
+    d = decide(tl(price), POOL, S, now=NOW)
+    assert d.profit.tier is not Tier.STRONG and d.market.tl_factor is None

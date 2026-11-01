@@ -217,7 +217,9 @@ def pending_clean_negotiable(repo: Repository, s: Settings, book=None, platform:
     from application.send_gate import _fresh_candidates  # send_gate bu modülü içe aktarıyor: döngü olmasın diye burada
     rows = [ev for ev in pending_alerts(repo, tier=Tier.NEGOTIABLE, platform=platform)
             if send_allowed(Tier.STRONG, ev.method, ev.market.n) and ev.profit.profit_pct >= s.clean_negotiable_threshold
-            and repo.get_state(f"verify:{ev.listing['id']}") != "bad"]
+            and repo.get_state(f"verify:{ev.listing['id']}") != "bad"
+            and "fiyat_asiri_dusuk" not in ev.warnings]  # kayıtlı değerlendirme fiyatı emsallerin yarısından düşük buldu: havuz bir emsalle
+    # kayınca yeniden değerlendirme sınırı kılpayı geçebiliyor, mesaj ise kayıttaki rakamları gösterir (30.10.2026 Focus)
     rows = _fresh_candidates(repo, rows) if rows else []
     if not rows:
         return []

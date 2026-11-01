@@ -286,3 +286,14 @@ def test_reads_ending_at_the_limit_alert_on_yesterdays_utc_row():
     f = fb()
     f["sinir_gunluk"] = ["x"]
     assert hw.limit_alert(f, NOW) is None
+
+
+def test_group_not_read_in_the_last_20_hours_is_left_out_of_the_sample():
+    """31.10.2026: 24 saat aralıkla okunan grup örnek anında 24 sa 42 dk önce okunmuştu; "son 24 saatte 0 gönderi" okunmadığı içindi ve yanlış
+    "grup sessiz" uyarısı gitti. O gün okunmayan grup örneğe girmez; alanı olmayan (eski okuyucu) grup eskisi gibi girer."""
+    rows = {"fb:a": {"yeni_gonderi_24s": 0, "son_okuma_utc": (NOW - timedelta(hours=24, minutes=42)).isoformat()},
+            "fb:b": {"yeni_gonderi_24s": 0, "son_okuma_utc": (NOW - timedelta(hours=19)).isoformat()},
+            "fb:c": {"yeni_gonderi_24s": 3},
+            "fb:d": {"yeni_gonderi_24s": 0, "son_okuma_utc": "bozuk"}}
+    got = hw.daily_sample({"gunluk": {"gonderi": 10, "kesik_metin": 1}, "kaynaklar": rows}, NOW)
+    assert got["gruplar"] == {"fb:b": 0, "fb:c": 3}

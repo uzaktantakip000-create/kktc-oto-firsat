@@ -205,6 +205,9 @@ def _fresh_tl_strong(listing: dict, pool: list[dict], price: float, text: str, w
     m = find_market(dict(listing, currency="GBP"), pool, s, now)
     if m is None:
         return None
+    if price < m.median_gbp * s.absurd_price_ratio:
+        return None  # £ piyasasının yarısından ucuz: yazım hatası/tuzak. Katsayıyla düşürülmüş medyana göre bakılsaydı sınırı aşabilirdi
+        # (30.10.2026: "100 bin tl" Focus £1.507, £ medyanı £3.313 -> ×0,89 = £2.949, oran 0,511 > 0,50: 🟡 gitti, 🟢 de olabilirdi)
     d = _market_assessment(listing, tl_market(m, s), price, text, [], warnings, s, book, now)
     if d.profit.tier is Tier.STRONG and strong_checks:
         d = _strong_checks(listing, d, pool, s, book, now)

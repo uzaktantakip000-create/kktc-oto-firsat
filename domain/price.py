@@ -84,6 +84,9 @@ _SEP = "[ \\u00a0\\u202f\\u2009/]"  # boşluk türleri (bölünmez dahil) ve "/"
 _SPLIT_THOUSANDS = re.compile(rf"(?<![\d.,/])(\d{{1,3}})((?:{_SEP}\d{{3}})+)(?![\d.,/]?\d)")
 
 
+_BIN_THOUSANDS = re.compile(r"(?<![\d.,])(\d{1,3})[^\S\n]*bin[^\S\n]*(\d{3})(?![\d.,]?\d)", re.I)  # "5 bin 500" = 5.500 (denetim 01.11.2026)
+
+
 def join_split_thousands(text: str) -> str:
     """Boşluk ya da '/' ile yazılmış binlik ayracı: '6 500 STG' -> '6.500 STG', '1 650 000 TL' -> '1.650.000 TL', '12/800 £' -> '12.800 £'
     (yoksa '500' / '800' ayrı sayı sanılır). Üç haneli bir sayının ardından iki ya da daha çok grup gelirse (100 milyon üstü) baştaki
@@ -93,6 +96,7 @@ def join_split_thousands(text: str) -> str:
         if len(head) == 3 and len(groups) >= 2:
             return head + " " + ".".join(groups)
         return ".".join([head, *groups])
+    text = _BIN_THOUSANDS.sub(lambda m: f"{m.group(1)}.{m.group(2)}", text)  # "5 bin 500 stg" -> "5.500 stg" (yoksa £500 okunurdu)
     return _SPLIT_THOUSANDS.sub(join, text)
 
 

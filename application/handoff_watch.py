@@ -7,7 +7,8 @@ burada yalnız şunlar var:
 - devir eksik: okuyucunun 24 saatlik penceresindeki gönderi sayısı ile aynı penceredeki devir satırı sayısı tutmuyor (pay: 3 ya da %10);
 - aktarım geride: devir dosyasında 1 saatten eski, henüz aktarılmamış satır var (aktarıcı takıldı ya da her turda çöküyor);
 - grup sessiz: günlük örneklerde ortalaması en az 5 yeni gönderi olan grup bugün 0 gösteriyor (üyelik iptali, gizlenme; tüm-boş freni tek grubu görmez).
-  `yeni_gonderi_24s` okuyucunun gördüğü ana (seen_at) göre sayılır, paylaşım saatine göre değil;
+  `yeni_gonderi_24s` okuyucunun gördüğü ana (seen_at) göre sayılır, paylaşım saatine göre değil; son okuması 20 saatten eski grup o günün
+  örneğine girmez (okunmayan grubun 0'ı sessizlik değildir);
 - kesik metin yüksek: iki gün üst üste gönderilerin %70'inden fazlası kesik (FB sayfa düzeni değişmiş olabilir; 10.10'da oran %43);
 - satış kutusu fiyatı gelmiyor: dünkü (KKTC) aktarımda en az 500 gönderi satırı var ama fiyatlı olanı %5'ten az (27.10.2026: 24.10'dan beri
   böyleydi, önceden günde ~900 satır, %24-35'i fiyatlıydı; kesinti sırasında bile gürültü satırları yüzünden %0,4-1,2 fiyatlı görünüyor, bu yüzden
@@ -42,6 +43,8 @@ SAMPLE_KEY = "sosyal_gunluk_ornek:facebook"
 SAMPLE_HOUR = 21  # KKTC
 SAMPLE_KEEP = 8
 QUIET_MIN_AVG, QUIET_MIN_DAYS = 5, 3  # grup sessiz: önceki en az 3 günlük örneğin ortalaması ≥5 yeni gönderi
+QUIET_READ_MAX = timedelta(hours=20)  # örnek anında son okuması bundan eski grup o gün sayılmaz: "son 24 saatte 0" okunmadığı içindir
+# (31.10.2026: 24 saat aralıkla okunan iki grup 24 sa 42 dk önce okunmuştu, "üyelik düşmüş olabilir" uyarısı yanlış gitti)
 CUT_RATIO, CUT_MIN_POSTS = 0.70, 20
 SCAN_DAYS = 3  # devir klasöründe yalnız son 3 günün dosyaları taranır (dosyalar 14 gün tutulur)
 BOX_MIN_LINES = 500  # satış kutusu: dün en az bu kadar satır okunduysa fiyatsız kutu tesadüf değildir
@@ -170,12 +173,21 @@ def handoff_alerts(fb: dict, scan: HandoffScan | None, now: datetime, names: dic
     return out
 
 
+def _read_recently(row: dict, now: datetime) -> bool:
+    """Grubun son okuması örnek anından QUIET_READ_MAX'tan yeni mi; alan yoksa (eski okuyucu) sayılır."""
+    if "son_okuma_utc" not in row:
+        return True
+    read = _time(row.get("son_okuma_utc"))
+    return read is not None and now - read <= QUIET_READ_MAX
+
+
 def daily_sample(fb: dict, now: datetime) -> dict | None:
     """Bugünün örneği: gönderi, kesik metin ve grup başına yeni gönderi (24 saat). Gerekli alanlar yoksa None."""
     daily, rows = fb.get("gunluk"), fb.get("kaynaklar")
     if not isinstance(daily, dict) or _int(daily.get("gonderi")) is None:
         return None
-    groups = {k: _int(v.get("yeni_gonderi_24s")) for k, v in rows.items() if isinstance(v, dict)} if isinstance(rows, dict) else {}
+    groups = {k: _int(v.get("yeni_gonderi_24s")) for k, v in rows.items() if isinstance(v, dict) and _read_recently(v, now)} \
+        if isinstance(rows, dict) else {}
     return {"gun": to_kktc(now).date().isoformat(), "gonderi": daily["gonderi"], "kesik": _int(daily.get("kesik_metin")),
             "gruplar": {k: v for k, v in groups.items() if isinstance(k, str) and v is not None}}
 

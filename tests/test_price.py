@@ -1,3 +1,5 @@
+import pytest
+
 from domain.price import join_split_thousands, parse_price, price_tokens
 
 
@@ -96,3 +98,14 @@ def test_copula_suffix_glued_period_and_dash_27_10():
     assert (parse_price("8.500.-stg").amount, parse_price("8.500.-stg").currency) == (8500, "GBP")
     assert [t.amount for t in price_tokens("1.250 stg")] == [1250]  # "250" ayrı sayı değil
     assert parse_price("300.000 tlye kadar").currency_guess  # yönelme eki birim sayılmaz
+
+
+@pytest.mark.parametrize("text, want", [
+    ("5 bin 500 stg", (5500, "GBP")),  # denetim 01.11.2026: £500 okunuyordu (sahte ucuz fiyat)
+    ("fiyat 5bin500 stg", (5500, "GBP")),
+    ("250 bin 500 tl", (250_500, "TRY")),
+    ("12 bin stg", (12_000, "GBP")),
+])
+def test_bin_followed_by_hundreds_is_one_amount(text, want):
+    from domain.freetext_parser import body_price
+    assert body_price(text) == want
