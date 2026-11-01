@@ -14,9 +14,11 @@ from application.source_readers import domain_matches, reader_for_host
 from domain.source_links import SourceLink, key_of_url, parse_source_link
 
 PLATFORM_TITLE = {"web": "🌐 Siteler", "instagram": "📸 Instagram", "facebook": "👥 Facebook"}
-MAX_OPEN = {"instagram": 15, "facebook": 50}  # açık sosyal kaynak üst sınırı: fazlası okuyucu hesabının frenlenme riskini artırır
+MAX_OPEN = {"instagram": 15, "facebook": 60}  # açık sosyal kaynak üst sınırı: fazlası okuyucu hesabının frenlenme riskini artırır
 # Facebook 8 → 50 (11.10.2026, sahip: "çok fazla grubu, gerekirse hepsini tara"): okuyucu turda en çok 8 grubu okur, fazlası sırayla döner;
-# katılımı okuyucu kendisi yapar (24 saatte 1), sınırı JOIN_MAX_ACTIVE=50 ile aynı.
+# katılımı okuyucu kendisi yapar (24 saatte 1), sınırı okuyucudaki JOIN_MAX_ACTIVE (50; katılım şu an kapalı).
+# 50 → 60 (01.11.2026, sahip onayı "Evet, hepsini yap"): sosyal oturumun ölçümüyle bu hesabın güvenli üst sınırı 60 aktif grup / günde ~95
+# okuma; zayıf gruplar yenileriyle değiştirilir, yeni açılış yine 24 saatte en çok MAX_NEW_PER_DAY (spec §24.49).
 FB_OWNER_PRIORITY = 1  # sahibin bottan eklediği grup: okuyucunun katılma sırasında en önde (sosyal oturum: yalnız öncelik ≤2'ye katılır)
 MAX_NEW_PER_DAY = 2  # platform başına 24 saatte en çok bu kadar sosyal kaynak açılır (ekleme ya da geri açma): ani artış hesabı şüpheli gösterir
 OPENED_KEY = "src:opened:{}"  # bot_state: platformda son açılışların zamanları (JSON liste, UTC ISO)
