@@ -391,6 +391,24 @@ def test_deactivate_missing_only_closes_active_listings_absent_from_the_sitemap(
     assert {r["source_item_id"] for r in c.execute("SELECT source_item_id FROM listings WHERE is_active").fetchall()} == {"1", "2"}
 
 
+def test_reactivate_present_reopens_only_expired_listings_still_in_the_sitemap(db):
+    """02.11.2026: kesintide yaşı yüzünden 'belirsiz' kapanan, haritada hâlâ duran ilan geri açılır; satıldı/kaldırıldı/satış zamanlı,
+    haritada olmayan ya da zaten aktif olana dokunulmaz; her geri açılış listing_history'ye yazılır."""
+    c, sid = db.conn, add_source(db.conn)
+    add_listing(c, sid, "exp", is_active=False, inactive_reason="belirsiz", inactive_at=ago(days=5))
+    add_listing(c, sid, "exp_yok", is_active=False, inactive_reason="belirsiz")  # haritada değil
+    add_listing(c, sid, "sold", is_active=False, inactive_reason="satildi", urgency_signals=["satildi"])
+    add_listing(c, sid, "gone", is_active=False, inactive_reason="belirsiz", urgency_signals=["kaldirildi"])
+    add_listing(c, sid, "sold_at", is_active=False, inactive_reason="belirsiz", sold_at=ago(days=2))
+    add_listing(c, sid, "live")
+    assert db.reactivate_present(sid, {"exp", "sold", "gone", "sold_at", "live"}) == 1
+    got = {r["source_item_id"]: (r["is_active"], r["inactive_reason"], r["inactive_at"]) for r in c.execute("SELECT * FROM listings").fetchall()}
+    assert got["exp"] == (True, None, None) and not got["exp_yok"][0] and not got["sold"][0] and not got["gone"][0] and not got["sold_at"][0]
+    hist = c.execute("SELECT field, old_value FROM listing_history h JOIN listings l ON l.id=h.listing_id WHERE l.source_item_id='exp'").fetchall()
+    assert [(h["field"], h["old_value"]) for h in hist] == [("geri_acildi", "belirsiz")]
+    assert db.reactivate_present(sid, set()) == 0 and db.reactivate_present(sid, {"exp"}) == 0  # ikinci kez: zaten aktif
+
+
 def test_retention_purges_personal_data_of_inactive_listings_only(db):
     c, sid = db.conn, add_source(db.conn)
     kw = dict(raw_text="metin", seller_handle="Ad Soyad")
