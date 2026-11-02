@@ -69,6 +69,10 @@ class GateClosed(Deferred):
     """Kapı kapalı: siteye istek YOK."""
 
 
+class PausedElsewhere(Deferred):
+    """Başka süreç (toplayıcı ya da turun canlılık kontrolü) engel beklemesi/durdurma yazdı: istek yok, ikinci kez engel sayılmaz."""
+
+
 class ProxyFailed(Deferred):
     """Proxy çıkış IP'si beklenen değil ya da okunamadı: siteye istek YOK (toplayıcı sahibe haber verir)."""
 
@@ -246,7 +250,10 @@ def verify_egress(inner) -> None:
     if not expected:
         raise ProxyFailed(f"beklenen proxy IP'si ayarlı değil ({EXPECTED_IP_ENV}), istek atılmıyor")
     try:
-        r = inner.get(kibrisarabaal.EGRESS_URL, timeout=20)
+        req = inner.build_request("GET", kibrisarabaal.EGRESS_URL, timeout=20)
+        for name in ("From", (os.environ.get(TOKEN_HEADER_ENV) or "").strip() or "Authorization"):
+            req.headers.pop(name, None)  # iletişim adresi ve sitenin anahtarı yalnız siteye: ipify'a gitmez (denetim 02.11.2026)
+        r = inner.send(req)
         ip = r.text.strip() if r.status_code == 200 else ""
     except httpx.HTTPError as e:
         raise ProxyFailed(f"proxy yanıt vermedi ({type(e).__name__}), istek atılmıyor") from None
@@ -331,17 +338,25 @@ class PoliteClient:
         return r.status_code, text
 
     def _send(self, url: str, timeout: float):
-        for attempt in range(TRIES):
-            if attempt:
-                self.sleep(RETRY_WAIT_S)  # 403/429/5xx: kısa bekleme, bir kez daha (aralık beklemesi yerine)
-            r = self._send_once(url, timeout, wait=not attempt)
-            if not kibrisarabaal.should_retry(r.status_code):
-                break
+        r = self._send_once(url, timeout, wait=True)
+        if kibrisarabaal.should_retry(r.status_code):
+            self.sleep(RETRY_WAIT_S)  # 403/429/5xx: kısa bekleme, bir kez daha (aralık beklemesi yerine)
+            try:
+                r = self._send_once(url, timeout, wait=False)
+            except PausedElsewhere:
+                raise  # engeli öbür süreç zaten kaydetti: yeniden sayılmaz
+            except (Deferred, httpx.HTTPError):
+                # ikinci deneme atılamadı (kota/başka sürecin engel beklemesi) ya da ağ hatası: ilk cevabın engeli kaybolmasın (denetim 02.11.2026)
+                kibrisarabaal.raise_if_blocked(r)
+                raise
         kibrisarabaal.raise_if_blocked(r)
         return r
 
     def _send_once(self, url: str, timeout: float, wait: bool):
         now = self.clock()
+        # toplayıcı (kktc-kibris) ile turun canlılık kontrolü ayrı süreçler: birinin yazdığı engel beklemesi/durdurma her istekten önce okunur
+        if self.repo.get_state(HALT_KEY) or paused_until(self.repo, now) is not None:
+            raise PausedElsewhere("site engelledi (başka süreç beklemeye aldı), istek atılmıyor")
         day_key, hour_tag = f"{REQ_PREFIX}{now:%Y-%m-%d}", f"{now:%Y-%m-%dT%H}"
         day_n = _int(self.repo.get_state(day_key))
         tag, _, n = (self.repo.get_state(HOUR_KEY) or "").partition("|")
@@ -373,7 +388,13 @@ def open_client(repo, client=None, sleep=None, clock=None):
     if idle_reason(repo, clock()) is not None:
         raise GateClosed("kapı kapalı")
     own = client is None
-    inner = client if client is not None else kibrisarabaal.new_client(headers(), proxy_url())
+    if own:
+        try:
+            inner = kibrisarabaal.new_client(headers(), proxy_url())
+        except Exception as e:  # kullanılamayan proxy adresi (şemasız, socks paketi yok...): bildirim yolu çökmesin, değer yazılmaz
+            raise ProxyFailed(f"proxy adresi kullanılamıyor ({type(e).__name__}), istek atılmıyor") from None
+    else:
+        inner = client
     try:
         if own:
             verify_egress(inner)

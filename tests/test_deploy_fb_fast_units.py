@@ -27,4 +27,4 @@ def test_setup_installs_and_enables_the_path_and_updater_waits_for_a_running_fas
     commands = "\n".join(line for line in setup.splitlines() if not line.strip().startswith(("echo", "#")))
     assert not re.search(r"systemctl (start|restart|enable --now)[^\n]*kktc-fb-fast", commands)  # kendiliğinden başlatmaz
     update = (BOT / "update.sh").read_text(encoding="utf-8")
-    assert "for unit in kktc-tick.service kktc-browser.service kktc-fb-fast.service; do" in update  # çalışırken kod değişmez
+    assert "for unit in kktc-tick.service kktc-browser.service kktc-fb-fast.service kktc-kibris.service; do" in update  # çalışırken kod değişmez

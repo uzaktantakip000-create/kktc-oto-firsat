@@ -301,15 +301,23 @@ def test_no_proxy_closes_the_gate_everywhere(monkeypatch):
 class EgressClient:
     """ipify'a cevap veren sahte proxyli istemci; siteye istek gelirse kaydeder."""
 
-    def __init__(self, ip=EXPECTED_IP, status=200, error=None, site_=None):
+    def __init__(self, ip=EXPECTED_IP, status=200, error=None, site_=None, headers=None):
         self.ip, self.status, self.error, self.site, self.urls, self.closed = ip, status, error, site_, [], False
+        self.headers, self.egress_headers = dict(headers or {}), None
+
+    def build_request(self, method, url, timeout=30):
+        return httpx.Request(method, url, headers=self.headers)
+
+    def send(self, req):
+        self.urls.append(str(req.url))
+        self.egress_headers = dict(req.headers)
+        if self.error:
+            raise self.error
+        return Resp(self.status, str(req.url), self.ip + "\n")
 
     def get(self, url, timeout=30):
         self.urls.append(url)
-        if url == site.EGRESS_URL:
-            if self.error:
-                raise self.error
-            return Resp(self.status, url, self.ip + "\n")
+        assert url != site.EGRESS_URL, "çıkış IP'si build_request/send ile sorulur"
         assert self.site is not None, "çıkış IP'si doğrulanmadan siteye istek"
         return self.site.get(url, timeout)
 
@@ -717,3 +725,76 @@ def test_kibris_collect_logs_seen_new_failed_and_never_logs_the_proxy(monkeypatc
     kibris_collect.main()
     out = capsys.readouterr().out
     assert "HATA" in out and "sifre123" not in out and "10.9.8.7" not in out and repo.state["fail:KibrisArabaAl"] == "1"
+
+
+# --- denetim düzeltmeleri (02.11.2026, 13 ajanlı inceleme) ---
+
+def test_egress_check_does_not_send_contact_email_or_site_token_to_ipify(monkeypatch):
+    open_gate(monkeypatch)
+    monkeypatch.setenv("KAA_ACCESS_TOKEN", "gizli-anahtar")
+    client = EgressClient(headers=kaa_gate.headers())
+    assert "From" in client.headers and "Authorization" in client.headers
+    kaa_gate.verify_egress(client)
+    assert "from" not in {k.lower() for k in client.egress_headers} and "authorization" not in {k.lower() for k in client.egress_headers}
+    monkeypatch.setenv("KAA_TOKEN_HEADER", "X-Api-Key")
+    client = EgressClient(headers=kaa_gate.headers())
+    kaa_gate.verify_egress(client)
+    assert "x-api-key" not in {k.lower() for k in client.egress_headers}
+
+
+@pytest.mark.parametrize("bad", ["kullanici:sifre123@10.9.8.7:5959", "ftp://10.9.8.7:21"])
+def test_unusable_proxy_address_is_a_proxy_failure_not_a_crash(monkeypatch, bad):
+    """Bildirim öncesi canlılık kontrolü çökmez (çökseydi o turun bütün 🟢'leri giderdi); toplayıcı sahibe haber verir; değer yazılmaz."""
+    open_gate(monkeypatch)
+    monkeypatch.setenv(kaa_gate.PROXY_ENV, bad)
+    monkeypatch.setattr(site, "new_client", REAL_NEW_CLIENT)  # gerçek kurucu: yalnız nesne kurmayı dener, istek yok
+    assert len(liveness.recheck_before_send(Repo(), [ev()])) == 1
+    sent = []
+    monkeypatch.setattr(health, "notify_owner", lambda repo, key, text, repeat_hours=12, **k: sent.append((key, text)) or True)
+    stats = kaa.collect_kibrisarabaal(Repo(), SOURCE, now=NOW)
+    assert "proxy adresi kullanılamıyor" in stats.skipped and sent and sent[0][0] == "kaa_proxy"
+    assert "sifre123" not in stats.skipped + sent[0][1]
+
+
+class QuotaAfterFirst(FakeSite):
+    """İlk ilan isteği 403; ikinci denemeden önce kota dolmuş (ya da ağ hatası)."""
+
+    def __init__(self, repo, mode, **kw):
+        super().__init__(**kw)
+        self.repo, self.mode = repo, mode
+
+    def get(self, url, timeout=30):
+        if "/ilan/" in url:
+            self.urls.append(url)
+            if self.mode == "quota":
+                self.repo.state[kaa_gate.HOUR_KEY] = f"{NOW:%Y-%m-%dT%H}|{kaa_gate.HOUR_MAX}"
+                return Resp(403, url, "")
+            if self.urls.count(url) == 1:
+                return Resp(403, url, "")
+            raise httpx.ConnectError("zaman aşımı")
+        return super().get(url, timeout)
+
+
+@pytest.mark.parametrize("mode", ["quota", "network"])
+def test_a_403_is_not_lost_when_the_retry_cannot_be_sent(monkeypatch, mode):
+    open_gate(monkeypatch)
+    monkeypatch.setattr(health, "notify_owner", lambda *a, **k: True)
+    repo = Repo()
+    stats = run(repo, QuotaAfterFirst(repo, mode, ids=(101,)))
+    assert "403" in (stats.skipped or "") and kaa_gate.PAUSE_KEY in repo.state and repo.state[kaa_gate.STREAK_KEY] == "1"
+
+
+def test_a_pause_written_by_another_process_stops_the_next_request(monkeypatch):
+    """kktc-kibris ile turun canlılık kontrolü ayrı süreçler: öbürünün yazdığı bekleme her istekten önce okunur, engel iki kez sayılmaz."""
+    open_gate(monkeypatch)
+    repo = Repo()
+
+    class OtherProcessBlocks(FakeSite):
+        def get(self, url, timeout=30):
+            r = super().get(url, timeout)
+            if url == site.SITEMAP:  # harita okunurken öbür süreç engel kaydetti
+                repo.state[kaa_gate.PAUSE_KEY] = (NOW + timedelta(hours=24)).isoformat()
+            return r
+    web = OtherProcessBlocks(ids=(101, 102))
+    stats = run(repo, web)
+    assert not any("/ilan/" in u for u in web.urls) and stats.new == 0 and kaa_gate.STREAK_KEY not in repo.state

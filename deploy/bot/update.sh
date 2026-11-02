@@ -38,11 +38,11 @@ as_ipv4() {
     -- "$@"
 }
 
-# Bir tarama (kktc-tick / kktc-browser / Facebook hızlı şeridi kktc-fb-fast) şu an çalışıyor mu? Type=oneshot birim çalışırken "activating"
+# Bir tarama (kktc-tick / kktc-browser / Facebook hızlı şeridi kktc-fb-fast / KibrisArabaAl kktc-kibris) şu an çalışıyor mu? Type=oneshot birim çalışırken "activating"
 # durumundadır ("is-active" bunu başarısız sayar).
 scan_running() {
   local unit state
-  for unit in kktc-tick.service kktc-browser.service kktc-fb-fast.service; do
+  for unit in kktc-tick.service kktc-browser.service kktc-fb-fast.service kktc-kibris.service; do
     state=$(systemctl show -p ActiveState --value "$unit" 2>/dev/null || true)
     case "$state" in
       active|activating|reloading|deactivating) return 0 ;;
