@@ -20,7 +20,7 @@ RUN_SECONDS = 15 * 60  # ilan okumaları bu süreyi aşmaz (birim zaman aşımı
 def summary(name: str, st: KaaStats) -> str:
     """Tek satır tur özeti (görülen/yeni/başarısız)."""
     line = (f"{name}: haritada={st.in_sitemap} okunan={st.fetched} yeni={st.new} başarısız={st.failed} "
-            f"pasifleşen={st.deactivated} istek={st.requests}")
+            f"pasifleşen={st.deactivated} geri_açılan={st.reactivated} istek={st.requests}")
     if st.skipped:
         line += f" | okunmadı: {st.skipped}"
     if st.stopped:

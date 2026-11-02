@@ -212,6 +212,27 @@ class Repository:
         )
         return cur.rowcount
 
+    def reactivate_present(self, source_id, present_ids: set[str]) -> int:
+        """Kaynak okunamazken yalnız yaşı yüzünden kapatılmış (expire_unverifiable / haritadan geçici düşme: inactive_reason='belirsiz') ama
+        site haritasında HÂLÂ duran ilanları geri açar (02.11.2026: KibrisArabaAl kesintisinde ~1.700 ilan). Satıldı/kaldırıldı işaretli,
+        satış zamanı yazılı ya da başka nedenle kapanan ilana dokunulmaz. Her geri açılış listing_history'ye 'geri_acildi' satırı düşer
+        (geri alma: o satırlardaki ilanları yeniden pasifleştirmek). Etkilenen sayıyı döner."""
+        if not present_ids:
+            return 0
+        rows = self.conn.execute(
+            """UPDATE listings SET is_active=TRUE, inactive_at=NULL, inactive_reason=NULL, last_seen_at=NOW()
+               WHERE source_id=%s AND NOT is_active AND inactive_reason=%s AND sold_at IS NULL
+                 AND NOT (COALESCE(urgency_signals, ARRAY[]::text[]) && ARRAY['satildi', 'kaldirildi']::text[])
+                 AND source_item_id = ANY(%s)
+               RETURNING id""",
+            (source_id, UNKNOWN, list(present_ids)),
+        ).fetchall()
+        if rows:
+            with self.conn.cursor() as cur:
+                cur.executemany("INSERT INTO listing_history (listing_id, field, old_value, new_value) VALUES (%s,'geri_acildi',%s,NULL)",
+                                [(r["id"], UNKNOWN) for r in rows])
+        return len(rows)
+
     @staticmethod
     def norm_keys(brand: str | None, model: str | None) -> dict:
         b = normalize_brand(brand)

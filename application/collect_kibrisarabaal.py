@@ -27,6 +27,7 @@ class KaaStats:
     new: int = 0
     failed: int = 0
     deactivated: int = 0
+    reactivated: int = 0  # kesintide yaşı yüzünden kapanmış, haritada hâlâ duran ilan geri açıldı (repo.reactivate_present)
     requests: int = 0  # siteye giden istek (robots.txt + harita + ilanlar)
     skipped: str | None = None  # tur hiç çalışmadı ya da engelle kesildi: neden (kapı kapalı, engel, kota, robots). Hata da başarı da sayılmaz
     stopped: str | None = None  # ilan okumaları yarıda kaldı (kota/aralık/süre/ağ hatası): kalanlar sonraki turda
@@ -138,6 +139,7 @@ def collect_kibrisarabaal(repo: Repository, source: dict, max_new: int = 10, now
     shrunk = sitemap_shrunk(repo, source["id"], len(entries))
     if len(entries) > DEACTIVATE_MIN and not shrunk:  # satılan/kaldırılan: haritadan düşen ilanlar pasifleşir (yeniden okuma yok)
         stats.deactivated += repo.deactivate_missing(source["id"], in_map)
+        stats.reactivated += repo.reactivate_present(source["id"], in_map)  # haritada duran, yalnız "belirsiz" kapanmış ilan geri açılır
     repo.mark_checked(source["id"], cursor=None, last_post_at=None, listings_7d=repo.count_recent(source["id"]))
     if shrunk:
         raise RuntimeError(f"{source['name']}: site haritası şüpheli biçimde küçüldü ({len(entries)} ilan), pasifleştirme yapılmadı")

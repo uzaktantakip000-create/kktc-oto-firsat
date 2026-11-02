@@ -115,6 +115,10 @@ class Repo:
     def count_recent(self, source_id):
         return 0
 
+    def reactivate_present(self, source_id, present):
+        self.reactivated = set(present)
+        return 0
+
     def deactivate_missing(self, source_id, present):
         self.missing.append(set(present))
         return 0

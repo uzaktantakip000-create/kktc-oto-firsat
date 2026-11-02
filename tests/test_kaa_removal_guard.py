@@ -37,6 +37,10 @@ class Repo:
     def set_state(self, key, value):
         self.state[key] = value
 
+    def reactivate_present(self, source_id, present):
+        self.reactivated = set(present)
+        return 0
+
     def deactivate_missing(self, source_id, present):
         self.missing.append(set(present))
         return 0
