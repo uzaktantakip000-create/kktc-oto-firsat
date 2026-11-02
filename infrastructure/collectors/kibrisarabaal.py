@@ -1,7 +1,9 @@
 """kibrisarabaal.com: sitemap'ten ilan adreslerini bulur, ilan sayfasındaki JSON-LD + görünür alanları ayrıştırır. Giriş/çerez yok.
-10.10.2026'dan beri site bizi 403 ile engelliyor; istekler YALNIZ application/kaa_gate.py'nin kapısından geçer (izin, robots.txt, kota,
-aralık, engel beklemesi). Bu dosya yalnız adresleri, ayrıştırmayı ve düz httpx istemcisini bilir: tarayıcı taklidi (browserlike/Scrapling),
-proxy, çerez YOK. Yönlendirme kendiliğinden izlenmez: her istek sayılsın ve aralıklansın (kaldırılan ilanın ana sayfası hiç istenmez)."""
+Site izin verdi (sahip 01.11.2026) ama Cloudflare sunucu IP'sini ve "bot" geçen kimliği 403 ile kesiyor; sahip 02.11.2026: istekler YALNIZ
+proxy'den (KIBRIS_PROXY_URL; VPS'te Instagram hattının kopyası), sıradan tarayıcı kimliğiyle (KAA_USER_AGENT), robots.txt ve kota sınırlarıyla.
+Doğrudan (proxysiz) istek YOK. İstekler YALNIZ application/kaa_gate.py'nin kapısından geçer (izin, proxy, çıkış IP'si, robots.txt, kota,
+aralık, engel beklemesi). Bu dosya yalnız adresleri, ayrıştırmayı ve düz httpx istemcisini bilir: tarayıcı motoru (browserlike/Scrapling),
+çerez YOK. Yönlendirme kendiliğinden izlenmez: her istek sayılsın ve aralıklansın (kaldırılan ilanın ana sayfası hiç istenmez)."""
 import json
 import re
 import urllib.robotparser
@@ -20,6 +22,7 @@ SITEMAP = f"{BASE}/sitemap-listings.xml"
 ROBOTS = f"{BASE}/robots.txt"
 AGENT = "KKTCOtoBot"  # robots.txt'de aranan ad ve User-Agent'ın başı (sitenin bizi tanıyıp kural yazabilmesi için)
 BLOCK_CODES = (403, 429, 503)  # engel/yavaşla: tur hemen durur, 24 saat istek yok (kaa_gate.on_blocked)
+EGRESS_URL = "https://api.ipify.org"  # proxy çıkış IP'si (düz metin); siteye ilk istekten önce beklenen IP ile karşılaştırılır
 _REDIRECTS = (301, 302, 303, 307, 308)
 MAX_HOPS = 3  # ilan sayfası kendi adresine yönlenirse (sondaki / vb.) en çok bu kadar adım izlenir
 
@@ -30,6 +33,11 @@ class Blocked(Exception):
     def __init__(self, status: int, url: str, retry_after: timedelta | None = None):
         super().__init__(f"KibrisArabaAl HTTP {status} ({urlparse(url).path or '/'})")
         self.status, self.retry_after = status, retry_after
+
+
+def should_retry(status: int) -> bool:
+    """403/429/5xx: sahip 02.11.2026: 3 sn sonra bir kez daha denenir (en çok 2 deneme), yine olursa durulur."""
+    return status in (403, 429) or status >= 500
 
 
 def retry_after(value: str | None, now: datetime | None = None) -> timedelta | None:
@@ -127,6 +135,15 @@ def _date(text: str) -> datetime | None:
     return datetime(int(m.group(3)), _MONTHS[m.group(2)], int(m.group(1)), tzinfo=timezone.utc)
 
 
+def _iso_date(value) -> datetime | None:
+    """JSON-LD datePublished ("2026-10-31" ya da tam ISO): görünür "İlan Tarihi:" yoksa yedek."""
+    try:
+        d = datetime.fromisoformat(str(value).strip()) if value else None
+    except ValueError:
+        return None
+    return d.replace(tzinfo=timezone.utc) if d is not None and d.tzinfo is None else d
+
+
 def parse_detail(html: str) -> dict | None:
     tree = HTMLParser(html)
     node = _vehicle_node(tree)
@@ -173,7 +190,7 @@ def parse_detail(html: str) -> dict | None:
     loc = re.search(r"\s–\s*([^.–]+?)\.\s*KKTC", node.get("description") or "")
     phone = re.search(r'https://wa\.me/(\d{10,15})', html)  # satıcı düğmesi (sayfa başlığındaki tel: site telefonudur)
     status = f.get("Araç Durumu:", "")
-    posted = _date(f.get("İlan Tarihi:", ""))
+    posted = _date(f.get("İlan Tarihi:", "")) or _iso_date(node.get("datePublished"))
     brand, model = (node.get("brand") or {}).get("name"), node.get("model")
     return {
         "brand": brand,
@@ -231,7 +248,9 @@ def fetch_detail(client, entry: Entry) -> dict | None:
     return parse_detail(r.text)
 
 
-def new_client(headers: dict[str, str]) -> httpx.Client:
-    """Düz httpx: tarayıcı parmak izi yok, ortamdaki proxy ayarları okunmaz (trust_env=False: istek hep sunucunun kendi IP'sinden,
-    kimliğimizle gider), yönlendirme kendiliğinden izlenmez. Başlıklar (dürüst User-Agent, From, varsa erişim anahtarı) kaa_gate'ten."""
-    return httpx.Client(headers=headers, follow_redirects=False, trust_env=False, timeout=30)
+def new_client(headers: dict[str, str], proxy: str) -> httpx.Client:
+    """Düz httpx, YALNIZ proxy üzerinden: ortamdaki proxy ayarları okunmaz (trust_env=False), proxy verilmezse istemci kurulmaz (doğrudan
+    sunucu IP'sinden istek yok). Yönlendirme kendiliğinden izlenmez. Başlıklar (User-Agent, varsa From/erişim anahtarı) kaa_gate'ten."""
+    if not proxy:
+        raise ValueError("KibrisArabaAl istemcisi proxysiz kurulmaz")
+    return httpx.Client(headers=headers, proxy=proxy, follow_redirects=False, trust_env=False, timeout=30)

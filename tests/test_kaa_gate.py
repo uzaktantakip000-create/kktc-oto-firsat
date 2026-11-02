@@ -152,10 +152,23 @@ def ev(listing_id="k1"):
     return Evaluated(l, Market(5, 8000, 7000, 9000, 1, 0.0, 80_000), ProfitResult(7600, 2600, 0.52, Confidence.MEDIUM, Tier.STRONG), [], [], [])
 
 
+PROXY = "http://kullanici:sifre123@10.9.8.7:5959"  # sahte; hiçbir test ağa çıkmaz
+EXPECTED_IP = "203.0.113.7"
+
+
+@pytest.fixture(autouse=True)
+def no_proxy_env(monkeypatch):
+    """Geliştiricinin ortamındaki gerçek proxy ayarı testlere sızmasın."""
+    for k in (kaa_gate.PROXY_ENV, kaa_gate.EXPECTED_IP_ENV, "KAA_USER_AGENT"):
+        monkeypatch.delenv(k, raising=False)
+
+
 def open_gate(monkeypatch):
     monkeypatch.setenv("KAA_IZIN", "1")
     monkeypatch.setenv("KKTC_RUNNER", "vps")
     monkeypatch.setenv("BOT_CONTACT_EMAIL", "bot@example.org")
+    monkeypatch.setenv(kaa_gate.PROXY_ENV, PROXY)
+    monkeypatch.setenv(kaa_gate.EXPECTED_IP_ENV, EXPECTED_IP)
 
 
 # --- 1. kapı kapalı: sıfır istek ---
@@ -164,13 +177,13 @@ CLOSED_CASES = {
     "izin yok (varsayılan)": ({}, {}),
     "izin var ama GitHub/yerel (VPS değil)": ({"KAA_IZIN": "1", "BOT_CONTACT_EMAIL": "bot@example.org", "KKTC_RUNNER": ""}, {}),
     "izin 1 değil": ({"KAA_IZIN": "evet", "KKTC_RUNNER": "vps", "BOT_CONTACT_EMAIL": "bot@example.org"}, {}),
-    "tarayıcı kimliği taklidi": ({"KAA_IZIN": "1", "KKTC_RUNNER": "vps", "BOT_CONTACT_EMAIL": "bot@example.org",
-                                  "KAA_USER_AGENT": "Mozilla/5.0 (Windows NT 10.0) Chrome/120"}, {}),
-    "engel beklemesi": ({"KAA_IZIN": "1", "KKTC_RUNNER": "vps", "BOT_CONTACT_EMAIL": "bot@example.org"},
+    "proxy yok (sunucudan doğrudan istek yasak)": ({"KAA_IZIN": "1", "KKTC_RUNNER": "vps", "BOT_CONTACT_EMAIL": "bot@example.org",
+                                                    "KAA_USER_AGENT": "Mozilla/5.0 (Windows NT 10.0) Chrome/120"}, {}),
+    "engel beklemesi": ({"KAA_IZIN": "1", "KKTC_RUNNER": "vps", "BOT_CONTACT_EMAIL": "bot@example.org", "KIBRIS_PROXY_URL": PROXY},
                         {kaa_gate.PAUSE_KEY: (REAL + timedelta(hours=5)).isoformat()}),
-    "kalıcı durdurma": ({"KAA_IZIN": "1", "KKTC_RUNNER": "vps", "BOT_CONTACT_EMAIL": "bot@example.org"},
+    "kalıcı durdurma": ({"KAA_IZIN": "1", "KKTC_RUNNER": "vps", "BOT_CONTACT_EMAIL": "bot@example.org", "KIBRIS_PROXY_URL": PROXY},
                         {kaa_gate.HALT_KEY: REAL.isoformat()}),
-    "robots.txt yasak (önbellek)": ({"KAA_IZIN": "1", "KKTC_RUNNER": "vps", "BOT_CONTACT_EMAIL": "bot@example.org"},
+    "robots.txt yasak (önbellek)": ({"KAA_IZIN": "1", "KKTC_RUNNER": "vps", "BOT_CONTACT_EMAIL": "bot@example.org", "KIBRIS_PROXY_URL": PROXY},
                                     {kaa_gate.ROBOTS_KEY: json.dumps({"at": REAL.isoformat(), "status": 200,
                                                                       "text": "User-agent: KKTCOtoBot\nDisallow: /\n"})}),
 }
@@ -243,8 +256,9 @@ def test_user_agent_override_and_access_token(monkeypatch):
     assert kaa_gate.headers()["Authorization"] == "sahte-anahtar"
     monkeypatch.setenv("KAA_TOKEN_HEADER", "X-Api-Key")
     assert kaa_gate.headers()["X-Api-Key"] == "sahte-anahtar" and "Authorization" not in kaa_gate.headers()
-    monkeypatch.setenv("KAA_USER_AGENT", "Mozilla/5.0 Chrome/120")  # tarayıcı taklidi kabul edilmez
-    assert kaa_gate.user_agent() is None and kaa_gate.headers() is None
+    monkeypatch.setenv("KAA_USER_AGENT", "Mozilla/5.0 Chrome/120")  # sahip 02.11.2026: sıradan tarayıcı kimliği (bot adı 403 alıyor)
+    assert kaa_gate.user_agent() == "Mozilla/5.0 Chrome/120" and kaa_gate.headers()["User-Agent"] == "Mozilla/5.0 Chrome/120"
+    assert kaa_gate.idle_reason(Repo()) is None
 
 
 def test_contact_is_optional(monkeypatch):
@@ -258,13 +272,114 @@ def test_contact_is_optional(monkeypatch):
     assert kaa_gate.idle_reason(Repo()) is None  # kapı adres olmadan açık
 
 
-def test_client_is_plain_httpx_without_proxies_or_browser_fingerprint():
-    c = REAL_NEW_CLIENT({"User-Agent": "KKTCOtoBot/1.0 (+mailto:bot@example.org)"})  # yalnız nesne kurulur, istek ATILMAZ
+def test_client_is_plain_httpx_only_through_the_proxy():
+    """Sahip 02.11.2026: istekler YALNIZ proxyden; proxysiz istemci hiç kurulmaz (sunucu IP'sinden doğrudan istek yok)."""
+    c = REAL_NEW_CLIENT({"User-Agent": "Mozilla/5.0 Chrome/120"}, PROXY)  # yalnız nesne kurulur, istek ATILMAZ
     try:
         assert type(c) is httpx.Client and c.trust_env is False and c.follow_redirects is False
-        assert c.headers["User-Agent"].startswith("KKTCOtoBot/")
+        pool = c._transport_for_url(httpx.URL(site.SITEMAP))._pool
+        assert type(pool).__name__ == "HTTPProxy" and pool._proxy_url.host == b"10.9.8.7"
     finally:
         c.close()
+    for empty in ("", None):
+        with pytest.raises(ValueError):
+            REAL_NEW_CLIENT({"User-Agent": "x"}, empty)
+
+
+def test_no_proxy_closes_the_gate_everywhere(monkeypatch):
+    open_gate(monkeypatch)
+    monkeypatch.delenv(kaa_gate.PROXY_ENV)
+    assert "proxy" in kaa_gate.idle_reason(Repo()) and not kaa_gate.gate_open()
+    with pytest.raises(kaa_gate.GateClosed):
+        kaa_gate.PoliteClient(Repo(), Exploding()).get(site.SITEMAP)
+
+
+class EgressClient:
+    """ipify'a cevap veren sahte proxyli istemci; siteye istek gelirse kaydeder."""
+
+    def __init__(self, ip=EXPECTED_IP, status=200, error=None, site_=None):
+        self.ip, self.status, self.error, self.site, self.urls, self.closed = ip, status, error, site_, [], False
+
+    def get(self, url, timeout=30):
+        self.urls.append(url)
+        if url == site.EGRESS_URL:
+            if self.error:
+                raise self.error
+            return Resp(self.status, url, self.ip + "\n")
+        assert self.site is not None, "çıkış IP'si doğrulanmadan siteye istek"
+        return self.site.get(url, timeout)
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.mark.parametrize("client, expected", [
+    (EgressClient(ip="198.51.100.1"), "farklı"),
+    (EgressClient(status=502), "okunamadı"),
+    (EgressClient(error=httpx.ConnectError("x")), "yanıt vermedi"),
+])
+def test_proxy_egress_mismatch_means_no_site_request_and_owner_is_told(monkeypatch, client, expected):
+    open_gate(monkeypatch)
+    sent = []
+    monkeypatch.setattr(health, "notify_owner", lambda repo, key, text, repeat_hours=12, **k: sent.append((key, text, repeat_hours)) or True)
+    monkeypatch.setattr(site, "new_client", lambda headers, proxy: client if proxy == PROXY else None)
+    repo = Repo()
+    stats = kaa.collect_kibrisarabaal(repo, SOURCE, now=NOW)
+    assert client.urls == [site.EGRESS_URL] and client.closed  # siteye tek istek yok, istemci kapandı
+    assert expected in stats.skipped and repo.upserts == [] and kaa_gate.PAUSE_KEY not in repo.state
+    assert [(k, h) for k, _, h in sent] == [("kaa_proxy", 24)]
+    assert "198.51.100.1" not in sent[0][1] and PROXY not in sent[0][1] and EXPECTED_IP not in sent[0][1]
+
+
+def test_missing_expected_ip_means_no_request(monkeypatch):
+    open_gate(monkeypatch)
+    monkeypatch.delenv(kaa_gate.EXPECTED_IP_ENV)
+    with pytest.raises(kaa_gate.ProxyFailed):
+        kaa_gate.verify_egress(EgressClient())
+
+
+def test_matching_egress_then_reads_the_site_through_the_same_client(monkeypatch):
+    open_gate(monkeypatch)
+    monkeypatch.setattr(kaa_gate.time, "sleep", lambda s: None)
+    client = EgressClient(site_=FakeSite(ids=(101,)))
+    monkeypatch.setattr(site, "new_client", lambda headers, proxy: client)
+    stats = kaa.collect_kibrisarabaal(Repo(), SOURCE)
+    assert client.urls[:3] == [site.EGRESS_URL, site.ROBOTS, site.SITEMAP] and stats.new == 1 and client.closed
+
+
+class FlakySite(FakeSite):
+    """İlk istekte verilen durum, sonra normal cevap (adres başına)."""
+
+    def __init__(self, first, **kw):
+        super().__init__(**kw)
+        self.first, self.seen = first, set()
+
+    def get(self, url, timeout=30):
+        if url not in self.seen and url in self.first:
+            self.seen.add(url)
+            self.urls.append(url)
+            return Resp(self.first[url], url, "")
+        return super().get(url, timeout)
+
+
+@pytest.mark.parametrize("code", [403, 429, 500, 503])
+def test_one_retry_after_three_seconds_then_continues(monkeypatch, code):
+    open_gate(monkeypatch)
+    detail = "https://kibrisarabaal.com/ilan/101-x"
+    web = FlakySite({detail: code}, ids=(101,))
+    clock = Clock()
+    repo = Repo()
+    stats = run(repo, web, clock)
+    assert web.urls == [site.ROBOTS, site.SITEMAP, detail, detail] and stats.new == 1 and stats.requests == 4
+    assert kaa_gate.RETRY_WAIT_S in clock.slept and kaa_gate.PAUSE_KEY not in repo.state
+
+
+def test_5xx_twice_is_a_failed_read_not_a_block(monkeypatch):
+    open_gate(monkeypatch)
+    web = FakeSite(ids=(101,), detail={101: (500, None)})
+    repo = Repo()
+    stats = run(repo, web)
+    assert web.urls.count("https://kibrisarabaal.com/ilan/101-x") == 2 and stats.failed == 1 and kaa_gate.PAUSE_KEY not in repo.state
 
 
 def test_kaa_code_never_uses_browserlike_or_scrapling():
@@ -307,7 +422,7 @@ def test_robots_401_disallows_everything_and_5xx_skips_the_round(monkeypatch):
     web = FakeSite(robots=(500, ""))
     with pytest.raises(kaa_gate.RobotsUnavailable):  # tur HATA (sürerse kaynak alarmı); önbelleğe yazılmaz
         run(repo := Repo(), web)
-    assert web.urls == [site.ROBOTS] and kaa_gate.ROBOTS_KEY not in repo.state
+    assert web.urls == [site.ROBOTS] * 2 and kaa_gate.ROBOTS_KEY not in repo.state  # 5xx: bir kez yeniden denendi
     web = FakeSite(robots=(404, ""))  # robots.txt yok: serbest
     assert run(Repo(), web).new == 3
 
@@ -400,8 +515,9 @@ def test_counter_write_failure_means_no_request(monkeypatch):
     assert web.urls == []
 
 
-def test_schedule_is_every_30_minutes_by_day_and_2_hours_by_night():
-    assert tick.SCHEDULE["kibrisarabaal"] == (30, 120)
+def test_tick_does_not_collect_kaa_the_separate_service_does():
+    """Sahip 02.11.2026: KibrisArabaAl ayrı servisle (kktc-kibris.timer, 2 saatte bir) okunur; 15 dakikalık tur toplamaz."""
+    assert "kibrisarabaal" not in tick.SCHEDULE
 
 
 # --- 5. engel ---
@@ -413,7 +529,8 @@ def test_403_on_a_detail_page_stops_the_run_and_pauses_24_hours(monkeypatch):
     web = FakeSite(ids=(101, 102, 103), detail={103: (403, None)})  # en yeni ilan önce okunur: ilk ilan sayfası 403
     repo = Repo()
     stats = run(repo, web)
-    assert web.urls == [site.ROBOTS, site.SITEMAP, "https://kibrisarabaal.com/ilan/103-x"]  # 102 ve 101 istenmedi
+    assert web.urls == [site.ROBOTS, site.SITEMAP, "https://kibrisarabaal.com/ilan/103-x",
+                        "https://kibrisarabaal.com/ilan/103-x"]  # bir kez yeniden denendi; 102 ve 101 istenmedi
     assert stats.skipped and "403" in stats.skipped and repo.upserts == [] and repo.checked == []
     assert repo.state[kaa_gate.PAUSE_KEY] == (NOW + timedelta(hours=24)).isoformat()
     assert [(k, h) for k, _, h in sent] == [("kaa_blocked", 30 * 24)] and "24 saat" in sent[0][1]
@@ -438,10 +555,10 @@ def test_sitemap_or_robots_403_also_blocks(monkeypatch):
     monkeypatch.setattr(health, "notify_owner", lambda *a, **k: True)
     repo = Repo()
     web = FakeSite(robots=(403, ""))
-    assert run(repo, web).skipped and web.urls == [site.ROBOTS] and kaa_gate.PAUSE_KEY in repo.state
+    assert run(repo, web).skipped and web.urls == [site.ROBOTS] * 2 and kaa_gate.PAUSE_KEY in repo.state  # 3 sn sonra bir kez daha
     repo = Repo()
     web = FakeSite(sitemap_status=403)
-    assert run(repo, web).skipped and web.urls == [site.ROBOTS, site.SITEMAP] and kaa_gate.PAUSE_KEY in repo.state
+    assert run(repo, web).skipped and web.urls == [site.ROBOTS, site.SITEMAP, site.SITEMAP] and kaa_gate.PAUSE_KEY in repo.state
 
 
 def test_three_pauses_still_blocked_stop_for_good_until_a_human_reopens(monkeypatch):
@@ -480,7 +597,7 @@ def test_liveness_403_stops_checking_and_pauses(monkeypatch):
     web = FakeSite(detail={1: (403, None), 2: (200, None)})
     out = liveness.recheck_before_send(repo, [ev("k1"), ev("k2")], kaa_client=web)
     assert len(out) == 2  # doğrulanamadı diye fırsat kaçmaz
-    assert web.urls == [site.ROBOTS, "https://kibrisarabaal.com/ilan/1-toyota-vitz"] and kaa_gate.PAUSE_KEY in repo.state
+    assert web.urls == [site.ROBOTS] + ["https://kibrisarabaal.com/ilan/1-toyota-vitz"] * 2 and kaa_gate.PAUSE_KEY in repo.state
 
 
 def test_retry_after_parsing():
@@ -568,3 +685,31 @@ def test_no_health_warning_for_kaa_while_gated():
     repo = Repo(stale_rows=stale, volume_rows=volume)
     assert [k for k, _ in health.source_problems(repo)] == ["stale:s2"]
     assert health.volume_problems(repo, NOW) == []
+
+
+def test_kibris_collect_logs_seen_new_failed_and_never_logs_the_proxy(monkeypatch, capsys):
+    from entrypoints import kibris_collect
+    open_gate(monkeypatch)
+    repo = Repo()
+    monkeypatch.setattr(kibris_collect, "load_env", lambda: None)
+    monkeypatch.setattr(kibris_collect, "require", lambda name: "postgresql://sahte")
+    monkeypatch.setattr(kibris_collect, "Repository", lambda dsn: repo)
+    monkeypatch.setattr(kibris_collect.frankfurter, "use_store", lambda repo: None)
+    calls = []
+
+    def fake_collect(repo_, source, max_new, max_seconds):
+        calls.append((max_new, max_seconds))
+        return kaa.KaaStats(in_sitemap=2900, fetched=25, new=24, failed=1, requests=27)
+    monkeypatch.setattr(kibris_collect, "collect_kibrisarabaal", fake_collect)
+    kibris_collect.main()
+    out = capsys.readouterr().out
+    assert calls == [(kibris_collect.MAX_NEW, kibris_collect.RUN_SECONDS)]
+    assert "haritada=2900 okunan=25 yeni=24 başarısız=1" in out and PROXY not in out and "sifre123" not in out
+    assert repo.state.get("fail:KibrisArabaAl") in (None, "0")
+
+    def broken(*a, **k):
+        raise httpx.ProxyError(f"bağlanamadı {PROXY}")
+    monkeypatch.setattr(kibris_collect, "collect_kibrisarabaal", broken)
+    kibris_collect.main()
+    out = capsys.readouterr().out
+    assert "HATA" in out and "sifre123" not in out and "10.9.8.7" not in out and repo.state["fail:KibrisArabaAl"] == "1"

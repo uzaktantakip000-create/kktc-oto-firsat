@@ -25,7 +25,9 @@ KibrisArabaAl 10.10.2026'dan beri bizi engelliyor. Sitenin izni gelene kadar kap
 |---|---|---|
 | `KAA_IZIN` | `1` = site izin verdi, okumayı aç. Yoksa ya da başka değerse kapalı | İzin gelince |
 | `BOT_CONTACT_EMAIL` | Sitenin bize ulaşacağı e-posta. Botun kimliğinde görünür: `KKTCOtoBot/1.0 (+mailto:adres)` | Hayır (isteğe bağlı; sahip 01.11.2026: site istemedi). Yoksa kimlik yalnız `KKTCOtoBot/1.0` |
-| `KAA_USER_AGENT` | Site belli bir kimlik isterse onun tamamı. Tarayıcı kimliği (`Mozilla/...`) kabul edilmez | Hayır |
+| `KIBRIS_PROXY_URL` | Siteye isteklerin çıkacağı proxy: `/etc/kktc-social/social.env`'deki `SOCIAL_PROXY_INSTAGRAM` değerinin kopyası (sahip 02.11.2026). Yoksa siteye istek gitmez (sunucudan doğrudan istek yasak) | Evet |
+| `KIBRIS_EXPECTED_IP` | Proxy çıkış IP'si (`SOCIAL_EXPECTED_IP_INSTAGRAM`). Her oturumun başında kontrol edilir; tutmazsa istek yok, sahibe günde bir mesaj | Evet |
+| `KAA_USER_AGENT` | İsteklerin kimliği. Sahip 02.11.2026: sıradan tarayıcı kimliği (Cloudflare "bot" geçen adı proxyden de 403 ile kesiyor) | Evet (VPS'te) |
 | `KAA_ACCESS_TOKEN` | Site bir erişim anahtarı verirse | Hayır |
 | `KAA_TOKEN_HEADER` | Anahtarın gideceği başlık adı (ör. `X-Api-Key`); boşsa `Authorization` | Hayır |
 

@@ -25,7 +25,7 @@ def _no_real_social_status_file(monkeypatch):
     monkeypatch.setattr(selfwatch, "SOCIAL_STATUS_PATH", "/yok/kktc-social-durum/durum.json")
 
 
-KAA_ENV = ("KAA_IZIN", "BOT_CONTACT_EMAIL", "KAA_USER_AGENT", "KAA_ACCESS_TOKEN", "KAA_TOKEN_HEADER")
+KAA_ENV = ("KAA_IZIN", "BOT_CONTACT_EMAIL", "KAA_USER_AGENT", "KAA_ACCESS_TOKEN", "KAA_TOKEN_HEADER", "KIBRIS_PROXY_URL", "KIBRIS_EXPECTED_IP")
 
 
 @pytest.fixture(autouse=True)
@@ -38,10 +38,12 @@ def _kaa_gate_closed(monkeypatch):
 
 @pytest.fixture
 def kaa_open(monkeypatch):
-    """Kapı açık: izin + VPS + iletişim adresi (uydurma adres; gerçek değil)."""
+    """Kapı açık: izin + VPS + iletişim adresi + proxy (uydurma değerler; gerçek değil)."""
     monkeypatch.setenv("KAA_IZIN", "1")
     monkeypatch.setenv("KKTC_RUNNER", "vps")
     monkeypatch.setenv("BOT_CONTACT_EMAIL", "bot@example.org")
+    monkeypatch.setenv("KIBRIS_PROXY_URL", "http://10.9.8.7:5959")
+    monkeypatch.setenv("KIBRIS_EXPECTED_IP", "203.0.113.7")
 
 
 def safe_test_dsn(env=None) -> str | None:

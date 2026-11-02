@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 def load_env(path: str = ".env") -> None:
@@ -20,7 +21,7 @@ def require(name: str) -> str:
     return value
 
 
-_SECRET_WORDS = ("TOKEN", "KEY", "DATABASE", "SECRET", "PASSWORD")
+_SECRET_WORDS = ("TOKEN", "KEY", "DATABASE", "SECRET", "PASSWORD", "PROXY")
 
 
 def redact(text: str) -> str:
@@ -28,6 +29,11 @@ def redact(text: str) -> str:
     for name, value in os.environ.items():
         if value and len(value) >= 8 and any(w in name for w in _SECRET_WORDS):
             text = text.replace(value, "***")
+            if "PROXY" in name:  # hata metni proxy adresinin yalnız bir parçasını (kullanıcı/şifre/sunucu) içerebilir
+                parts = urlsplit(value)
+                for piece in (parts.password, parts.username, parts.hostname):
+                    if piece and len(piece) >= 4:
+                        text = text.replace(piece, "***")
     return text
 
 

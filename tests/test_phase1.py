@@ -248,6 +248,8 @@ def fake_kaa(monkeypatch, data):
     monkeypatch.setenv("KAA_IZIN", "1")
     monkeypatch.setenv("KKTC_RUNNER", "vps")
     monkeypatch.setenv("BOT_CONTACT_EMAIL", "bot@example.org")
+    monkeypatch.setenv("KIBRIS_PROXY_URL", "http://10.9.8.7:5959")
+    monkeypatch.setattr(liveness.kaa_gate, "verify_egress", lambda inner: None)  # çıkış IP'si kontrolü (ipify) sahte: ağ yok
     monkeypatch.setattr(liveness.kibrisarabaal, "fetch_detail", lambda client, entry: data)
     monkeypatch.setattr(liveness, "_kaa_gbp", lambda d: 5000.0)
 

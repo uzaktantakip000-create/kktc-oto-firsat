@@ -100,3 +100,11 @@ def test_location_is_only_the_part_after_the_long_dash():
                        ("2018 Mercedes - Benz C 200 – Girne. KKTC", "Girne"), ("2020 Toyota C-HR Hybrid – Lefkoşa. KKTC", "Lefkoşa")]:
         assert desc in HTML
         assert parse_detail(HTML.replace(desc, text))["location"] == want, text
+
+
+def test_date_published_is_the_fallback_when_the_visible_date_is_missing():
+    from datetime import datetime, timezone
+    from infrastructure.collectors.kibrisarabaal import _iso_date
+    assert _iso_date("2026-10-31") == datetime(2026, 10, 31, tzinfo=timezone.utc)
+    assert _iso_date("2026-10-31T08:15:00+03:00").utcoffset().total_seconds() == 3 * 3600
+    assert _iso_date("bozuk") is None and _iso_date(None) is None
