@@ -188,6 +188,8 @@ def parse_detail(html: str) -> dict | None:
     # Açıklama: "<yıl> <marka> <model>[ – <şehir>]. KKTC satılık…": şehir ayracı boşluklu UZUN tire. Kısa tire marka/model adındadır
     # ("Mercedes - Benz SLK 200", "C-HR", "T-Roc"): şehir yazmayan ilanda onu ayraç saymak şehre "Benz SLK"/"Roc" yazıyordu (10.10 bulgusu)
     loc = re.search(r"\s–\s*([^.–]+?)\.\s*KKTC", node.get("description") or "")
+    # 02.11.2026 şablonu: "KKTC satılık 2017 Suzuki Swift (Lefkoşa, 8.300 STG, 71.000 KM, …)": şehir parantezin ilk parçası
+    loc = loc or re.search(r"satılık[^(]*\(\s*([^,()\d][^,()]*?)\s*,", node.get("description") or "")
     phone = re.search(r'https://wa\.me/(\d{10,15})', html)  # satıcı düğmesi (sayfa başlığındaki tel: site telefonudur)
     status = f.get("Araç Durumu:", "")
     posted = _date(f.get("İlan Tarihi:", "")) or _iso_date(node.get("datePublished"))
@@ -211,9 +213,18 @@ def parse_detail(html: str) -> dict | None:
         "posted_at": posted,
         "negotiable": bool(re.search(r"pazarl[ıi]k", desc, re.I)) if desc else None,
         "seller_phone": phone.group(1) if phone else None,
-        "seller_handle": (node.get("author") or {}).get("name"),
-        "seller_type": "bireysel" if "Bireysel Üye" in lines else "bilinmiyor",
+        "seller_handle": (node.get("author") or {}).get("name") or ((offer.get("seller") or {}).get("name")),  # 02.11.2026: offers.seller
+        "seller_type": _seller_type(lines),
     }
+
+
+def _seller_type(lines: list[str]) -> str:
+    """Satıcı kutusu: "Bireysel Üye" (eski) / "Bireysel satıcı" (02.11.2026) -> bireysel; galeri/kurumsal etiketi -> galeri; yoksa bilinmiyor."""
+    if "Bireysel Üye" in lines or "Bireysel satıcı" in lines:
+        return "bireysel"
+    if any(re.fullmatch(r"(Galeri|Kurumsal)( satıcı| üye| Üye)?", l) for l in lines):
+        return "galeri"
+    return "bilinmiyor"
 
 
 GONE = {"is_active": False, "urgency_signals": ["kaldirildi"]}

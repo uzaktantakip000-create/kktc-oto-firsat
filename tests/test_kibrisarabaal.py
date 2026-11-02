@@ -108,3 +108,16 @@ def test_date_published_is_the_fallback_when_the_visible_date_is_missing():
     assert _iso_date("2026-10-31") == datetime(2026, 10, 31, tzinfo=timezone.utc)
     assert _iso_date("2026-10-31T08:15:00+03:00").utcoffset().total_seconds() == 3 * 3600
     assert _iso_date("bozuk") is None and _iso_date(None) is None
+
+
+def test_november_2026_template_location_seller_type_and_handle():
+    """02.11.2026 sayfa şablonu (proxyden okunan gerçek ilan, satıcı adı/telefonu silinmiş): şehir açıklamanın parantezinde, satıcı kutusu
+    "Bireysel satıcı", satıcı adı offers.seller'da; ilan tarihi görünür alandan."""
+    from datetime import datetime, timezone
+    from pathlib import Path
+    from infrastructure.collectors.kibrisarabaal import parse_detail
+    d = parse_detail((Path(__file__).parent / "fixtures/kibrisarabaal_detail_2026_11_swift.html").read_text())
+    assert (d["brand"], d["model"], d["year"], d["km"]) == ("Suzuki", "Swift 1.2", 2017, 71000)
+    assert (d["price_amount"], d["currency"], d["fuel"], d["transmission"]) == (8300.0, "GBP", "benzin", "otomatik")
+    assert d["location"] == "Lefkoşa" and d["seller_type"] == "bireysel" and d["seller_handle"] == "ORNEK SATICI"
+    assert d["posted_at"] == datetime(2026, 10, 30, tzinfo=timezone.utc)
