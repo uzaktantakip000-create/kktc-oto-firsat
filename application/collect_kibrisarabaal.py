@@ -1,6 +1,8 @@
 """KibrisArabaAl toplayıcısı: site haritası + YENİ ilan sayfaları, her ilan bir kez (21.10.2026 izin meclisi: eskiden günde ~2.200 istek,
 %90'ı aktif ilanların boşuna yeniden okunmasıydı; o yenileme kaldırıldı). Siteye her istek application/kaa_gate'in kapısından geçer:
-izin (KAA_IZIN=1, yalnız VPS), dürüst kimlik, robots.txt, kota, aralık; 403/429/503'te tur HEMEN durur ve 24 saat istek atılmaz.
+izin (KAA_IZIN=1, yalnız VPS), yalnız proxy (çıkış IP'si doğrulanır), kimlik, robots.txt, kota, aralık; 403/429/5xx'te 3 sn sonra bir kez
+daha denenir, 403/429/503 sürerse tur HEMEN durur ve 24 saat istek atılmaz. VPS'te ayrı servis çalıştırır (entrypoints.kibris_collect,
+kktc-kibris.timer 2 saatte bir); 15 dakikalık tur bu işi yapmaz.
 Satılan/kaldırılan ilan: site haritasından düşünce deactivate_missing pasifleştirir (harita makul büyüklükteyse ve küçülmediyse);
 bildirime aday ilan gönderimden hemen önce bir kez daha okunur (application/liveness). Fiyat düşüşü artık yalnız o kontrolde görülür."""
 import json
@@ -113,6 +115,10 @@ def collect_kibrisarabaal(repo: Repository, source: dict, max_new: int = 10, now
         stats.requests = web.requests if web is not None else 0
         stats.skipped = f"site engelledi (HTTP {e.status}), {until:%d.%m %H:%M} UTC'ye kadar istek yok"
         _save_tried(repo, tried)
+        return stats
+    except kaa_gate.ProxyFailed as e:  # proxy çıkış IP'si tutmadı/okunamadı: siteye hiç istek gitmedi, sahibe günde bir mesaj
+        kaa_gate.on_proxy_failed(repo, e)
+        stats.skipped = str(e)
         return stats
     except (kaa_gate.Deferred, kaa_gate.Disallowed) as e:  # harita isteği bile atılamadı (kota, robots.txt yasağı): bu tur yok
         stats.requests = web.requests if web is not None else 0

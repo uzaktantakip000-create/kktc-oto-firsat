@@ -8,7 +8,7 @@ NIGHT = datetime(2026, 10, 2, 1, 0, tzinfo=timezone.utc)  # KKTC 04:00
 
 
 def test_first_run_everything_is_due():
-    assert set(due_jobs(DAY, {})) == {"kktcar", "kibrisarabaal", "instagram", "facebook", "mezunum", "kibriscars", "pazarkibris", "sahibindenarabakibris"}
+    assert set(due_jobs(DAY, {})) == {"kktcar", "instagram", "facebook", "mezunum", "kibriscars", "pazarkibris", "sahibindenarabakibris"}
 
 
 def test_only_jobs_whose_interval_passed_are_due():

@@ -157,11 +157,11 @@ if ! grep -Eq "^KKTC_RUNNER=vps[[:space:]]*$" "$ENV_FILE"; then
 fi
 
 say "systemd birimleri (etkinleştirilir, BAŞLATILMAZ)"
-for unit in kktc-bot.service kktc-bot-update.service kktc-bot-update.timer kktc-tick.service kktc-tick.timer kktc-browser.service kktc-browser.timer kktc-backup.service kktc-backup.timer kktc-fb-fast.service kktc-fb-fast.path; do
+for unit in kktc-bot.service kktc-bot-update.service kktc-bot-update.timer kktc-tick.service kktc-tick.timer kktc-browser.service kktc-browser.timer kktc-kibris.service kktc-kibris.timer kktc-backup.service kktc-backup.timer kktc-fb-fast.service kktc-fb-fast.path; do
   install -m 644 -o root -g root "$APP_DIR/deploy/bot/$unit" "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
-systemctl enable kktc-bot.service kktc-bot-update.timer kktc-tick.timer kktc-browser.timer kktc-backup.timer kktc-fb-fast.path
+systemctl enable kktc-bot.service kktc-bot-update.timer kktc-tick.timer kktc-browser.timer kktc-kibris.timer kktc-backup.timer kktc-fb-fast.path
 
 missing=""
 for name in $REQUIRED; do

@@ -1,0 +1,12 @@
+[Unit]
+Description=KKTC Oto Fırsat - KibrisArabaAl toplamayı 2 saatte bir başlat
+
+[Timer]
+# Her çift saatin 27. dakikası (UTC: 00:27, 02:27, ...): 15 dakikalık turlar (:05/:20/:35/:50) ve kktc-browser (:07) ile çakışmaz
+OnCalendar=*-*-* 00/2:27:00
+AccuracySec=10s
+Persistent=false
+Unit=kktc-kibris.service
+
+[Install]
+WantedBy=timers.target

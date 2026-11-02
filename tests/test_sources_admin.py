@@ -109,7 +109,8 @@ def test_keys_of_stored_facebook_pages():
 def test_reader_registry_matches_collectors_and_schedule():
     assert set(source_readers.WEB_READERS) == set(cron_collect.WEB_COLLECTORS)
     assert set(source_readers.WEB_READERS) <= set(cron_collect.JOBS)
-    assert set(source_readers.WEB_READERS) - {"kktcarabam"} <= set(tick.SCHEDULE)  # KKTCarabam tarayıcılı işte (kktc-browser / collect-browser)
+    # KKTCarabam tarayıcılı işte (kktc-browser / collect-browser), KibrisArabaAl ayrı serviste (kktc-kibris, proxyden)
+    assert set(source_readers.WEB_READERS) - {"kktcarabam", "kibrisarabaal"} <= set(tick.SCHEDULE)
     assert source_readers.reader_for_host("m.kibrisarabaal.com") == "kibrisarabaal"
     assert source_readers.reader_for_host("kibrisaraba.com") is None  # benzer ad başka site
 

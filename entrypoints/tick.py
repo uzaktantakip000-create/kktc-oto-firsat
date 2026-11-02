@@ -20,10 +20,10 @@ GAP_ALERT_MIN = 45  # bu kadar dakika hiç çalışma olmazsa sahibine (ve abone
 GAP_KIND = "kesinti"  # kesinti uyarısının türü (notify.OWNER_ONLY_KINDS)
 EVAL_STALE_MIN = 45  # tick çalışıyor ama son BAŞARILI değerlendirme bu kadar dakikadan eskiyse sahibine haber verilir (cron_evaluate.EVAL_LAST_KEY)
 DAY_KKTC = range(8, 24)  # gündüz = KKTC yerel saatiyle 08:00–24:00 (yaz-kış aynı; ilanlar yerel gündüz saatinde girilir)
-# iş -> (gündüz aralığı dk, gece aralığı dk)
+# iş -> (gündüz aralığı dk, gece aralığı dk). KibrisArabaAl burada YOK: VPS'te ayrı servis, proxyden 2 saatte bir (entrypoints.kibris_collect,
+# kktc-kibris.timer; sahip 02.11.2026). Tur yalnız bildirim öncesi canlılık kontrolünde (application/liveness) aynı kapıdan okur.
 SCHEDULE = {
     "kktcar": (15, 30),
-    "kibrisarabaal": (30, 120),  # izin kapısı (application/kaa_gate) kapalıyken iş siteye istek atmadan biter; açılınca harita + yeni ilanlar
     "mezunum": (30, 60),  # küçük site; 3 sn aralıklı nazik tarama
     "kibriscars": (30, 60),  # durgun site (ayda birkaç ilan); 3 sn aralıklı nazik tarama
     "pazarkibris": (30, 60),  # liste sayfası başına tek istek (veri sayfaya gömülü)

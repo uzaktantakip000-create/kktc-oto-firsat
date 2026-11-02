@@ -2,13 +2,15 @@
 10.10.2026'dan beri site botu 403 ile engelliyor; engel AŞILMAZ, tek meşru yol sitenin izni. İzin gelene kadar kapı KAPALI: hiçbir yerden
 (toplayıcı, bildirim öncesi canlılık kontrolü, admin_cli kaa, GitHub turları) siteye TEK istek gitmez. Kapı ancak üç şartla açık:
 KAA_IZIN=1, VPS'te (runner_gate.on_vps; GitHub turları hiç okumaz) ve engel beklemesi/durdurma yok. Açıkken her istek PoliteClient'tan geçer:
-- dürüst kimlik: "KKTCOtoBot/1.0" (BOT_CONTACT_EMAIL varsa "(+mailto:<adres>)" + From başlığı; sahip 01.11.2026: site adres istemedi, isteğe
-  bağlı), düz httpx, proxy yok (trust_env=False);
-  KAA_USER_AGENT tam değiştirir ama tarayıcı kimliği (Mozilla/...) olamaz; site anahtar verirse KAA_ACCESS_TOKEN (+ KAA_TOKEN_HEADER);
+- YALNIZ proxy (sahip 02.11.2026): KIBRIS_PROXY_URL yoksa kapı kapalı, sunucunun kendi IP'sinden HİÇ istek yok. İlk istekten önce proxy
+  çıkış IP'si KIBRIS_EXPECTED_IP ile karşılaştırılır; tutmazsa/okunamazsa siteye istek yok, sahibe günde en çok bir mesaj (ProxyFailed);
+- kimlik: KAA_USER_AGENT (sahip 02.11.2026: Cloudflare "bot" geçen kimliği proxyden de 403 ile kesiyor, sıradan tarayıcı kimliği 200;
+  sitenin izniyle). Yoksa "KKTCOtoBot/1.0" (BOT_CONTACT_EMAIL varsa "(+mailto:<adres>)" + From başlığı); düz httpx (trust_env=False);
+  site anahtar verirse KAA_ACCESS_TOKEN (+ KAA_TOKEN_HEADER);
 - robots.txt günde en çok bir kez okunur (bot_state 'kaa_robots'): can_fetch("KKTCOtoBot") ve max(10 sn, Crawl-delay) aralık;
   401/403 = her şey yasak, 5xx = bu tur yok;
 - kota: saatte 60, günde 300 istek (bot_state 'kaa_req:<tarih>'); sayaç yazılamazsa istek de yok;
-- 403/429/503 (hangi adres olursa): Blocked -> tur hemen durur, 24 saat (Retry-After daha uzunsa o kadar) istek yok; sahibe 30 günde
+- 403/429/5xx: 3 sn sonra bir kez daha (en çok 2 deneme, ikisi de sayılır); 403/429/503 sürerse (hangi adres olursa): Blocked -> tur hemen durur, 24 saat (Retry-After daha uzunsa o kadar) istek yok; sahibe 30 günde
   tek mesaj; 3 bekleme bitip site hâlâ engelliyse kalıcı durur (insan açar: admin_cli kaa-ac). sources.status'a otomatik yazılmaz.
 Kapı kapalıyken KibrisArabaAl /durum'da nötr "⏸" satırıdır: gecikme sayılmaz, kaynak alarmı/sağlık uyarısı vermez (idle_reason)."""
 import json
@@ -28,7 +30,9 @@ from infrastructure.collectors.kibrisarabaal import AGENT, ROBOTS, SITEMAP, Bloc
 
 GATE_ENV = "KAA_IZIN"  # "1" = sahip izin geldiğini söyledi (yalnız VPS ortam dosyasında)
 CONTACT_ENV = "BOT_CONTACT_EMAIL"  # isteğe bağlı: sitenin bize ulaşacağı adres (User-Agent ve From başlığında)
-UA_ENV = "KAA_USER_AGENT"  # isteğe bağlı: sitenin istediği kimlik (tam değiştirir)
+UA_ENV = "KAA_USER_AGENT"  # kimlik (tam değiştirir); VPS'te sıradan tarayıcı kimliği (sahip 02.11.2026)
+PROXY_ENV = "KIBRIS_PROXY_URL"  # zorunlu: siteye giden her istek bu proxyden (VPS'te SOCIAL_PROXY_INSTAGRAM'ın kopyası); koda/loga yazılmaz
+EXPECTED_IP_ENV = "KIBRIS_EXPECTED_IP"  # zorunlu: proxy çıkış IP'si bu olmalı (SOCIAL_EXPECTED_IP_INSTAGRAM'ın kopyası)
 TOKEN_ENV, TOKEN_HEADER_ENV = "KAA_ACCESS_TOKEN", "KAA_TOKEN_HEADER"  # site anahtar verirse; başlık adı yoksa Authorization
 BLOCKED_SINCE = "10.10"  # /durum metni: engelin başladığı gün
 
@@ -40,6 +44,9 @@ ROBOTS_MAX_CHARS = 50_000
 PAUSE = timedelta(hours=24)
 MAX_PAUSE = timedelta(days=30)  # Retry-After bundan uzunsa kırpılır (bozuk/abartılı başlık kaydı sonsuza kilitlemesin)
 HALT_AFTER = 3  # bu kadar bekleme bitip site hâlâ engelliyse kalıcı dur
+TRIES = 2  # 403/429/5xx'te aynı istek en çok bu kadar (sahip 02.11.2026)
+RETRY_WAIT_S = 3.0  # iki deneme arası
+PROXY_WARN_H = 24  # proxy arızası mesajı en çok günde bir
 WARN_REPEAT_H = 30 * 24  # sahibe engel mesajı en çok 30 günde bir
 
 PAUSE_KEY = "kaa_blocked_until"  # UTC ISO; bu ana kadar istek yok (eski 2 saatlik beklemenin anahtarı, aynı ad)
@@ -60,6 +67,10 @@ class Deferred(Exception):
 
 class GateClosed(Deferred):
     """Kapı kapalı: siteye istek YOK."""
+
+
+class ProxyFailed(Deferred):
+    """Proxy çıkış IP'si beklenen değil ya da okunamadı: siteye istek YOK (toplayıcı sahibe haber verir)."""
 
 
 class Disallowed(Exception):
@@ -89,20 +100,21 @@ def contact() -> str | None:
     return email if _EMAIL.fullmatch(email) else None
 
 
-def user_agent() -> str | None:
-    """Dürüst kimlik; KAA_USER_AGENT tarayıcı taklidiyse None (çalışılmaz). İletişim adresi isteğe bağlı (sahip 01.11.2026)."""
+def proxy_url() -> str:
+    return (os.environ.get(PROXY_ENV) or "").strip()
+
+
+def user_agent() -> str:
+    """KAA_USER_AGENT varsa o (sahip 02.11.2026: sıradan tarayıcı kimliği); yoksa bot adı. İletişim adresi isteğe bağlı (sahip 01.11.2026)."""
     override = (os.environ.get(UA_ENV) or "").strip()
     if override:
-        return None if "mozilla/" in override.lower() else override
+        return override
     email = contact()
     return f"{AGENT}/1.0 (+mailto:{email})" if email else f"{AGENT}/1.0"
 
 
-def headers() -> dict[str, str] | None:
-    ua = user_agent()
-    if ua is None:
-        return None
-    out = {"User-Agent": ua}
+def headers() -> dict[str, str]:
+    out = {"User-Agent": user_agent()}
     if email := contact():
         out["From"] = email
     token = (os.environ.get(TOKEN_ENV) or "").strip()
@@ -112,8 +124,8 @@ def headers() -> dict[str, str] | None:
 
 
 def gate_open() -> bool:
-    """Yalnız ortam: KAA_IZIN=1 ve VPS. Kayıtsız hızlı bakış (haftalık rapordaki "satıldı mı izlenebilir" etiketi gibi)."""
-    return os.environ.get(GATE_ENV) == "1" and on_vps()
+    """Yalnız ortam: KAA_IZIN=1, VPS ve proxy. Kayıtsız hızlı bakış (haftalık rapordaki "satıldı mı izlenebilir" etiketi gibi)."""
+    return os.environ.get(GATE_ENV) == "1" and on_vps() and bool(proxy_url())
 
 
 def _when(raw: str | None) -> datetime | None:
@@ -150,8 +162,8 @@ def idle_reason(repo, now: datetime | None = None) -> str | None:
         return f"izin bekleniyor ({BLOCKED_SINCE}'dan beri engelli, istek atılmıyor)"
     if not on_vps():
         return "yalnız sunucuda okunur, burada istek atılmıyor"
-    if user_agent() is None:
-        return "KAA_USER_AGENT tarayıcı kimliği taklidi gibi (kabul edilmez), istek atılmıyor"
+    if not proxy_url():
+        return f"proxy ayarlı değil ({PROXY_ENV}): sunucudan doğrudan istek atılmıyor"
     try:
         if repo.get_state(HALT_KEY):
             return "site üst üste engelledi, durduruldu; yeniden denemek için onay gerekiyor (istek atılmıyor)"
@@ -227,6 +239,34 @@ def on_blocked(repo, err: Blocked, now: datetime | None = None) -> datetime:
     return until
 
 
+def verify_egress(inner) -> None:
+    """Proxy çıkış IP'si KIBRIS_EXPECTED_IP mi (siteye ilk istekten önce, oturum başına bir kez; ipify isteği site kotasına girmez).
+    Beklenen IP ayarlı değilse, IP okunamazsa ya da farklıysa ProxyFailed: siteye istek yok. Metinde IP/proxy değeri yazılmaz."""
+    expected = (os.environ.get(EXPECTED_IP_ENV) or "").strip()
+    if not expected:
+        raise ProxyFailed(f"beklenen proxy IP'si ayarlı değil ({EXPECTED_IP_ENV}), istek atılmıyor")
+    try:
+        r = inner.get(kibrisarabaal.EGRESS_URL, timeout=20)
+        ip = r.text.strip() if r.status_code == 200 else ""
+    except httpx.HTTPError as e:
+        raise ProxyFailed(f"proxy yanıt vermedi ({type(e).__name__}), istek atılmıyor") from None
+    if not ip:
+        raise ProxyFailed("proxy çıkış IP'si okunamadı, istek atılmıyor")
+    if ip != expected:
+        raise ProxyFailed("proxy çıkış IP'si beklenenden farklı, istek atılmıyor")
+
+
+def on_proxy_failed(repo, err: ProxyFailed) -> None:
+    """Proxy arızası: sahibe en çok günde bir mesaj (bekleme/durdurma yok: sonraki tur yeniden dener)."""
+    print(f"KibrisArabaAl: {err}", flush=True)
+    try:
+        from application.health import notify_owner  # döngü olmasın diye burada (on_blocked gibi)
+        notify_owner(repo, "kaa_proxy", f"⚠️ KibrisArabaAl okunamadı: {err}. Sonraki turda yeniden denerim; sorun sürerse proxy hattına "
+                     f"bakmak gerekir. Bu uyarıyı günde bir gönderirim.", repeat_hours=PROXY_WARN_H)
+    except Exception as e:
+        print("KibrisArabaAl proxy uyarısı gönderilemedi:", type(e).__name__)
+
+
 def reopen(repo) -> None:
     """İnsan onayıyla kalıcı durdurmayı ve beklemeyi kaldırır (admin_cli kaa-ac). Kapı (KAA_IZIN) ayrıca açık olmalı."""
     for key in (HALT_KEY, PAUSE_KEY, STREAK_KEY, LOG_KEY):
@@ -291,6 +331,16 @@ class PoliteClient:
         return r.status_code, text
 
     def _send(self, url: str, timeout: float):
+        for attempt in range(TRIES):
+            if attempt:
+                self.sleep(RETRY_WAIT_S)  # 403/429/5xx: kısa bekleme, bir kez daha (aralık beklemesi yerine)
+            r = self._send_once(url, timeout, wait=not attempt)
+            if not kibrisarabaal.should_retry(r.status_code):
+                break
+        kibrisarabaal.raise_if_blocked(r)
+        return r
+
+    def _send_once(self, url: str, timeout: float, wait: bool):
         now = self.clock()
         day_key, hour_tag = f"{REQ_PREFIX}{now:%Y-%m-%d}", f"{now:%Y-%m-%dT%H}"
         day_n = _int(self.repo.get_state(day_key))
@@ -299,33 +349,34 @@ class PoliteClient:
         if day_n >= DAY_MAX or hour_n >= HOUR_MAX:
             raise Deferred(f"istek kotası doldu (bugün {day_n}/{DAY_MAX}, bu saat {hour_n}/{HOUR_MAX})")
         last = _when(self.repo.get_state(LAST_REQ_KEY))
-        if last is not None:
-            wait = self._delay - max(0.0, (now - last).total_seconds())
-            if wait > MAX_WAIT_S:
+        if wait and last is not None:
+            gap = self._delay - max(0.0, (now - last).total_seconds())
+            if gap > MAX_WAIT_S:
                 raise Deferred(f"robots.txt aralığı ({self._delay:.0f} sn) bu turu aşıyor")
-            if wait > 0:
-                self.sleep(wait)
+            if gap > 0:
+                self.sleep(gap)
         now = self.clock()
         # sayaç ve an İSTEKTEN ÖNCE yazılır: yazılamazsa istek de gitmez (hata yükselir); başarısız istek de sayılır
         self.repo.set_state(day_key, str(day_n + 1))
         self.repo.set_state(HOUR_KEY, f"{hour_tag}|{hour_n + 1}")
         self.repo.set_state(LAST_REQ_KEY, now.isoformat())
         self.requests += 1
-        r = self.inner.get(url, timeout=timeout)
-        kibrisarabaal.raise_if_blocked(r)
-        return r
+        return self.inner.get(url, timeout=timeout)
 
 
 @contextmanager
 def open_client(repo, client=None, sleep=None, clock=None):
     """Kapı AÇIKKEN siteye giden tek yol. Kapı kapalıysa GateClosed (çağıran zaten idle_reason'a bakmış olmalı: bu ikinci kilit).
-    `client` verilirse (testler) o sarılır ve kapatılmaz; yoksa düz httpx istemcisi açılır (kibrisarabaal.new_client)."""
+    `client` verilirse (testler) o sarılır ve kapatılmaz; yoksa proxyli düz httpx istemcisi açılır (kibrisarabaal.new_client) ve siteye
+    ilk istekten önce çıkış IP'si doğrulanır (verify_egress; tutmazsa ProxyFailed)."""
     clock = clock or _utcnow
     if idle_reason(repo, clock()) is not None:
         raise GateClosed("kapı kapalı")
     own = client is None
-    inner = client if client is not None else kibrisarabaal.new_client(headers())
+    inner = client if client is not None else kibrisarabaal.new_client(headers(), proxy_url())
     try:
+        if own:
+            verify_egress(inner)
         yield PoliteClient(repo, inner, sleep=sleep, clock=clock)
     finally:
         if own:

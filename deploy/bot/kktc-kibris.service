@@ -1,0 +1,35 @@
+[Unit]
+Description=KKTC Oto Fırsat - KibrisArabaAl toplama, yalnız proxy üzerinden (entrypoints.kibris_collect)
+After=network-online.target
+Wants=network-online.target
+# bot.env yoksa ya da boşsa hiç çalıştırma
+ConditionFileNotEmpty=/etc/kktc-bot/bot.env
+
+[Service]
+# Zamanlayıcı (kktc-kibris.timer) 2 saatte bir başlatır (sahip 02.11.2026). Siteye istekler YALNIZ bot.env'deki KIBRIS_PROXY_URL'den
+# (SOCIAL_PROXY_INSTAGRAM'ın kopyası) ve application/kaa_gate'in kapısından gider: proxy yoksa ya da çıkış IP'si KIBRIS_EXPECTED_IP değilse
+# siteye istek yok. Yeni ilanlar listings'e yazılır; değerlendirme/bildirim 15 dakikalık turda (kktc-tick).
+Type=oneshot
+User=kktc-bot
+Group=kktc-bot
+WorkingDirectory=/opt/kktc-bot/app
+EnvironmentFile=/etc/kktc-bot/bot.env
+Environment=PYTHONUNBUFFERED=1
+Environment=TZ=UTC
+ExecStart=/opt/kktc-bot/venv/bin/python -m entrypoints.kibris_collect
+TimeoutStartSec=30min
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+UMask=0077
+MemoryMax=512M
