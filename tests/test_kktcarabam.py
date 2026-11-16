@@ -1,4 +1,6 @@
 import re
+import sys
+import types
 from contextlib import nullcontext
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -6,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from application import collect_kktcarabam as kka
+from application import kaa_gate
 from application.notify import is_fresh
 from domain.kktc_time import to_kktc
 from infrastructure.collectors import kktcarabam as site
@@ -39,6 +42,43 @@ def test_card_only_listing():
     assert (d["brand"], d["model"], d["year"], d["fuel"], d["location"]) == ("Mercedes-Benz", "E Serisi", 2013, "dizel", "girne")
     assert (d["price_amount"], d["currency"], d["transmission"]) == (14999, "GBP", "otomatik")
     assert "fiyatsiz" in card_to_listing(cards["263799"])["urgency_signals"]
+
+
+# --- tarayıcı oturumu: VPS'te KibrisArabaAl ile aynı proxy hattı (sahip kararı 16.11.2026) ---
+class ProbeSession:
+    """scrapling.fetchers.DynamicSession yerine: yalnız kurucuya verilen parametreleri kaydeder (tarayıcı açılmaz)."""
+
+    kw: dict = {}
+
+    def __init__(self, **kw):
+        ProbeSession.kw = kw
+
+
+@pytest.fixture
+def probe_dynamic(monkeypatch):
+    ProbeSession.kw = {}
+    mod, fetchers = types.ModuleType("scrapling"), types.ModuleType("scrapling.fetchers")
+    fetchers.DynamicSession = ProbeSession
+    mod.fetchers = fetchers
+    monkeypatch.setitem(sys.modules, "scrapling", mod)
+    monkeypatch.setitem(sys.modules, "scrapling.fetchers", fetchers)
+    return ProbeSession
+
+
+def test_session_opens_through_the_same_proxy_line_as_kibrisarabaal_when_set(probe_dynamic, monkeypatch):
+    monkeypatch.setenv(site.PROXY_ENV, "http://user:pass@gw.example.net:5959")  # sahte değer: gerçek adres koda/teste yazılmaz
+    site.open_session()
+    assert probe_dynamic.kw.get("proxy") == "http://user:pass@gw.example.net:5959"
+    assert site.PROXY_ENV == kaa_gate.PROXY_ENV  # KibrisArabaAl'in kapısındaki değişkenle AYNI: tek hat, tek yerden yönetilir
+
+
+def test_session_without_a_proxy_line_is_direct(probe_dynamic, monkeypatch):
+    monkeypatch.delenv(site.PROXY_ENV, raising=False)  # GitHub yedeği: değişken yok
+    site.open_session()
+    assert probe_dynamic.kw.get("proxy") is None
+    monkeypatch.setenv(site.PROXY_ENV, "")  # boş satır da doğrudan
+    site.open_session()
+    assert probe_dynamic.kw.get("proxy") is None
 
 
 # --- ilan sayfası okuma (yeni kartlar için): km, ilan tarihi, satıcı adı, konum karta eklenir ---
