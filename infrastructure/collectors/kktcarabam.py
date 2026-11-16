@@ -1,5 +1,7 @@
 """kktcarabam.com: Cloudflare arkasında; sayfalar gerçek (headless) tarayıcıyla, normal bir ziyaretçi gibi açılır.
-Bot kontrolünü çözme/atlatma YOK: tarayıcı modu da engellenirse kaynak atlanır."""
+Bot kontrolünü çözme/atlatma YOK: tarayıcı modu da engellenirse kaynak atlanır. VPS'te (kktc-browser) oturum,
+KibrisArabaAl ile aynı proxy hattından çıkar (`KIBRIS_PROXY_URL`, sahip kararı 16.11.2026); GitHub yedeği doğrudan."""
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -17,6 +19,7 @@ BASE = "https://www.kktcarabam.com"
 LIST_URL = BASE + "/kategori/satilik-otomobil"  # sirala= parametresi robots.txt ile yasak: kullanılmaz
 CRAWL_DELAY = 3.0  # nazik hız: ilan sayfası istekleri arasında (diğer tarayıcı-parmak izli kaynaklarla aynı: Mezunum, KibrisCars, SahibindenArabaKibris)
 DETAIL_TIMEOUT_MS = 25_000  # tek ilan sayfası için sınır (liste sayfası oturum varsayılanı 60 sn)
+PROXY_ENV = "KIBRIS_PROXY_URL"  # KibrisArabaAl ile aynı çıkış hattı (application/kaa_gate.PROXY_ENV ile aynı değişken; VPS'te bot.env'de); koda/loga yazılmaz
 _MONTHS = {m: i + 1 for i, m in enumerate(
     ["ocak", "şubat", "mart", "nisan", "mayıs", "haziran", "temmuz", "ağustos", "eylül", "ekim", "kasım", "aralık"])}
 _FUEL = {"benzin": "benzin", "dizel": "dizel", "hibrit": "hibrit", "elektrik": "elektrikli", "lpg": "lpg"}
@@ -142,11 +145,19 @@ def parse_detail(html: str, card: Card) -> dict | None:
     }
 
 
+def proxy_url() -> str | None:
+    """İlan sayfalarının açılacağı hat: KibrisArabaAl ile aynı proxy (ortam değişkeni; VPS'te bot.env'de tanımlı).
+    Tanımlı değilse ya da boşsa (GitHub yedeği) None: doğrudan. Değer asla log'a ya da koda yazılmaz (içinde parolası var)."""
+    return os.environ.get(PROXY_ENV) or None
+
+
 def open_session():
-    """Gerçek headless tarayıcı oturumu (Scrapling). with bloğunda kullanılır."""
+    """Gerçek headless tarayıcı oturumu (Scrapling). with bloğunda kullanılır; liste ve ilan sayfaları AYNI oturumda açılır.
+    VPS'te oturum KibrisArabaAl ile aynı proxyden çıkar (`proxy_url`); bozuk proxy adresi oturumu açmaz (tur hatayla biter,
+    kalp atışı yazılmaz: GitHub yedeği devralır)."""
     from scrapling.fetchers import DynamicSession
 
-    return DynamicSession(headless=True, network_idle=True, timeout=60000)
+    return DynamicSession(headless=True, network_idle=True, timeout=60000, proxy=proxy_url())
 
 
 def fetch_html(session, url: str) -> str | None:

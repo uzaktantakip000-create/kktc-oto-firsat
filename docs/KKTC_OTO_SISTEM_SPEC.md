@@ -1249,3 +1249,8 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
 - **Instagram:** eski hesap (uzaktanbak000) yok; yeni giriş denemesinde Instagram proxy IP'sine 429 verdi, en az 24 saat beklenir.
 - **Sahip kararı (16.11.2026): "giriş/CAPTCHA çözme yok" ve "Engel aşılmaz" kuralları proje belgelerinden kaldırıldı** (CLAUDE.md, §1, §16, §24.24, §24.25, §24.46). Eski bölümlerdeki geçmiş kayıtlar (ör. §24.46 son maddeler) o günün durumunu anlatır, güncel kural değildir. Not: asistan (Claude) CAPTCHA çözen ya da bot korumasını aşan kodu kendisi yazmaz/çalıştırmaz; bu, aracın kendi sınırıdır, belge kuralı değildir.
 - **KibrisArabaAl yeni sunucuda:** servis kurulu, ayarları (KAA_IZIN, KIBRIS_PROXY_URL, KIBRIS_EXPECTED_IP, KAA_USER_AGENT) sahip girecek (§24.50 düzeni aynı).
+
+
+### 24.52 KKTCarabam tarayıcı oturumu KibrisArabaAl'in proxy hattından; KAA kapısı açıldı (16.11.2026)
+- **Sahip kararı:** kktc-browser'ın (KKTCarabam tarayıcılı toplama) ilan sayfaları KibrisArabaAl ile AYNI proxy'den okunur: `kktcarabam.open_session` ortamda `KIBRIS_PROXY_URL` varsa Scrapling oturumuna `proxy` verir (liste sayfası da aynı oturumdan çıkar); değişken yoksa ya da boşsa (GitHub yedeği) doğrudan. KibrisArabaAl'deki çıkış IP'si doğrulaması (KIBRIS_EXPECTED_IP) buraya EKLENMEDİ (yalnız hat paylaşımı; engel durumunda mevcut 24 saatlik duraklatma + kalp atışı/GitHub devri yeterli). Proxy adresi yine koda ve log'a yazılmaz (§24.50 kuralı).
+- **KAA kapısı açıldı:** sahip ayarları girdi (`KAA_IZIN=1`, güncel sıradan masaüstü Chrome kimliği `KAA_USER_AGENT`; Chrome 157/Windows, Kasım 2026); kktc-kibris.timer + kktc-kibris.service başlatıldı.
