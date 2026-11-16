@@ -118,3 +118,49 @@ def test_ask_the_seller_listing_is_stored_without_price():
 def test_missing_offer_is_not_read_as_for_sale_unless_the_listing_itself_asks_for_price():
     assert parse_detail(page("£6.000", "Fiyatı satıcıya sor")) is None  # yalnız benzer ilan kartı fiyatsız
     assert parse_detail(page("", "")) is None  # teklif yok, sayfa da fiyat sormuyor: bilinmiyor
+
+
+# ---------- 16.11.2026 şablonu (gerçek sayfalardan kısaltılmış; satıcı adı değiştirildi) ----------
+V2 = Path(__file__).parent / "fixtures"
+
+
+def test_v2_archived_page_is_read_as_inactive():
+    d = parse_detail((V2 / "kktcar_detail_archived_v2.html").read_text())
+    assert (d["brand"], d["model"], d["year"], d["km"]) == ("Mercedes-Benz", "C 200", 2001, 250000)
+    assert d["is_active"] is False and d["urgency_signals"] == ["arsiv"]
+    assert (d["price_amount"], d["currency"], d["fuel"], d["transmission"], d["location"]) == (3300.0, "GBP", "dizel", "otomatik", "Girne")
+    assert "sold_at" not in d and d["archive_dated"] is True  # arşiv (süre dolumu): satış tarihi yazılmaz
+
+
+def test_v2_sold_page_keeps_sale_date():
+    d = parse_detail((V2 / "kktcar_detail_sold_v2.html").read_text())
+    assert (d["brand"], d["model"], d["year"], d["km"]) == ("Suzuki", "Swift", 2004, 201000)
+    assert d["is_active"] is False and d["urgency_signals"] == ["satildi"]
+    assert (d["price_amount"], d["currency"]) == (150000.0, "TRY")
+    assert d["sold_at"] is not None and d["archive_dated"] is True
+
+
+def test_v2_ask_price_active_page():
+    d = parse_detail((V2 / "kktcar_detail_ask_price_v2.html").read_text())
+    assert (d["brand"], d["model"], d["year"], d["km"], d["engine_l"]) == ("BMW", "X1", 2016, 100760, 1.8)
+    assert d["price_amount"] is None and d["urgency_signals"] == ["fiyatsiz"] and d.get("is_active") is None
+    assert (d["fuel"], d["transmission"], d["location"]) == ("benzin", "otomatik", "Girne")
+    assert d["posted_at"].month == 8 and d["posted_at"].day == 1
+    assert "Test Satıcı" not in d["raw_text"]  # satıcı adı okunmaz
+
+
+def test_v2_active_page_with_price_and_unknown_price_shape():
+    html = (V2 / "kktcar_detail_ask_price_v2.html").read_text()
+    priced = parse_detail(html.replace("<p>Fiyatı satıcıya sor</p>", "<p>£9.500</p><p>£</p><p>9.500</p>"))
+    assert (priced["price_amount"], priced["currency"], priced["urgency_signals"]) == (9500.0, "GBP", None)
+    assert parse_detail(html.replace("<p>Fiyatı satıcıya sor</p>", "<p>Bilinmeyen</p>")) is None  # tanımadığımız biçim: okunmadı say
+
+
+def test_v2_posted_relative_and_future_month():
+    from datetime import datetime, timezone
+    from infrastructure.collectors.kktcar import _v2_posted
+    today = datetime(2026, 11, 16, tzinfo=timezone.utc)
+    assert _v2_posted(["Bireysel satıcı · Girne · 3 gün önce eklendi"], today) == datetime(2026, 11, 13, tzinfo=timezone.utc)
+    assert _v2_posted(["Galeri · Lefkoşa · 20 Aralık eklendi"], today) == datetime(2025, 12, 20, tzinfo=timezone.utc)
+    assert _v2_posted(["Bireysel satıcı · Girne · bugün eklendi"], today) == today
+    assert _v2_posted(["eklendi değil"], today) is None

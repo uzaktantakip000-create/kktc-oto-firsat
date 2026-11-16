@@ -423,3 +423,39 @@ def test_price_on_request_listing_has_no_price_by_design():
     # canlı sayfa (02.10.2026): fiyatı gizleyen satıcılar JSON-LD'ye price "0" yazar: parse boşluğu değil, ilanın kendisi fiyatsız
     d = parse_detail(NO_PRICE_HTML)
     assert d["price_amount"] is None and d["urgency_signals"] == ["fiyatsiz"] and d["brand"] == "Mazda"
+
+
+def test_kktcar_refresh_dated_archive_pages_close_even_when_many(monkeypatch):
+    """16.11.2026: şablon değişince biriken GERÇEK kapanışlar (sayfada arşive alınma zamanı yazıyor) toplu korumaya takılmaz;
+    tarihsiz kapanışlar yine korunur."""
+    rows = [dict(id=f"r{i}", url=f"https://kktcar.com/r{i}", source_item_id=f"r{i}") for i in range(10)]
+
+    class Repo(KkRepo):
+        def stale_active(self, sid, hours, limit):
+            return rows
+
+        def apply_refresh(self, i, row, data):
+            self.refresh.append(i)
+            return "pasif" if data.get("is_active") is False else None
+
+    def fetch_dated(client, entry):  # 8/10 tarihli arşiv
+        n = int(entry.slug[1:])
+        return ({"is_active": False, "urgency_signals": ["arsiv"], "archive_dated": True, "price_amount": 1.0, "currency": "GBP"}
+                if n < 8 else {"price_amount": 5000.0, "currency": "GBP"})
+
+    monkeypatch.setattr(ckk.kktcar, "polite_sleep", lambda: None)
+    monkeypatch.setattr(ckk, "gbp_rate", lambda c: 1.0)
+    monkeypatch.setattr(ckk.kktcar, "fetch_detail", fetch_dated)
+    repo, stats = Repo(), ckk.KktcarStats()
+    ckk.refresh_active(repo, {"id": "S", "name": "KKTCar"}, None, stats)
+    assert stats.went_inactive == 8 and not stats.suspect
+
+    def fetch_undated(client, entry):  # 8/10 tarihsiz "satıldı": şüphe, hiçbiri kapanmaz
+        n = int(entry.slug[1:])
+        return ({"is_active": False, "urgency_signals": ["satildi"], "price_amount": 1.0, "currency": "GBP"}
+                if n < 8 else {"price_amount": 5000.0, "currency": "GBP"})
+
+    monkeypatch.setattr(ckk.kktcar, "fetch_detail", fetch_undated)
+    repo, stats = Repo(), ckk.KktcarStats()
+    ckk.refresh_active(repo, {"id": "S", "name": "KKTCar"}, None, stats)
+    assert stats.went_inactive == 0 and stats.suspect

@@ -59,18 +59,22 @@ def refresh_active(repo: Repository, source: dict, client, stats: KktcarStats, l
             continue
         stats.refreshed += 1
         read_ok += 1
+        dated = data.pop("archive_dated", False)
         if data.get("is_active") is False:  # satıldı/arşiv: yazmadan önce toplu kontrol
-            closing.append((row, data))
+            closing.append((row, data, dated))
             continue
         data["price_gbp"] = _gbp(data)
         change = repo.apply_refresh(row["id"], row, data)
         stats.price_changes += change == "fiyat"
-    if removed_rate_suspect(read_ok, len(closing)):
-        stats.suspect.append(removed_message(f"{source['name']} (yenileme)", read_ok, len(closing)))
-    else:
-        for row, data in closing:
-            data["price_gbp"] = _gbp(data)
-            stats.went_inactive += repo.apply_refresh(row["id"], row, data) == "pasif"
+    # 16.11.2026: sayfasında "Arşive alınma tarihi" (zaman damgası) yazan satıldı/arşiv sayfası kesin kanıttır; toplu koruma yalnız
+    # tarihsiz kapanışlara bakar (şablon değişince biriken gerçek kapanışlar korumayı kalıcı tetiklemesin).
+    undated = [c for c in closing if not c[2]]
+    if removed_rate_suspect(read_ok - (len(closing) - len(undated)), len(undated)):
+        stats.suspect.append(removed_message(f"{source['name']} (yenileme)", read_ok, len(undated)))
+        closing = [c for c in closing if c[2]]
+    for row, data, _ in closing:
+        data["price_gbp"] = _gbp(data)
+        stats.went_inactive += repo.apply_refresh(row["id"], row, data) == "pasif"
 
 
 def collect_kktcar(repo: Repository, source: dict, max_new: int = 25, clock=time.monotonic) -> KktcarStats:
@@ -98,6 +102,7 @@ def collect_kktcar(repo: Repository, source: dict, max_new: int = 25, clock=time
                 stats.unread.append(entry.url)
                 continue
             data.pop("swap", None)
+            data.pop("archive_dated", None)
             data["price_gbp"] = _gbp(data)
             data["url"] = entry.url
             data["data_as_of"] = data.get("posted_at") or entry.lastmod  # emsal yaşı için (arşiv sayfalarında yayın tarihi yok)

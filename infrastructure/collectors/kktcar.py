@@ -3,7 +3,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -96,6 +96,8 @@ def _parse_sold(title: str, lines: list[str], marker: str, signal: str) -> dict 
     if marker not in lines:
         return None
     i = lines.index(marker)
+    if "Arşivdeki araç bilgileri" not in lines and "Son ilan fiyatı" in lines[:i] and "Özellikler" in lines[i:]:
+        return _parse_sold_v2(title, lines, i, signal)
     brand, model = lines[i - 2], lines[i - 1]
     f = _pairs(lines[lines.index("Arşivdeki araç bilgileri"):]) if "Arşivdeki araç bilgileri" in lines else {}
     if "Arşivdeki araç bilgileri" in lines:  # arşiv bloğunda 'Araç Detayları' yok, etiketleri doğrudan tara
@@ -130,6 +132,126 @@ def _parse_sold(title: str, lines: list[str], marker: str, signal: str) -> dict 
 
 
 _SELLER_HREF = re.compile(r"^/seller/([0-9a-fA-F-]{8,64})/?$")
+
+
+_V2_LABELS = {"Yıl", "Kilometre", "Yakıt", "Vites", "Kasa", "Renk", "Motor hacmi", "Yer"}
+_V2_END = re.compile(r"^(No \d|Bilgiler ilanın|Arşive alınma|Keşfet$)")
+_TR_MONTH = {"ocak": 1, "şubat": 2, "mart": 3, "nisan": 4, "mayıs": 5, "haziran": 6, "temmuz": 7, "ağustos": 8, "eylül": 9,
+             "ekim": 10, "kasım": 11, "aralık": 12}
+_SLIDE = re.compile(r"^\d+ / \d+$")
+
+
+def _v2_fields(lines: list[str], start: int) -> dict[str, str]:
+    """16.11.2026 şablonu: "Özellikler" bloğundaki etiket-değer çiftleri (Yıl, Kilometre "100.760 km", Yakıt, Vites, Kasa, Renk,
+    Motor hacmi "1.8 L", Yer). Blok "No 5885 · ..." / "Bilgiler ilanın..." satırında biter."""
+    out: dict[str, str] = {}
+    for k in range(start + 1, len(lines) - 1):
+        if _V2_END.match(lines[k]):
+            break
+        if lines[k] in _V2_LABELS and lines[k] not in out:
+            out[lines[k]] = lines[k + 1]
+    return out
+
+
+def _v2_posted(lines: list[str], today: datetime | None = None) -> datetime | None:
+    """ "Bireysel satıcı · Girne · 1 Ağustos eklendi" / "3 gün önce eklendi": yıl yazmaz; gelecekteki ay geçen yıldır. Yalnız gün."""
+    today = today or datetime.now(timezone.utc)
+    for l in lines:
+        if not l.endswith("eklendi"):
+            continue
+        m = re.search(r"(\d{1,2}) (\w+) eklendi$", l)
+        if m and m.group(2).lower() in _TR_MONTH:
+            month, day = _TR_MONTH[m.group(2).lower()], int(m.group(1))
+            year = today.year - 1 if (month, day) > (today.month, today.day) else today.year
+            try:
+                return datetime(year, month, day, tzinfo=timezone.utc)
+            except ValueError:
+                return None
+        m = re.search(r"(\d+) gün önce eklendi$", l)
+        low = l.lower()
+        days = int(m.group(1)) if m else 1 if low.endswith("dün eklendi") else 0 if low.endswith("bugün eklendi") else None
+        if days is None:
+            return None
+        base = today - timedelta(days=days)
+        return datetime(base.year, base.month, base.day, tzinfo=timezone.utc)
+    return None
+
+
+def _parse_sold_v2(title: str, lines: list[str], i: int, signal: str) -> dict | None:
+    """16.11.2026 satıldı/arşiv şablonu: marka ve model "Son ilan fiyatı"nın hemen üstünde, bilgiler alttaki "Özellikler" bloğunda."""
+    j = lines.index("Son ilan fiyatı")
+    f = _v2_fields(lines, lines.index("Özellikler", i))
+    year = re.sub(r"\D", "", f.get("Yıl", ""))
+    if j < 2 or len(year) != 4:
+        return None
+    price_txt = lines[j + 1] if j + 1 < len(lines) else None
+    price = parse_price(price_txt) if price_txt else None
+    km = re.sub(r"\D", "", f.get("Kilometre", ""))
+    return {
+        "brand": lines[j - 2],
+        "model": lines[j - 1],
+        "year": int(year),
+        "km": int(km) if km else None,
+        "fuel": _FUEL.get(f.get("Yakıt", "").lower(), f.get("Yakıt", "").lower() or None),
+        "transmission": canon_transmission(f.get("Vites", "")) or None,
+        "location": f.get("Yer"),
+        "price_raw": price_txt if price else None,
+        "price_amount": price.amount if price else None,
+        "currency": price.currency if price else None,
+        "currency_guess": price.currency_guess if price else False,
+        "raw_text": title,
+        "posted_at": None,
+        "negotiable": None,
+        "swap": None,
+        "is_active": False,
+        "urgency_signals": [signal] if price else [signal, "fiyatsiz"],
+    }
+
+
+def parse_visible_v2(tree: HTMLParser, title: str, lines: list[str]) -> dict | None:
+    """16.11.2026 aktif ilan şablonu (yapılandırılmış veri ve "Marka" etiketi yok): başlık bloğu "1 / 5" sayacından sonra
+    yıl, marka, model, fiyat ya da "Fiyatı satıcıya sor"; ayrıntılar "Özellikler" bloğunda. Satıcı adı OKUNMAZ."""
+    if "Özellikler" not in lines or "Yıl" not in lines:
+        return None
+    y = lines.index("Yıl")
+    k = next((n for n in range(y - 1, -1, -1) if _SLIDE.match(lines[n])), None)
+    if k is None or y - k < 4 or not re.fullmatch(r"\d{4}", lines[k + 1]):
+        return None
+    brand, model, price_lines = lines[k + 2], lines[k + 3], lines[k + 4:y]
+    ask = any(l in ASK_PRICE for l in price_lines)
+    price_txt = None if ask else next((l for l in price_lines if (pp := parse_price(l)) and pp.amount and pp.currency), None)
+    price = parse_price(price_txt) if price_txt else None
+    if not price and not ask:
+        return None  # tanımadığımız fiyat biçimi
+    f = _v2_fields(lines, lines.index("Özellikler"))
+    year = re.sub(r"\D", "", f.get("Yıl") or lines[k + 1])
+    km = re.sub(r"\D", "", f.get("Kilometre", ""))
+    desc = ""
+    if "Açıklama" in lines:
+        a = lines.index("Açıklama") + 1
+        stops = [n for n in range(a, min(len(lines), a + 40)) if lines[n] in ("Özellikler", "Keşfet", "Satıcı")]
+        desc = "\n".join(lines[a:stops[0] if stops else min(len(lines), a + 40)])
+    return {
+        "seller_handle": seller_handle(tree),
+        "brand": brand,
+        "model": model,
+        "year": int(year[:4]),
+        "km": int(km) if km else None,
+        "fuel": _FUEL.get(f.get("Yakıt", "").lower(), f.get("Yakıt", "").lower() or None),
+        "transmission": canon_transmission(f.get("Vites", "")) or None,
+        "engine_l": engine_liters(f.get("Motor hacmi")),
+        "location": f.get("Yer"),
+        "steering": steering_from_text(f"{title}\n{desc}"),
+        "price_raw": price_txt if price else None,
+        "price_amount": price.amount if price else None,
+        "currency": price.currency if price else None,
+        "currency_guess": price.currency_guess if price else False,
+        "urgency_signals": None if price else ["fiyatsiz"],
+        "raw_text": f"{title}\n{desc}",
+        "posted_at": _v2_posted(lines),
+        "negotiable": bool(re.search(r"pazarl[ıi]k", desc, re.I)) if desc else None,
+        "swap": None,
+    }
 
 
 def seller_handle(tree: HTMLParser) -> str | None:
@@ -245,12 +367,18 @@ def parse_detail(html: str) -> dict | None:
         sold = _parse_sold(title, lines, "Bu araç satıldı.", "satildi")
         if sold is not None and (at := archived_at(html)) is not None:
             sold["sold_at"] = at  # kaynağın bildirdiği satış (arşive alınma) zamanı; "arsiv" (süre dolumu) sayfalarında YAZILMAZ: satıldığı kesin değil
+        if sold is not None:
+            sold["archive_dated"] = _ARCHIVED_AT.search(html) is not None
         return sold
     if "İlan arşivi" in title:  # süresi dolmuş/güncelliği doğrulanamayan ilan: satıldığı kesin değil
-        return _parse_sold(title, lines, "Bu ilan artık aktif değil.", "arsiv")
+        arch = _parse_sold(title, lines, "Bu ilan artık aktif değil.", "arsiv")
+        if arch is not None:
+            arch["archive_dated"] = _ARCHIVED_AT.search(html) is not None
+        return arch
     f = _pairs(lines)
     if not f.get("Marka") or not f.get("Yıl"):
-        return parse_structured(raw_html, title, lines)  # görünür sayfa boş ("Araç Bulunamadı") ya da yeni biçim: yapılandırılmış veriden
+        # görünür sayfa boş ("Araç Bulunamadı") ya da yeni biçim: önce yapılandırılmış veri, yoksa 16.11.2026 görünür şablonu
+        return parse_structured(raw_html, title, lines) or parse_visible_v2(tree, title, lines)
 
     # Güncel fiyat başlıkta: "BMW X5 2014 - 25.900£ - KKTCar" (üstü çizili eski fiyat varsa karışmaz)
     m = re.search(r"-\s*([\d.,]+\s*[£€$₺]|[£€$₺]\s*[\d.,]+)\s*-", title)
