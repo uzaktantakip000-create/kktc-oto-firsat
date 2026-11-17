@@ -4,7 +4,7 @@ temiz bir düzen olarak bottan tekrardan göndermeni istiyorum"). /oyla komutu (
 
 Sahibe gitmiş (🟢/🟠/🟡/⚡; 🟡 27.10.2026'dan beri) ve SAHİBİN hiç oy vermediği, hâlâ ilanda görünen her araç için TEK mesaj: önce bir başlık,
 sonra 🟢/🟠, sonra 🟡, en sonda ⚡;
-her grup kendi içinde en yeni önce. Her mesaj 🟢 ile aynı 👍 İşe yarar / 👎 Yanlış (+ telefon varsa WhatsApp) düğmeleriyle gider
+her grup kendi içinde en yeni önce. Her mesaj 🟢 ile aynı 👍 İyi / 👎 Kötü / ✅ Satıldı (+ telefon varsa WhatsApp) düğmeleriyle gider
 (notify.keyboard; bot_poll fb:ilgilendim / fb:yanlis_fiyat'ı her ilan kimliği için zaten kaydeder). Abonelerin oyu sahibin oyu sayılmaz
 (`OWNER_VOTE_SQL`): abone oylamış olsa da sahip oylamadıysa listede.
 - ⚡: 20.10.2026'dan önceki ⚡'ler alerts'e yazılmıyordu ve düğmesizdi; onlar bot_state `acil:islenen`den alınır (gönderim anı yerine ilk görülme).
@@ -33,7 +33,7 @@ ORDER = {"guclu": 0, "tahmini": 0, "pazarlik": 1, "acil": 2}  # 🟡 PAZARLIK FI
 SEND_GAP_S = 0.4  # Telegram: tek sohbete saniyede ~1 mesaj sınırının altında
 HEADER = ("🗳 OY BEKLEYENLER: {n} araç\n"
           "Sana gönderdiğim ve henüz oylamadığın, hâlâ ilanda görünen bildirimler (satılmış ya da kalkmış olanları koymadım). Her birinin "
-          "altındaki 👍 İşe yarar ya da 👎 Yanlış düğmesine bas: 👍 = gerçekten iyi fırsattı, 👎 = fiyat/değer yanlıştı ya da fırsat değildi. "
+          "altındaki 👍 İyi, 👎 Kötü ya da ✅ Satıldı düğmesine bas: 👍 = gerçekten iyi fırsattı, 👎 = fiyat/değer yanlıştı ya da fırsat değildi, ✅ = ilan satılmış. "
           "Sistemin ne kadar doğru çalıştığını yalnız senin oylarınla ölçebiliyorum. Sıra: önce 🟢/🟠, sonra 🟡 pazarlık, en sonda ⚡ acil satıcı; "
           "en yeni önce.")
 NONE_LEFT = "🗳 Oylamadığın ve hâlâ ilanda görünen bildirim yok. Teşekkürler!"

@@ -180,9 +180,9 @@ class CbRepo:
         self.state[k] = v
 
 
-def test_sold_button_deactivates_only_for_owner(monkeypatch):
+def test_sold_button_deactivates_for_owner_and_subscriber(monkeypatch):
     monkeypatch.setattr(bot_poll, "_answer", lambda *a, **k: None)
-    for sender, expect in (("owner", True), ("friend", False)):
+    for sender, expect in (("owner", True), ("friend", True)):
         repo = CbRepo()
         bot_poll._handle_callback(repo, "t", "owner", {"id": "1", "from": {"id": sender}, "data": "fb:satilmis:L1"})
         assert any(s.startswith("INSERT INTO feedback") for s in repo.conn.sql)

@@ -288,13 +288,14 @@ def greeting(l: dict) -> str:
 
 
 def keyboard(listing_id, wa_url: str | None = None) -> dict:
-    """2 düğme (sahibin kararı 03.10.2026): 👍 İşe yarar / 👎 Yanlış. 👎 yalnız KAYIT tutar (10 oydan önce otomatik eylem yok:
-    application/learning.py). Eski mesajlardaki düğmeler (pas, zaten satılmış, kusurlu...) çalışmaya devam eder."""
+    """3 düğme (sahibin kararı 17.11.2026; öncesi 03.10'da 2 düğme): 👍 İyi / 👎 Kötü / ✅ Satıldı. 👎 yalnız KAYIT tutar (10 oydan önce otomatik
+    eylem yok: application/learning.py). ✅ Satıldı (fb:satilmis) ilanı kapatır ve bir daha gönderilmez; sahip VE onaylı aboneler basabilir,
+    kimin bastığı feedback.note'ta (chat:<id>) kalır. Eski mesajlardaki düğmeler (işe yarar, yanlış, pas, kusurlu...) çalışmaya devam eder."""
     def btn(text, action):
         return {"text": text, "callback_data": f"fb:{action}:{listing_id}"}
 
     top = [[{"text": "📲 WhatsApp'tan ulaş", "url": wa_url}]] if wa_url else []
-    return {"inline_keyboard": top + [[btn("👍 İşe yarar", "ilgilendim"), btn("👎 Yanlış", "yanlis_fiyat")]]}
+    return {"inline_keyboard": top + [[btn("👍 İyi", "ilgilendim"), btn("👎 Kötü", "yanlis_fiyat"), btn("✅ Satıldı", "satilmis")]]}
 
 
 def photo_stale(photo_urls, reference: datetime, fresh_hours: int = 36) -> bool:
@@ -430,7 +431,7 @@ def _record_alert(repo: Repository, listing_id, chat_id: str, tier: str, msg_id,
 
 
 def urgent_keyboard(listing: dict) -> dict:
-    """⚡ ACİL SATICI düğmeleri (20.10.2026; sahip: "Facebook fırsatlarında neden oylama yok?"): 🟢 ile AYNI 👍 İşe yarar / 👎 Yanlış
+    """⚡ ACİL SATICI düğmeleri (20.10.2026; sahip: "Facebook fırsatlarında neden oylama yok?"): 🟢 ile AYNI 👍 İyi / 👎 Kötü / ✅ Satıldı
     (`keyboard`; bot_poll fb:ilgilendim / fb:yanlis_fiyat'ı her ilan kimliği için zaten kaydeder) ve geçerli telefon varsa WhatsApp."""
     return keyboard(listing["id"], whatsapp_url(listing.get("seller_phone"), greeting(listing)))
 

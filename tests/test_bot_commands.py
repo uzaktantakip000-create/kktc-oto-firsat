@@ -481,7 +481,7 @@ def control_vote(tg, repo):
     return ("KONTROL-ILAN", "ilgilendim", f"chat:{OWNER}")
 
 
-@pytest.mark.parametrize("action,label", [("ilgilendim", "✅ Kaydedildi: 👍 İşe yarar"), ("yanlis_fiyat", "✅ Kaydedildi: 👎 Yanlış")])
+@pytest.mark.parametrize("action,label", [("ilgilendim", "✅ Kaydedildi: 👍 İyi"), ("yanlis_fiyat", "✅ Kaydedildi: 👎 Kötü")])
 def test_owner_vote_is_stored_the_pressed_message_shows_saved_and_the_whatsapp_button_stays(monkeypatch, action, label):
     tg, repo = Telegram(monkeypatch), VoteRepo()
     press(repo, OWNER, action, notify.keyboard(LID, WA))
@@ -495,11 +495,11 @@ def test_owner_vote_is_stored_the_pressed_message_shows_saved_and_the_whatsapp_b
 def test_a_message_without_a_whatsapp_button_ends_up_with_only_the_saved_button(monkeypatch):
     tg = Telegram(monkeypatch)
     press(VoteRepo(), OWNER, "ilgilendim", notify.keyboard(LID))
-    assert tg.edits[0]["reply_markup"] == {"inline_keyboard": [[saved("✅ Kaydedildi: 👍 İşe yarar")]]}
+    assert tg.edits[0]["reply_markup"] == {"inline_keyboard": [[saved("✅ Kaydedildi: 👍 İyi")]]}
 
 
-@pytest.mark.parametrize("action,name", [("pas", "Pas"), ("satilmis", "Zaten satılmış"), ("kusurlu", "Kusurlu/sahte"),
-                                         ("ilgilendim", "👍 İşe yarar"), ("yanlis_fiyat", "👎 Yanlış")])
+@pytest.mark.parametrize("action,name", [("pas", "Pas"), ("satilmis", "Satıldı"), ("kusurlu", "Kusurlu/sahte"),
+                                         ("ilgilendim", "👍 İyi"), ("yanlis_fiyat", "👎 Kötü")])
 def test_old_messages_with_five_buttons_collapse_to_one_saved_button_named_after_the_vote(monkeypatch, action, name):
     tg, repo = Telegram(monkeypatch), VoteRepo()
     press(repo, OWNER, action, old_keyboard(wa=WA))
@@ -550,7 +550,7 @@ def test_a_failing_edit_never_loses_the_vote_or_the_answer_and_logs_one_short_li
 
 
 @pytest.mark.parametrize("markup", [None, {"inline_keyboard": []}, notify.keyboard("BASKA-ILAN", WA),
-                                    {"inline_keyboard": [WA_ROW, [saved("✅ Kaydedildi: 👍 İşe yarar")]]}])  # düğmesiz / başka ilanın / zaten değişmiş
+                                    {"inline_keyboard": [WA_ROW, [saved("✅ Kaydedildi: 👍 İyi")]]}])  # düğmesiz / başka ilanın / zaten değişmiş
 def test_nothing_to_replace_means_no_edit_but_the_vote_is_still_stored_and_answered(monkeypatch, markup):
     tg, repo = Telegram(monkeypatch), VoteRepo()
     control = control_vote(tg, repo)
@@ -572,7 +572,7 @@ def test_a_repeat_press_on_a_stale_keyboard_stores_one_vote_but_still_shows_save
     tg.fail = {}
     press(repo, OWNER, "ilgilendim", notify.keyboard(LID, WA))
     assert repo.conn.feedback == [(LID, "ilgilendim", f"chat:{OWNER}")] and len(tg.edits) == 2
-    assert tg.edits[1]["reply_markup"]["inline_keyboard"][1] == [saved("✅ Kaydedildi: 👍 İşe yarar")]
+    assert tg.edits[1]["reply_markup"]["inline_keyboard"][1] == [saved("✅ Kaydedildi: 👍 İyi")]
 
 
 def test_someone_not_approved_stores_nothing_and_no_button_changes(monkeypatch):
@@ -585,7 +585,7 @@ def test_someone_not_approved_stores_nothing_and_no_button_changes(monkeypatch):
 @pytest.mark.parametrize("sender", [OWNER, FRIEND, "99"])
 def test_pressing_the_saved_button_stores_nothing_and_says_already_saved(monkeypatch, sender):
     tg, repo = Telegram(monkeypatch), VoteRepo({FRIEND: "onayli"})
-    press(repo, sender, "kayitli", {"inline_keyboard": [WA_ROW, [saved("✅ Kaydedildi: 👍 İşe yarar")]]})
+    press(repo, sender, "kayitli", {"inline_keyboard": [WA_ROW, [saved("✅ Kaydedildi: 👍 İyi")]]})
     assert repo.conn.sql == [] and repo.conn.feedback == [] and (repo.sold, repo.blocked) == ([], [])  # veritabanına hiç dokunulmadı
     assert tg.edits == [] and tg.toasts == ["Zaten kaydedildi"]
 
@@ -606,10 +606,10 @@ def test_a_subscribers_press_edits_only_the_subscribers_message_and_stays_a_subs
     kaydolur ve sahibin eylemlerini tetiklemez. Sayımların abone oyunu saymaması (OWNER_VOTE_SQL) test_repository_db.py'de gerçek veritabanıyla."""
     tg, repo = Telegram(monkeypatch), VoteRepo({FRIEND: "onayli"})
     press(repo, FRIEND, "satilmis", notify.keyboard(LID, WA), message_id=88)  # abonenin kendi kopyası; sahibin kopyası (sohbet 1, mesaj 77) hiç gelmedi
-    assert repo.conn.feedback == [(LID, "satilmis", f"chat:{FRIEND}")] and (repo.sold, repo.blocked) == ([], [])
+    assert repo.conn.feedback == [(LID, "satilmis", f"chat:{FRIEND}")] and (repo.sold, repo.blocked) == ([LID], [])  # ✅ Satıldı: abone de basabilir, ilan kapanır; kim bastığı note'ta
     assert [(e["chat_id"], e["message_id"]) for e in tg.edits] == [(int(FRIEND), 88)]  # sahibin sohbetine/mesajına hiçbir çağrı yok
     assert not any(kw.get("chat_id") in (int(OWNER), OWNER) for m, kw in tg.calls)
-    assert tg.edits[0]["reply_markup"]["inline_keyboard"][1] == [saved("✅ Kaydedildi: Zaten satılmış")]
+    assert tg.edits[0]["reply_markup"]["inline_keyboard"][1] == [saved("✅ Kaydedildi: Satıldı")]
 
 
 # --- onay/ret: sahibe de haber gider ---------------------------------------------------------------------------------
