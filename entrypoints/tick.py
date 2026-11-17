@@ -137,6 +137,17 @@ def timed_evaluate(label: str) -> bool:
     return ok
 
 
+def run_once_late(repo) -> None:
+    """🕰 Geç kalan fırsatlar: canlıya çıkınca tek sefer herkese (application/late_alerts.run_once); hata turu bozmaz."""
+    try:
+        from application import late_alerts
+        out = late_alerts.run_once(repo, require("TELEGRAM_BOT_TOKEN"), require("TELEGRAM_CHAT_ID"))
+        if out:
+            print(out)
+    except Exception as e:
+        print("geç bildirim turu yapılamadı:", type(e).__name__)
+
+
 def run_hunts(repo) -> None:
     """🎯 Av modu (application/hunt): değerlendirmeden sonra, bu turda ilk kez görülen ilanlar sahibin avlarına karşı; mesaj sahibe ve abonelere
     (sahip kararı 22.10.2026). Hata turu durdurmaz."""
@@ -212,6 +223,7 @@ def main() -> None:
     if slow:
         run_batch(slow, repo, now, started, errors)
         eval_ok = timed_evaluate("değerlendirme (2)") and eval_ok
+    run_once_late(repo)
     run_hunts(repo)
     run_ask_price(repo)
     report_collect_errors(repo, errors)
