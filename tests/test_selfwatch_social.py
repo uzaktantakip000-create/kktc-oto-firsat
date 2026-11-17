@@ -646,3 +646,22 @@ def test_tick_main_calls_the_social_check_on_the_vps_only(monkeypatch, tg):
     for runner in ("github", "yerel"):
         run_tick(monkeypatch, runner, Repo())
     assert len(calls) == 1
+
+
+# --- 17.11.2026: yavaş başlangıçta (4 saatte bir tur) planlanan sonraki tur gelmeden "susuyor" denmez ---------------------------
+@pytest.mark.parametrize("next_at,state", [
+    ("PLANNED", "tamam"),  # 09:39 planlı, şimdi 09:20: tur sırada
+    ("GRACE", "tamam"),  # planlı turdan 44 dk sonra: zamanlayıcı adımı payı
+    ("LATE", "susuyor"),  # planlı turdan 46 dk sonra hâlâ tur yok
+    ("FAR", "susuyor"),  # 13 saat sonrası planlanmış: uyarıyı süresiz gizlemez
+    ("NAIVE", "susuyor"),  # saat dilimsiz
+    ("BAD", "susuyor"),  # bozuk
+    (None, "susuyor"),  # alan yok: eski kural
+])
+def test_a_planned_next_round_that_has_not_come_yet_is_not_silence(next_at, state):
+    last = kk(17, 8, 43, month=11)
+    now = kk(17, 12, 20, month=11)  # gündüz 3 sa 37 dk: eski kuralla susuyor
+    stamp = {"PLANNED": (now + 19 * M).isoformat(), "GRACE": (now - 44 * M).isoformat(), "LATE": (now - 46 * M).isoformat(),
+             "FAR": (now + 13 * 60 * M).isoformat(), "NAIVE": (now + 19 * M).replace(tzinfo=None).isoformat(), "BAD": "yarın"}
+    _, got = judged(doc({"facebook": plat(last=last) | {"sonraki_tur_utc": stamp.get(next_at)}}, now), now)
+    assert got["facebook"].state == state

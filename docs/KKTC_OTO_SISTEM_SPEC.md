@@ -1273,3 +1273,9 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
   - Ayrı bulgu: Facebook gruplarının çoğu 04.11'den beri okunmuyor (yeni sunucuda Facebook girişi bekleniyor, §24.51); yalnız 3 grup 17.11'de okundu.
 - Yan bulgu (düzeltilmedi): 2014 VW Golf `price_gbp` 0,02 kayıtlı (okuma hatası).
 - Test: `tests/test_kktcar_recheck.py` (gerçek sayfa örneği `kktcar_detail_live_reopened.html`, satıcı adı ve kimliği değiştirildi).
+
+### 24.55 "Facebook okuyucusu sustu" yanlış uyarısı (17.11.2026; sahip: "bottan hoşuma gitmeyen bir mesaj geldi, sorun varsa hallet")
+- 09:20 UTC'de bot "Facebook okuyucusu sustu" yazdı. Sosyal oturum sunucuya baktı: okuyucu sağlam. Son tur 05:43–05:54 UTC [tamam]; sonraki tur 09:39 UTC'ye planlanmıştı.
+- Sebep: yeni oturum ilk 7 gün "yavaş başlangıç"ta 4 saatte bir tur atar (`domain/social_schedule.py`; yalnız öncelikli 3 grup; ~23.11'e dek). Bot eşiği 3,5 saat olduğu için her gündüz turu arasında yanlış uyarı giderdi. 04.11'den beri okunmayan diğer gruplar da aynı sebepten okunmuyor (kendiliğinden düzelir).
+- Düzeltme (`application/selfwatch.py`): okuyucunun yazdığı `sonraki_tur_utc` + 45 dk henüz gelmediyse "susuyor" denmez. Alan yok, bozuk ya da 12 saatten ilerideyse eski kural geçerli. Durum dosyasının biçimi değişmedi.
+- Test: `tests/test_selfwatch_social.py` (planlı tur, 45 dk payı, geç kalmış tur, uzak/bozuk/saat dilimsiz plan).
