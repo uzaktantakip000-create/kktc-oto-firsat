@@ -24,8 +24,21 @@ def row(i, source="KibrisArabaAl", **over):
 
 
 class Repo:
-    def __init__(self, rows):
-        self.rows, self.saved = rows, []
+    def __init__(self, rows, subs=()):
+        self.rows, self.saved, self.subs, self.state = rows, [], list(subs), {}
+        self.conn = self
+
+    def execute(self, *a, **k):
+        pass
+
+    def approved_subscribers(self):
+        return [{"chat_id": c} for c in self.subs]
+
+    def get_state(self, k, default=None):
+        return self.state.get(k, default)
+
+    def set_state(self, k, v):
+        self.state[k] = v
 
     def unnotified_strong(self, rules_version, days, limit):
         return list(self.rows)
@@ -37,7 +50,7 @@ class Repo:
         self.saved.append((listing_id, chat_id, tier, kind))
 
 
-def run(rows, alive=None, fail=()):
+def run(rows, alive=None, fail=(), subs=()):
     sent = []
 
     def api(token, method, **kw):
@@ -49,7 +62,7 @@ def run(rows, alive=None, fail=()):
     def recheck(repo, cands):
         return [c for c in cands if alive is None or c.listing["id"] in alive]
 
-    repo = Repo(rows)
+    repo = Repo(rows, subs)
     return repo, sent, la.send(repo, "t", "42", NOW, api_call=api, recheck=recheck, sleep=lambda s: None)
 
 
@@ -70,3 +83,14 @@ def test_failed_send_is_not_recorded_and_max_per_run():
     assert [s["text"].count("M2") > 0 for s in sent] == [True] and [x[0] for x in repo.saved] == ["L2"]
     repo, sent, reply = run([row(i) for i in range(1, 13)])
     assert len(sent) == la.MAX_SEND and "aday daha var" in reply
+
+
+def test_goes_to_owner_and_every_approved_subscriber_once_each_and_run_once_never_repeats():
+    repo, sent, reply = run([row(1)], subs=["7", "8"])
+    assert sorted(s["chat_id"] for s in sent) == ["42", "7", "8"] and [x[1] for x in repo.saved] == ["42", "7", "8"] and "3 kişiye" in reply
+    sent2 = []
+    api = lambda token, method, **kw: sent2.append(kw) or {"message_id": 1}
+    repo2 = Repo([row(1)], ["7"])
+    assert la.run_once(repo2, "t", "42", NOW, api_call=api, recheck=lambda r, c: c, sleep=lambda s: None).startswith("🕰 1 geç")
+    n = len(sent2)
+    assert la.run_once(repo2, "t", "42", NOW, api_call=api, recheck=lambda r, c: c, sleep=lambda s: None) is None and len(sent2) == n
