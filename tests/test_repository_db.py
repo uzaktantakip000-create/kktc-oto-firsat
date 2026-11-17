@@ -470,6 +470,16 @@ def test_morning_message_and_status_count_new_listings_the_same_way_without_copi
     assert db.listing_counts(7) == {"new_n": 4, "active_n": 3}
 
 
+def test_pazarkibris_listings_expire_after_30_days(db):
+    """17.11.2026: PazarKibris'te satılan ilan hiç kapanmıyordu (yalnız yeni ilanlar okunur): 30 gün kuralına girdi."""
+    c = db.conn
+    pk = c.execute("INSERT INTO sources (platform, name, url, status) VALUES ('web','PK','https://pazarkibris.com/','aktif') RETURNING id").fetchone()["id"]
+    add_listing(c, pk, "pk_old", posted_at=ago(days=40))
+    add_listing(c, pk, "pk_new", posted_at=ago(days=5))
+    assert db.expire_unverifiable() == 1
+    assert c.execute("SELECT is_active FROM listings WHERE source_item_id='pk_new'").fetchone()["is_active"]
+
+
 def test_kibrisarabaal_listings_expire_only_while_the_site_is_not_read(db):
     """Sahip onayı 22.10.2026: KibrisArabaAl 10.10'dan beri okunamıyor; 30 günlük kural ona da uygulanır. Okunurken (son kontrol taze) uygulanmaz."""
     c = db.conn

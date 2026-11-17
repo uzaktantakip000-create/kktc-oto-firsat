@@ -68,6 +68,9 @@ class Repo:
     def __init__(self, stale=()):
         self.stale, self.applied, self.touched = list(stale), [], []
 
+    def stale_archived(self, *a):
+        return []
+
     def stale_active(self, source_id, hours, limit):
         return self.stale
 

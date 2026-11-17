@@ -26,6 +26,9 @@ class Repo:
     def stale_active(self, source_id, hours, limit):
         return self.stale
 
+    def stale_archived(self, source_id, days, hours, limit):
+        return []
+
     def touch(self, i):
         self.touched.append(i)
 

@@ -21,6 +21,7 @@ class SiteStats:
     failed: int = 0
     deactivated: int = 0
     skipped_old: int = 0
+    reactivated: int = 0  # haritadan geçici düşüp kapanan, haritaya geri dönen ilan geri açıldı
 
 
 def collect_sitemap_site(repo: Repository, source: dict, site, max_new: int = 10, now: datetime | None = None,
@@ -65,6 +66,9 @@ def collect_sitemap_site(repo: Repository, source: dict, site, max_new: int = 10
         shrunk = sitemap_shrunk(repo, source["id"], len(entries))
         if len(entries) > MIN_SITEMAP_FOR_DEACTIVATE and not shrunk:  # kaybolan (kaldırılan) ilanları pasifleştir
             stats.deactivated += repo.deactivate_missing(source["id"], {e.item_id for e in entries})
+            # 17.11.2026 (KKTCar'daki hatanın aynısı): haritadan düşüp kapanan ilan haritaya dönerse bilinen ilan sayıldığı için hiç geri
+            # açılmıyordu. KibrisArabaAl'daki gibi haritada duran, yalnız 'belirsiz' kapanmış ilan geri açılır (satıldı işaretliye dokunulmaz).
+            stats.reactivated += repo.reactivate_present(source["id"], {e.item_id for e in entries})
     repo.mark_checked(source["id"], cursor=None, last_post_at=None, listings_7d=repo.count_recent(source["id"]))
     if shrunk:
         raise RuntimeError(f"{source['name']}: site haritası şüpheli biçimde küçüldü ({len(entries)} ilan), pasifleştirme yapılmadı")

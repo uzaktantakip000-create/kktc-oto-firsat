@@ -70,6 +70,9 @@ class Repo:
     def stale_active(self, *a):
         return []
 
+    def stale_archived(self, *a):
+        return []
+
     def mark_checked(self, *a, **k):
         pass
 
