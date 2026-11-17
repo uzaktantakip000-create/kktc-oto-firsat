@@ -175,10 +175,10 @@ def test_burst_brake_sends_one_summary_and_marks_all(monkeypatch):
     repo = NotifyRepo(["a", "b"])
     evs = [est_ev(i, price=5000 + i) for i in range(S.est_burst_limit + 1)]
     n = notify.send_alerts(repo, "t", evs, tier=Tier.ESTIMATED, s=S)
-    assert n == len(evs) and sent == ["a", "b"]  # abone başına TEK mesaj
+    assert n == len(evs) and sent == ["a"]  # TEK teknik özet, yalnız sahibe (17.11.2026: arıza freni aboneye gitmez)
     assert texts[0].startswith(f"🟠 {len(evs)} tahmini fırsat çıktı; olağan dışı, kontrol ediyorum — en iyi 5:")
     assert texts[0].count("•") == 5
-    assert len(repo.alerts) == 2 * len(evs)  # hepsi bildirilmiş sayıldı: tekrar etmez
+    assert len(repo.alerts) == len(evs)  # sahibe hepsi bildirilmiş sayıldı: tekrar etmez
     assert owner and owner[0][0] == "est_burst"
     sent.clear()
     notify.send_alerts(repo, "t", evs, tier=Tier.ESTIMATED, s=S)

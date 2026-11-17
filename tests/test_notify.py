@@ -20,7 +20,7 @@ class FakeRepo:
         self.conn = self
 
     def approved_subscribers(self):
-        return [{"chat_id": c} for c in self.subs]
+        return [{"chat_id": c, "is_owner": i == 0} for i, c in enumerate(self.subs)]  # ilk sohbet sahip (17.11.2026: teknik özet yalnız sahibe)
 
     def alerts_sent_since(self, tier, hours=24):
         return getattr(self, "sent_today", 0)
