@@ -51,6 +51,9 @@ class Repo:
     def owner_vote_queue(self, owner_chat, urgent_ids):  # /oyla (application/vote_queue): oy bekleyen yok
         return []
 
+    def unnotified_strong(self, rules_version, days, limit):  # /gec (application/late_alerts): geç kalan 🟢 yok
+        return []
+
     def set_state(self, k, v):
         self.state[k] = v
 

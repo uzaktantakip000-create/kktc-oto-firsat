@@ -56,6 +56,12 @@ def vote_queue() -> None:
     print(f"oy listesi: {vq.send(Repository(require('DATABASE_URL')), require('TELEGRAM_BOT_TOKEN'), require('TELEGRAM_CHAT_ID'))} araç gönderildi")
 
 
+def late_alerts_cmd() -> None:
+    """Geç kalan ama hâlâ satıştaki 🟢'leri sahibe gönderir (/gec ile aynı): admin_cli gec"""
+    from application import late_alerts
+    print(late_alerts.send(Repository(require("DATABASE_URL")), require("TELEGRAM_BOT_TOKEN"), require("TELEGRAM_CHAT_ID")))
+
+
 def fill_steering() -> None:
     """Direksiyon yönü boş olan ilanlarda, ilan metninde açıkça yazıyorsa doldurur (tahmin yok)."""
     repo = Repository(require("DATABASE_URL"))
@@ -158,5 +164,6 @@ if __name__ == "__main__":
         "backtest": backtest,
         "report": weekly_report,
         "oyla": vote_queue,
+        "gec": late_alerts_cmd,
         "shadow-tahmini": shadow_tahmini,
     }[sys.argv[1]]()
