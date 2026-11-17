@@ -133,7 +133,7 @@ def test_swift_reposts_end_to_end_one_flash_with_buttons_recorded_then_locked(db
     assert urgent.run(db, [a, b], send, Settings(), NOW, share=share) == 1
     assert [k["chat_id"] for k in calls] == ["own", "c1"]
     assert all([x["callback_data"] for row in k["reply_markup"]["inline_keyboard"] for x in row]
-               == [f"fb:ilgilendim:{b.listing['id']}", f"fb:yanlis_fiyat:{b.listing['id']}"] for k in calls)
+               == [f"fb:ilgilendim:{b.listing['id']}", f"fb:yanlis_fiyat:{b.listing['id']}", f"fb:satilmis:{b.listing['id']}"] for k in calls)  # 17.11.2026: 3. düğme ✅ Satıldı
     saved = c.execute("SELECT listing_id::text AS lid, chat_id, tier, evaluation_id::text AS eid, fiyat_gonderimde::float8 AS p FROM alerts "
                       "ORDER BY chat_id").fetchall()
     assert [(r["lid"], r["chat_id"], r["tier"], r["eid"], r["p"]) for r in saved] == [
