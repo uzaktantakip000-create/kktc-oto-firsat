@@ -26,14 +26,16 @@ _SECRET_WORDS = ("TOKEN", "KEY", "DATABASE", "SECRET", "PASSWORD", "PROXY")
 
 def redact(text: str) -> str:
     """Hata metinlerinde sızabilecek gizli değerleri (ortam değişkenlerinden) maskeler."""
-    for name, value in os.environ.items():
-        if value and len(value) >= 8 and any(w in name for w in _SECRET_WORDS):
-            text = text.replace(value, "***")
-            if "PROXY" in name:  # hata metni proxy adresinin yalnız bir parçasını (kullanıcı/şifre/sunucu) içerebilir
-                parts = urlsplit(value)
-                for piece in (parts.password, parts.username, parts.hostname):
-                    if piece and len(piece) >= 4:
-                        text = text.replace(piece, "***")
+    secrets = [(n, v) for n, v in os.environ.items() if v and len(v) >= 8 and any(w in n for w in _SECRET_WORDS)]
+    secrets.sort(key=lambda nv: -len(nv[1]))  # uzun değer önce: kısa bir değer (örn. 127.0.0.1) uzun bağlantı adresini bozmasın
+    for _, value in secrets:  # önce TAM değerler: parça maskelemesi (örn. proxy sunucusu 127.0.0.1) bağlantı adresini bozup tam eşleşmeyi kaçırmasın
+        text = text.replace(value, "***")
+    for name, value in secrets:
+        if "PROXY" in name:  # hata metni proxy adresinin yalnız bir parçasını (kullanıcı/şifre/sunucu) içerebilir
+            parts = urlsplit(value)
+            for piece in (parts.password, parts.username, parts.hostname):
+                if piece and len(piece) >= 4:
+                    text = text.replace(piece, "***")
     return text
 
 

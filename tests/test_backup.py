@@ -501,3 +501,10 @@ def test_real_database_failed_backup_leaves_no_key_and_older_backups(tmp_path, r
     assert backup.main(["--dizin", str(parent), "--sakla", "1"]) == 1
     assert names(parent) == ["20200101-000000"]  # yarım yeni klasör silindi, eski yedek duruyor
     assert state_value(real_env) is None
+
+
+def test_redact_masks_full_dsn_even_when_a_short_secret_is_part_of_it(monkeypatch):
+    from infrastructure.config import redact
+    monkeypatch.setenv("DATABASE_URL", SECRET_DSN)
+    monkeypatch.setenv("SOME_PROXY_HOST", "127.0.0.1")  # kısa değer önce maskelenirse bağlantı adresi bozulur, parola sızardı
+    assert "GIZLISIFRE123" not in redact(f"koptu: {SECRET_DSN}")

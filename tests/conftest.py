@@ -73,3 +73,10 @@ def db():
         repo.conn.execute(migration.read_text())
     yield repo
     repo.conn.close()
+
+
+@pytest.fixture(autouse=True)
+def _fixed_fx_rates(monkeypatch):
+    """Testler gerçek kur servisine (Frankfurter) gitmesin: ağsız/proxy'li ortamda da sonuç aynı olsun. Sahte servis hatasını sınayan testler kendi önbelleğini/httpx'ini ayarlar."""
+    from infrastructure.fx import frankfurter
+    monkeypatch.setattr(frankfurter, "_cache", {"EUR": 0.86, "TRY": 0.02, "USD": 0.8, "GBP": 1.0})
