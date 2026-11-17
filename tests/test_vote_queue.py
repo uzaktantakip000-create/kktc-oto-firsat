@@ -111,7 +111,8 @@ def test_send_posts_a_header_then_one_buttoned_message_per_car(tg):
     assert tg[0]["text"].startswith("🗳 OY BEKLEYENLER: 2 araç") and "reply_markup" not in tg[0]
     assert all(m["chat_id"] == "1" for m in tg)
     kb = tg[1]["reply_markup"]["inline_keyboard"]
-    assert kb[-1] == [{"text": "👍 İşe yarar", "callback_data": "fb:ilgilendim:L1"}, {"text": "👎 Yanlış", "callback_data": "fb:yanlis_fiyat:L1"}]
+    assert kb[-1] == [{"text": "👍 İyi", "callback_data": "fb:ilgilendim:L1"}, {"text": "👎 Kötü", "callback_data": "fb:yanlis_fiyat:L1"},
+                    {"text": "✅ Satıldı", "callback_data": "fb:satilmis:L1"}]
     assert tg[2]["reply_markup"]["inline_keyboard"][0][0]["text"] == "📲 WhatsApp'tan ulaş"  # telefon varsa WhatsApp
 
 

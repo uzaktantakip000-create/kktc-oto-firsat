@@ -32,7 +32,7 @@ FEEDBACK_ACTIONS = ("ilgilendim", "pas", "yanlis_fiyat", "satilmis", "kusurlu", 
 SAVED_ACTION = "kayitli"  # oydan sonra oy düğmelerinin yerine konan "✅ Kaydedildi" düğmesi (fb:kayitli:<ilan>); FEEDBACK_ACTIONS'ta DEĞİL: basınca kayıt yok
 SAVED_ANSWER = "Zaten kaydedildi"
 # "✅ Kaydedildi: ..." düğmesindeki oy adı: mesajlardaki düğme yazılarından (notify.keyboard, eski mesajlardaki düğmeler, aylık denetim)
-VOTE_NAMES = {"ilgilendim": "👍 İşe yarar", "yanlis_fiyat": "👎 Yanlış", "pas": "Pas", "satilmis": "Zaten satılmış", "kusurlu": "Kusurlu/sahte",
+VOTE_NAMES = {"ilgilendim": "👍 İyi", "yanlis_fiyat": "👎 Kötü", "pas": "Pas", "satilmis": "Satıldı", "kusurlu": "Kusurlu/sahte",
               "audit_dogru": "Doğru", "audit_yanlis": "Yanlış"}
 WELCOME_OWNER = ("Merhaba! Fırsat bildirimleri bu sohbete gelecek. /dur ile durdurabilir, /basla ile açabilirsin.\n"
                  "Tüm komutlar ve örnekler için /yardim. Sol alttaki menü düğmesinden de seçebilirsin.\n"
@@ -61,7 +61,7 @@ HELP_OWNER = ("📖 Komutlar (cevap en geç ~15 dk içinde gelir)\n\n"
               "📞 Sokakta \"SATILIK\" yazan bir aracın levhasının fotoğrafını ya da yalnız telefon numarasını gönder: numara taradığım ilanlarda "
               "geçiyorsa o satıcının ilanlarını kararlarıyla yazarım.\n"
               "Kaynak eklemek: Instagram hesabının, Facebook grubunun ya da yeni sitenin linkini gönder; eklemeden önce sorarım.\n"
-              "Her fırsat mesajındaki 👍 İşe yarar / 👎 Yanlış düğmesine bas: sistemi bu oylarla ölçüyorum.")
+              "Her fırsat mesajındaki 👍 İyi / 👎 Kötü / ✅ Satıldı düğmesine bas: sistemi bu oylarla ölçüyorum.")
 HELP_SUBSCRIBER = ("Bu bot KKTC'deki ikinci el araç ilanlarını tarar; piyasanın belirgin altında kalan fırsatları bu sohbete yazar. "
                    "Yalnızca öneridir: satıcıyla görüşmek ve karar vermek sana aittir.\n\n"
                    "/bul fit 2015-2018 7000 — taranan bütün sitelerde ara; piyasaya göre en ucuzdan sıralarım\n"
@@ -69,7 +69,7 @@ HELP_SUBSCRIBER = ("Bu bot KKTC'deki ikinci el araç ilanlarını tarar; piyasan
                    "İlan kontrolü: bir ilanın yazısını (marka, yıl, fiyat dahil) ya da ekran görüntüsünü bana gönder; piyasayla karşılaştırıp "
                    f"cevap veririm (günde en çok {ad_check.MAX_PER_DAY_SUBSCRIBER}). Taranan sitelerden (KKTCar, KibrisArabaAl, KKTCarabam, "
                    "Mezunum) bir ilanın linkini gönderirsen o ilanın dosyasını (karar, pazarlık hedefi, ilanın yaşı, benzerleri) yazarım.\n\n"
-                   "Mesajlardaki 👍 İşe yarar / 👎 Yanlış düğmesine basarsan sistem gelişir. Cevaplar en geç ~15 dk içinde gelir.")
+                   "Mesajlardaki 👍 İyi / 👎 Kötü / ✅ Satıldı düğmesine basarsan sistem gelişir. Cevaplar en geç ~15 dk içinde gelir.")
 WELCOME_SUBSCRIBER = ("✅ Onaylandın! Fırsat bildirimleri bu sohbete gelecek. Bir ilanı (yazı ya da ekran görüntüsü) bana gönderirsen "
                       "piyasayla karşılaştırıp cevap veririm. Komutlar için /yardim.")
 OWNER_ONLY_REPLY = "Bu komut yalnız sahip içindir. Senin için /yardim, /dur ve /basla çalışır."
@@ -413,12 +413,13 @@ def _handle_callback(repo: Repository, token: str, owner: str, cb: dict) -> None
         if not repo.conn.execute("SELECT 1 FROM feedback WHERE listing_id=%s AND action=%s AND note=%s", (target, action, note)).fetchone():
             repo.conn.execute("INSERT INTO feedback (listing_id, action, note) VALUES (%s,%s,%s)", (target, action, note))  # çift basış çift oy olmasın
         answer = "Not aldım 👍"
-        # Abonenin oyu yalnız KAYIT: anlık eylemler yalnız sahibin basışıyla; sayımlar da (emsal, öğrenme kapısı, 🟠/kaynak koruması,
+        # Abonenin 👍/👎/pas/kusurlu oyu yalnız KAYIT (anlık eylem yalnız sahibin basışıyla; ✅ Satıldı hariç); sayımlar da (emsal, öğrenme kapısı, 🟠/kaynak koruması,
         # 'pas' sayısı) abone oyunu saymaz (repository.OWNER_VOTE_SQL)
-        if sender == owner:
-            if action == "satilmis":
-                repo.mark_sold(target)  # kapanır ve gerçek bir satış olarak emsale girer
-            elif action == "kusurlu" and learning_open(repo) and repo.block_seller_of(target, "kusurlu"):  # 10 oydan önce yalnız KAYIT
+        if action == "satilmis":
+            repo.mark_sold(target)  # sahip VE onaylı abone (sahip kararı 17.11.2026): ilan kapanır, bir daha gitmez, gerçek satış olarak emsale girer;
+            answer = "Satıldı olarak işaretledim"  # kimin bastığı yukarıdaki feedback satırında (note=chat:<id>) kalır
+        elif sender == owner:
+            if action == "kusurlu" and learning_open(repo) and repo.block_seller_of(target, "kusurlu"):  # 10 oydan önce yalnız KAYIT
                 answer = "Not aldım. Bu satıcıdan bir daha 🟢 göndermeyeceğim."
             elif action == "pas":
                 _maybe_ask_mute(repo, token, owner, target)

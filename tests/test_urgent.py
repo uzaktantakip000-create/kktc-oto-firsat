@@ -302,7 +302,7 @@ def test_every_flash_message_has_vote_buttons_and_is_recorded_per_chat(monkeypat
     assert urgent.run(repo, [near], send, Settings(), NOW, share=share) == 1
     assert [c["chat_id"] for c in calls] == ["own", "s1", "s2"]
     for c in calls:  # sahip ve abonelerin hepsinde 🟢 ile aynı 👍/👎
-        assert votes_of(c["reply_markup"]) == ["fb:ilgilendim:yakin", "fb:yanlis_fiyat:yakin"]
+        assert votes_of(c["reply_markup"]) == ["fb:ilgilendim:yakin", "fb:yanlis_fiyat:yakin", "fb:satilmis:yakin"]
         assert not any("url" in b for row in c["reply_markup"]["inline_keyboard"] for b in row)  # telefon yok: WhatsApp yok
     assert repo.saved == [("yakin", "own", "acil", 101, "e-1", 7000.0), ("yakin", "s1", "acil", 102, "e-1", 7000.0),
                           ("yakin", "s2", "acil", 103, "e-1", 7000.0)]
@@ -319,7 +319,7 @@ def test_flash_with_a_valid_phone_gets_the_whatsapp_button_and_far_ones_now_reac
     for c in calls:  # herkeste aynı WhatsApp + 👍/👎 düğmeleri; her sohbet kendi 'acil' kaydıyla
         rows = c["reply_markup"]["inline_keyboard"]
         assert rows[0][0]["url"].startswith("https://wa.me/905331112233?text=")
-        assert votes_of(c["reply_markup"]) == ["fb:ilgilendim:uzak", "fb:yanlis_fiyat:uzak"]
+        assert votes_of(c["reply_markup"]) == ["fb:ilgilendim:uzak", "fb:yanlis_fiyat:uzak", "fb:satilmis:uzak"]
     assert [(s[1], s[2]) for s in repo.saved] == [("own", "acil"), ("s1", "acil"), ("s2", "acil")]
     # 11.10 kuralı geri açılırsa (OWNER_ONLY_KINDS'a SELECTIVE_KIND) yalnız sahibe gider ve yalnız sahip için kaydedilir
     monkeypatch.setattr(notify, "OWNER_ONLY_KINDS", frozenset({urgent.SELECTIVE_KIND}))

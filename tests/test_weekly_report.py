@@ -557,3 +557,15 @@ def test_other_telegram_errors_do_not_stop_the_subscriber(monkeypatch, status_co
     repo = FakeRepo(subs=SUBS)
     repo.conn = Conn()
     assert report.send_weekly_report(repo, now=NOW) is True and [m["chat_id"] for m in sub_sent] == ["33"] and repo.conn.sql == []
+
+
+def test_button_lines_summarize_and_suggest_without_changing_anything():
+    class R:
+        def button_stats(self, days):
+            return [{"tier": "guclu", "source_name": "KKTCar", "iyi": 5, "kotu": 20, "satildi": 2, "sold_hours": 48.0},
+                    {"tier": "tahmini", "source_name": "Mezunum", "iyi": 3, "kotu": 0, "satildi": 0, "sold_hours": None}]
+    lines = report._button_lines(R())
+    assert "KKTCar: 5 · 20 · 2 · ort. 2.0 günde satıldı" in lines[1]
+    assert any("%80" in l and "otomatik değiştirmedim" in l for l in lines)  # 25 oy, %80 👎: yalnız öneri
+    assert not any("Mezunum" in l and "⚠️" in l for l in lines)
+    assert report._button_lines(type("E", (), {"button_stats": lambda self, d: []})()) == []

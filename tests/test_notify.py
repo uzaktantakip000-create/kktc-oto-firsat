@@ -147,7 +147,7 @@ def test_whatsapp_button_on_top_when_phone_valid():
     assert url.startswith("https://wa.me/905330000021?text=") and " " not in url
     kb = notify.keyboard("L1", url)["inline_keyboard"]
     assert kb[0][0]["url"] == url and kb[1][0]["callback_data"].startswith("fb:")
-    assert [b["text"] for b in kb[1]] == ["👍 İşe yarar", "👎 Yanlış"] and len(kb) == 2  # sahibin kararı: 2 düğme
+    assert [b["text"] for b in kb[1]] == ["👍 İyi", "👎 Kötü", "✅ Satıldı"] and len(kb) == 2  # 3 düğme, tek satır
 
 
 def test_no_whatsapp_button_without_valid_phone():
