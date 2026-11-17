@@ -73,6 +73,25 @@ def deal_doubt(note, text: str) -> str | None:
     return f"ilanda “{' '.join(quote.split())[:120]}” yazıyor"  # modelin kendi cümlesi değil, ilandaki doğrulanmış alıntı gösterilir
 
 
+def deal_note_line(note, max_questions: int = 2) -> str | None:
+    """🟢 mesajına eklenen kısa yapay zekâ notu (18.11.2026): modelin fiyat yorumu + ilana sorulacak ilk birkaç soru. Her 🟢 için not üretiliyordu
+    ama mesaja yalnız "şüpheli" olanı (deal_doubt) giriyordu, bu yüzden mesajlarda not neredeyse hiç görünmüyordu. risk_notlari BİLEREK
+    gösterilmez: model metinde olmayan risk uyduruyordu (27.10.2026); fiyat yorumu bizim verdiğimiz emsal özetine, sorular satıcıya yöneliktir.
+    Not yoksa ya da içi boşsa None."""
+    if not isinstance(note, dict):
+        return None
+    comment = note.get("fiyat_yorumu")
+    comment = " ".join(comment.split())[:200] if isinstance(comment, str) else ""
+    questions = note.get("sorulacak_sorular")
+    questions = [" ".join(q.split())[:100] for q in questions if isinstance(q, str) and q.strip()][:max_questions] if isinstance(questions, list) else []
+    parts = []
+    if comment:
+        parts.append(comment)
+    if questions:
+        parts.append("Satıcıya sor: " + " · ".join(questions))
+    return "🤖 Yapay zekâ notu: " + " ".join(parts) if parts else None
+
+
 def _number_tokens(quote: str) -> set[int]:
     return {int(re.sub(r"\D", "", t)) for t in re.findall(r"\d{1,3}(?:[.,]\d{3})+|\d+", quote)}
 

@@ -277,3 +277,18 @@ def test_mixed_sources_are_checked_independently_and_other_sources_skipped(monke
     evs = [ev("kk"), ev("kaa", KAA_URL), ev("ig", "https://www.instagram.com/p/x/")]
     out = liveness.recheck_before_send(repo, evs, client=FakeClient(), kaa_client=FakeClient())
     assert [e.listing["id"] for e in out] == ["ig"]  # kk: apply_refresh 'pasif' döndü (sahte) → düştü; kaa düştü; ig atlandı
+
+
+def test_ai_note_line_shows_price_comment_and_questions_but_never_the_risk_notes():
+    """18.11.2026: her 🟢 için not üretiliyordu ama mesaja yalnız şüphe giriyordu; notlar neredeyse hiç görünmüyordu. Artık fiyat yorumu ve ilk 2 soru
+    görünür; risk_notlari hâlâ gösterilmez (model metinde olmayan risk uyduruyordu, 27.10.2026)."""
+    note = {"gercek_firsat_mi": True, "risk_notlari": ["UYDURMA RISK"], "sorun_alinti": None,
+            "fiyat_yorumu": "İlan fiyatı medyanın altında.", "sorulacak_sorular": ["Servis geçmişi var mı?", "Muayene ne zaman?", "Üçüncü soru"]}
+    text = notify.format_alert(ev(), note)
+    assert "🤖 Yapay zekâ notu: İlan fiyatı medyanın altında. Satıcıya sor: Servis geçmişi var mı? · Muayene ne zaman?" in text
+    assert "UYDURMA RISK" not in text and "Üçüncü soru" not in text and "şüpheli" not in text
+
+
+def test_ai_note_line_is_absent_without_a_usable_note():
+    for note in (None, {}, "null", {"fiyat_yorumu": "  ", "sorulacak_sorular": []}, {"fiyat_yorumu": 5, "sorulacak_sorular": "x"}):
+        assert "Yapay zekâ notu" not in notify.format_alert(ev(), note)
