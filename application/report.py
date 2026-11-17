@@ -362,10 +362,21 @@ def _shared(repo: Repository, recheck, now: datetime) -> list[_Section]:
     return [_unnotified_section(repo, recheck, now), _near_section(repo, load_settings(repo))]
 
 
+def _subscriber_summary(repo: Repository) -> str:
+    """Abone raporunun tek özet satırı (olumlu ton): taranan ilan ve bildirilen fırsat sayısı. Sorun/gecikme/eksik kaynak yazılmaz."""
+    sent, counts = repo.week_alert_counts(WEEK_DAYS), repo.listing_counts(WEEK_DAYS)
+    n = sum(sent.get(t, 0) for t in ("guclu", "tahmini", "pazarlik", "acil"))
+    deals = f"{_num(n)} fırsat bildirdim" if n else "fırsatları gözlüyorum"
+    return f"📈 Bu hafta {_num(counts['new_n'])} yeni ilan taradım, {deals}; şu an {_num(counts['active_n'])} aktif ilan takipte."
+
+
 def _compose(repo: Repository, now: datetime, shared: list[_Section], chat_id: str | None, owner: bool) -> tuple[str, dict | None]:
     votes, voted_rows = _votes_section(repo, chat_id, owner)
-    body = [votes, *copy.deepcopy(shared)]  # _fit sığdırırken satır atar: ortak bölümler bir sonraki kişiye eksik gitmesin
     title = f"📊 Haftalık rapor · {to_kktc(now - timedelta(days=WEEK_DAYS)):%d.%m}–{to_kktc(now):%d.%m}"
+    if not owner:  # 17.11.2026 (sahip: "ürün gibi görünmeli"): abone raporu olumlu özet + oy listesi; hata/arıza/eksik kaynak/"kaçırdım" satırı yok
+        text = _fit(title, [votes], [_subscriber_summary(repo)])
+        return text, _vote_keyboard(voted_rows[:len(votes.items)])
+    body = [votes, *copy.deepcopy(shared)]  # _fit sığdırırken satır atar: ortak bölümler bir sonraki kişiye eksik gitmesin
     text = _fit(title, body, [*(_button_lines(repo) if owner else []), *_health_lines(repo, now, owner)])
     return text, _vote_keyboard(voted_rows[:len(votes.items)])  # yalnız mesajda kalan satırların düğmesi
 

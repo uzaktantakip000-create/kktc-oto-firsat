@@ -1,6 +1,7 @@
-"""Sahibe giden her mesaj abonelere de (sahip kararı 22.10.2026: "bana gelen tüm mesajlar botu takip eden herkese aynı şekilde gitsin; zamanla
+"""Sahibe giden mesajın FIRSAT türleri abonelere de gider (sahip kararı 22.10.2026: "bana gelen tüm mesajlar botu takip eden herkese aynı şekilde gitsin; zamanla
 eğer ben istersem ... müdahale ederiz"; spec §24.35). Merkez: notify.share_with_subscribers (health.notify_owner ve notify.send_to_all
-kullanır). Ağ yok; sohbet kimlikleri uydurma ("100" sahip)."""
+kullanır). 17.11.2026: teknik/hata/sağlık türleri YALNIZ sahibe (notify.SHARED_KINDS beyaz liste; "bu bir ürün"). Mekanizma testleri paylaşılan bir tür (`av_...`)
+kullanır. Ağ yok; sohbet kimlikleri uydurma ("100" sahip)."""
 from datetime import datetime, timezone
 
 import pytest
@@ -58,23 +59,23 @@ def chats(calls):
 def test_owner_first_then_every_approved_subscriber_once_with_the_same_text_and_fields(tg):
     calls, _ = tg
     repo = Repo(subs=SUBS + [{"chat_id": OWNER, "is_owner": False}])  # sahibin sohbeti ikinci kez listede olsa da bir kez
-    assert health.notify_owner(repo, "vps_failover", "⚠️ sunucu durdu", disable_web_page_preview=True, disable_notification=True) is True
+    assert health.notify_owner(repo, "av_failover", "⚠️ sunucu durdu", disable_web_page_preview=True, disable_notification=True) is True
     assert chats(calls) == [OWNER, "200", "300"]
     assert all(c["text"] == "⚠️ sunucu durdu" and c["disable_web_page_preview"] is True and c["disable_notification"] is True for c in calls)
 
 
 def test_subscribers_get_the_redacted_and_cut_text_of_the_owner(tg):
     calls, _ = tg
-    health.notify_owner(Repo(), "k", "hata url: https://api.telegram.org/bot123456:SECRETSECRET/x " + "y" * 50, max_chars=40)
+    health.notify_owner(Repo(), "av_k", "hata url: https://api.telegram.org/bot123456:SECRETSECRET/x " + "y" * 50, max_chars=40)
     assert len({c["text"] for c in calls}) == 1 and "SECRETSECRET" not in calls[1]["text"] and len(calls[1]["text"]) <= 40
 
 
 def test_one_dedupe_key_per_message_not_per_chat(tg):
     calls, _ = tg
     repo = Repo()
-    assert health.notify_owner(repo, "src_alarm:KKTCar", "⚠️ x", repeat_hours=24) is True
-    assert repo.marked == ["src_alarm:KKTCar"]  # abone sayısı kadar değil, TEK kayıt
-    assert health.notify_owner(repo, "src_alarm:KKTCar", "⚠️ x", repeat_hours=24) is False  # tekrar sınırı herkes için
+    assert health.notify_owner(repo, "av:KKTCar", "⚠️ x", repeat_hours=24) is True
+    assert repo.marked == ["av:KKTCar"]  # abone sayısı kadar değil, TEK kayıt
+    assert health.notify_owner(repo, "av:KKTCar", "⚠️ x", repeat_hours=24) is False  # tekrar sınırı herkes için
     assert chats(calls) == [OWNER, "200", "300"]
 
 
@@ -82,7 +83,7 @@ def test_owner_send_failing_sends_nobody_and_marks_nothing(tg):
     calls, fail = tg
     fail[OWNER] = notify.TelegramError("sendMessage", 429, "Too Many Requests")
     repo = Repo()
-    assert health.notify_owner(repo, "k", "x") is False and calls == [] and repo.marked == []  # sonraki turda hepsi birlikte
+    assert health.notify_owner(repo, "av_k", "x") is False and calls == [] and repo.marked == []  # sonraki turda hepsi birlikte
 
 
 def test_blocked_subscriber_is_stopped_others_still_get_it_and_log_is_masked(tg, capsys):
@@ -90,7 +91,7 @@ def test_blocked_subscriber_is_stopped_others_still_get_it_and_log_is_masked(tg,
     subs = [{"chat_id": OWNER, "is_owner": True}, {"chat_id": "123456722", "is_owner": False}, {"chat_id": "300", "is_owner": False}]
     fail["123456722"] = notify.TelegramError("sendMessage", 403, "Forbidden: bot was blocked by the user")
     repo = Repo(subs=subs)
-    assert health.notify_owner(repo, "k", "x") is True and repo.marked == ["k"]
+    assert health.notify_owner(repo, "av_k", "x") is True and repo.marked == ["av_k"]
     assert chats(calls) == [OWNER, "300"]
     assert repo.sql == [("UPDATE subscribers SET status='durduruldu' WHERE chat_id=%s", ("123456722",))]
     out = capsys.readouterr().out
@@ -102,7 +103,7 @@ def test_other_subscriber_errors_do_not_stop_the_rest(tg):
     fail["200"] = RuntimeError("beklenmedik")  # Telegram dışı hata da öbürünü durdurmaz
     repo = Repo(subs=SUBS + [{"chat_id": "400", "is_owner": False}])
     fail["300"] = notify.TelegramError("sendMessage", 400, "chat not found")  # 403 değil: abone durdurulmaz
-    assert health.notify_owner(repo, "k", "x") is True
+    assert health.notify_owner(repo, "av_k", "x") is True
     assert chats(calls) == [OWNER, "400"] and repo.sql == []
 
 
@@ -114,7 +115,7 @@ def test_subscriber_list_failing_still_counts_as_sent(tg, capsys):
             raise RuntimeError("bağlantı koptu")
 
     repo = Down()
-    assert health.notify_owner(repo, "k", "x") is True and chats(calls) == [OWNER] and repo.marked == ["k"]
+    assert health.notify_owner(repo, "av_k", "x") is True and chats(calls) == [OWNER] and repo.marked == ["av_k"]
     assert "abonelere paylaşılamadı: RuntimeError" in capsys.readouterr().out
 
 
@@ -123,16 +124,25 @@ def test_share_false_keeps_it_to_the_owner(tg):
     assert health.notify_owner(Repo(), "weekly_report", "📊", share=False) is True and chats(calls) == [OWNER]
 
 
-# --- yalnız sahibe kalacak türler: tek satır (OWNER_ONLY_KINDS, baştan eşleşme) ---
-def test_owner_only_kinds_are_honoured_by_key_prefix(tg, monkeypatch):
+# --- yalnız sahibe kalacak türler: beyaz liste (SHARED_KINDS, baştan eşleşme) ---
+def test_only_opportunity_kinds_are_shared_every_technical_kind_stays_with_the_owner(tg):
+    """17.11.2026 (sahip: "bottan kötü haberler gitmesin; bu bir ürün"): sistem/hata/sağlık/kaynak/kota/yapay zekâ uyarıları sahibe kalır."""
     calls, _ = tg
-    assert notify.OWNER_ONLY_KINDS == frozenset()  # bugün: hepsi herkese (sahip kararı)
-    monkeypatch.setattr(notify, "OWNER_ONLY_KINDS", frozenset({"vps_"}))
-    health.notify_owner(Repo(), "vps_failover", "⚠️ sunucu")
-    assert chats(calls) == [OWNER]
+    assert notify.SHARED_KINDS == ("acil", "av")
+    for key in ("vps_failover", "src_alarm:KKTCar", "eval_stale", "llm_hesap", "fx_stale:TRY", "kaa_blocked", "fb_katilim_x", "kesinti", "audit", "discovery"):
+        calls.clear()
+        health.notify_owner(Repo(), key, "⚠️ teknik")
+        assert chats(calls) == [OWNER], key
     calls.clear()
-    health.notify_owner(Repo(), "src_alarm:KKTCar", "⚠️ site")
+    health.notify_owner(Repo(), "av_1", "🎯 fırsat")
     assert chats(calls) == [OWNER, "200", "300"]
+
+
+def test_owner_only_blacklist_still_wins_over_the_shared_list(tg, monkeypatch):
+    calls, _ = tg
+    monkeypatch.setattr(notify, "OWNER_ONLY_KINDS", frozenset({"av"}))
+    health.notify_owner(Repo(), "av_1", "🎯")
+    assert chats(calls) == [OWNER]
 
 
 # --- yönetim düğmeleri yalnız sahibin kopyasında ---
@@ -145,7 +155,7 @@ def test_admin_buttons_are_stripped_for_subscribers_votes_and_links_stay(tg):
         [{"text": "▶️ Aç", "callback_data": "src:on:7"}, {"text": "➕", "callback_data": "disc:ekle:x"},
          {"text": "✅ Evet", "callback_data": "mute:evet:a|b"}, {"text": "❌ Yanlış", "callback_data": "fb:audit_yanlis:L1"},
          {"text": "?", "callback_data": "yeni:tur:1"}]]}
-    health.notify_owner(Repo(), "k", "x", reply_markup=markup)
+    health.notify_owner(Repo(), "av_k", "x", reply_markup=markup)
     owner, *subs = calls
     assert owner["reply_markup"] == markup  # sahip her şeyi görür
     for c in subs:
@@ -172,7 +182,7 @@ def test_send_to_all_returns_the_owner_message_and_shares(tg):
     assert chats(calls) == [OWNER, "200", "300"] and {c["text"] for c in calls} == {"🎯 av"}
 
 
-def test_monthly_audit_reaches_subscribers_without_the_audit_buttons(tg):
+def test_monthly_audit_stays_with_the_owner(tg):
     calls, _ = tg
 
     class AuditRepo(Repo):
@@ -184,10 +194,10 @@ def test_monthly_audit_reaches_subscribers_without_the_audit_buttons(tg):
     assert audit.send_monthly_audit(repo, "t", OWNER) == 1 and repo.marked == ["audit"]
     owner, *subs = calls
     assert "fb:audit_yanlis:L1" in str(owner["reply_markup"])
-    assert chats(subs) == ["200", "300"] and all(c["text"] == owner["text"] and "reply_markup" not in c for c in subs)
+    assert subs == []  # denetim sistem ölçümüdür: aboneye gitmez (17.11.2026)
 
 
-def test_tick_hunt_and_photo_price_cards_go_to_everyone(tg, monkeypatch):
+def test_tick_hunt_goes_to_everyone_photo_price_card_stays_with_the_owner(tg, monkeypatch):
     calls, _ = tg
     import application.settings_store as settings_store
     monkeypatch.setattr(settings_store, "load_settings", lambda repo: None)
@@ -196,8 +206,7 @@ def test_tick_hunt_and_photo_price_cards_go_to_everyone(tg, monkeypatch):
     tick.run_hunts(Repo())
     tick.run_ask_price(Repo())
     assert [(c["chat_id"], c["text"]) for c in calls] == [(OWNER, "🎯 AV #1"), ("200", "🎯 AV #1"), ("300", "🎯 AV #1"),
-                                                         (OWNER, "🖼 FOTOĞRAFTA FİYAT"), ("200", "🖼 FOTOĞRAFTA FİYAT"),
-                                                         ("300", "🖼 FOTOĞRAFTA FİYAT")]
+                                                         (OWNER, "🖼 FOTOĞRAFTA FİYAT")]
 
 
 def test_weekly_report_is_not_copied_from_the_owner_each_subscriber_gets_their_own(tg, monkeypatch):

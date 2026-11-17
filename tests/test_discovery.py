@@ -47,11 +47,9 @@ def test_weekly_message_has_buttons_and_is_sent_once(monkeypatch):
     monkeypatch.setattr(notify, "api", lambda token, method, **kw: sent.append(kw))
     repo = Repo([{"handle": "yenigaleri", "n": 5}])
     assert discovery.send_discovery(repo, "t", "1") == 1
-    owner, sub = sent
+    owner, = sent  # keşif önerisi yönetim işidir: yalnız sahibe (17.11.2026)
     assert owner["chat_id"] == "1" and "disc:ekle:yenigaleri" in str(owner["reply_markup"]) and "disc:gec:yenigaleri" in str(owner["reply_markup"])
-    # abone aynı metni alır ama "Ekle" kaynak ekler (yönetim düğmesi): abonenin kopyası düğmesiz (sahip kararı 22.10.2026)
-    assert sub["chat_id"] == "22" and sub["text"] == owner["text"] and "reply_markup" not in sub
-    assert discovery.send_discovery(repo, "t", "1") == 0 and len(sent) == 2  # haftada bir
+    assert discovery.send_discovery(repo, "t", "1") == 0 and len(sent) == 1  # haftada bir
 
 
 def test_decide_records_choice(monkeypatch):

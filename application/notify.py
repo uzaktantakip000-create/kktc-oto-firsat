@@ -29,6 +29,11 @@ API = "https://api.telegram.org/bot{token}/{method}"
 # bütün sunucu uyarılarını, "fb_katilim_" bütün grup katılım mesajlarını kapsar). Türlerin listesi: spec §24.35. Bugün boş: sahip "hepsi" dedi.
 # Başkasının kişisel verisini taşıyan ya da sahibin komutuna cevap olan mesaj bu yoldan hiç geçmez (bot_poll, vote_queue: nedeni yanında yazılı).
 OWNER_ONLY_KINDS: frozenset[str] = frozenset()
+# 17.11.2026 (sahip: "bottan kötü haberler gitmesin... bu bir ürün; herkese her zaman iyi hissettirecek bildirimler"): 22.10'daki "hepsi herkese"
+# kuralı DARALTILDI. Aboneye yalnız FIRSAT mesajları gider: 🟢/🟠/🟡/🔍 (send_alerts), ⚡ (`acil`), 🎯 av (`av`), 🕰 geç bildirim ve olumlu
+# haftalık rapor. Sistem/hata/sağlık/kaynak/kota/yapay zekâ/denetim/keşif/kesinti uyarıları ve her türlü teknik mesaj (`notify_owner`, tür = uyarı
+# anahtarı) YALNIZ sahibe gider: `share_with_subscribers` yalnız bu önek listesindeki türleri paylaşır, listede olmayan her tür sahibe kalır.
+SHARED_KINDS: tuple[str, ...] = ("acil", "av")
 
 
 class TelegramError(RuntimeError):
@@ -475,8 +480,10 @@ def send_to_subscribers(repo: Repository, token: str, text: str, skip_chat: str 
 
 
 def owner_only(kind: str) -> bool:
-    """Bu tür yalnız sahibe mi kalır (`OWNER_ONLY_KINDS`, baştan eşleşme)?"""
-    return any(kind.startswith(k) for k in OWNER_ONLY_KINDS)
+    """Bu tür yalnız sahibe mi kalır? `OWNER_ONLY_KINDS` ya da `SHARED_KINDS`'te olmayan her tür (baştan eşleşme)."""
+    if any(kind.startswith(k) for k in OWNER_ONLY_KINDS):
+        return True
+    return not any(kind.startswith(k) for k in SHARED_KINDS)  # listede olmayan tür (uyarı, denetim, kesinti...) abonelere gitmez
 
 
 def subscriber_markup(markup: dict | None) -> dict | None:
@@ -551,7 +558,7 @@ def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes:
     if tier is Tier.ESTIMATED:
         fresh = [ev for ev in evaluated if ev.profit.tier is tier and _is_fresh_ev(ev)]
         if len(fresh) > s.est_burst_limit:
-            return _burst_summary(repo, token, fresh, subs, s.est_burst_limit, now)
+            return _burst_summary(repo, token, fresh, [x for x in subs if x.get("is_owner")], s.est_burst_limit, now)  # arıza freni: teknik, yalnız sahibe (17.11.2026)
     if tier is Tier.ESTIMATED:  # günde en çok est_daily_limit tane 🟠 (sahibin kararı); sıra: pending_alerts'in kâr sıralaması (güven sırası)
         quota = s.est_daily_limit - repo.alerts_sent_since(Tier.ESTIMATED.value, 24)
         if quota <= 0:

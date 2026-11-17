@@ -221,13 +221,13 @@ def test_estimated_deal_alert_is_silent_at_night_too_and_the_burst_summary_with_
         monkeypatch.setattr(notify, "api", lambda token, method, **kw: subs.append(kw) or {"message_id": 1})
         monkeypatch.setattr(health, "api", lambda token, method, **kw: owner.append(kw) or {})
         assert notify.send_alerts(OwnerRepo(["a", "b"]), "t", evs, tier=Tier.ESTIMATED, now=moment) == len(evs)
-        assert [kw["chat_id"] for kw in subs] == ["a", "b"] and all(kw["text"].startswith(f"🟠 {len(evs)} tahmini") for kw in subs)
+        assert [kw["chat_id"] for kw in subs] == ["a"] and all(kw["text"].startswith(f"🟠 {len(evs)} tahmini") for kw in subs)
         if silent:
             assert all(kw["disable_notification"] is True for kw in subs)
         else:
             assert not any("disable_notification" in kw for kw in subs)
-        # "arıza freni" uyarısı sahibe, sonra aynı metinle abonelere (sahip kararı 22.10.2026); gece de SESLİ: sistem mesajı fırsat mesajı değil
-        assert [kw["chat_id"] for kw in owner] == ["owner", "a", "b"]
+        # "arıza freni" uyarısı YALNIZ sahibe (17.11.2026: teknik mesaj aboneye gitmez); gece de SESLİ: sistem mesajı fırsat mesajı değil
+        assert [kw["chat_id"] for kw in owner] == ["owner"]
         assert all(kw["text"].startswith("⚠️ 🟠 arıza freni") and "disable_notification" not in kw for kw in owner)
 
 

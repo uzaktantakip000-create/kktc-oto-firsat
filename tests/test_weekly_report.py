@@ -494,7 +494,8 @@ def test_report_goes_to_everyone_each_with_own_votes_and_one_liveness_check(monk
     assert "1 fırsat bildirimi gitti, 0 tanesine oy verdin" in sub22 and "/ilan/7-bmw" in sub22 and "/ilan/1-bmw" not in sub22
     assert sub_sent[0]["reply_markup"]["inline_keyboard"][0][0]["callback_data"].endswith("000000000007")
     assert "Hepsini oyladın" in sub33 and "reply_markup" not in sub_sent[1]
-    assert all("BİLDİRMEDİĞİM FIRSATLAR (1 ilan)" in m["text"] and "az önce kontrol ettim" in m["text"] for m in [*owner_sent, *sub_sent])
+    assert "BİLDİRMEDİĞİM FIRSATLAR (1 ilan)" in owner_sent[0]["text"] and "az önce kontrol ettim" in owner_sent[0]["text"]
+    assert not any("BİLDİRMEDİĞİM" in m["text"] or "Bildirmediğim" in m["text"] or "kaçan" in m["text"] for m in sub_sent)  # abone raporu olumlu (17.11.2026)
     assert repo.marked == ["weekly_report"]
 
 
@@ -508,8 +509,10 @@ def test_subscriber_text_has_no_owner_only_lines(monkeypatch):
     assert "sen söyledin" in owner_text and "sana 3 🟢 fırsat gitti" in owner_text
     assert report.VOTE_ASK_SUBSCRIBER in sub_text and "Sistemi senin oylarınla" not in sub_text
     assert "/durum" not in sub_text and "🔧" not in sub_text and "sen söyledin" not in sub_text and "sana" not in sub_text
-    assert "3 🟢 fırsat bildirildi" in sub_text and "aktif ilan var; ⚠️ 1 kaynakta gecikme var." in sub_text
-    assert "bize bildirildi" in sub_text and "1 tanesi bildirdiğim fırsattı" in sub_text
+    # 17.11.2026 (sahip: "ürün gibi görünmeli"): abone raporunda hata/gecikme/kaynak/kalkan ilan/kaçırılan fırsat yok, yalnız olumlu özet + oy listesi
+    assert "3 fırsat bildirdim" in sub_text and "aktif ilan takipte" in sub_text
+    for bad in ("⚠️", "gecikme", "kaynak", "🩺", "🚪", "BİLDİRMEDİĞİM", "kaçan", "belli değil"):
+        assert bad not in sub_text, bad
 
 
 def test_no_subscriber_gets_it_when_the_owner_send_failed(monkeypatch):
