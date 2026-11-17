@@ -350,6 +350,9 @@ class KkRepo:
     def __init__(self):
         self.touched, self.refresh = [], []
 
+    def stale_archived(self, *a):
+        return []
+
     def stale_active(self, sid, hours, limit):
         return [dict(id=i, url=f"https://kktcar.com/{i}", source_item_id=i) for i in ("a", "b")]
 
@@ -394,6 +397,9 @@ class KkCollectRepo(KkRepo):
     def set_state(self, k, v):
         pass
 
+    def stale_archived(self, *a):
+        return []
+
     def stale_active(self, *a):
         return []
 
@@ -431,6 +437,9 @@ def test_kktcar_refresh_dated_archive_pages_close_even_when_many(monkeypatch):
     rows = [dict(id=f"r{i}", url=f"https://kktcar.com/r{i}", source_item_id=f"r{i}") for i in range(10)]
 
     class Repo(KkRepo):
+        def stale_archived(self, *a):
+            return []
+
         def stale_active(self, sid, hours, limit):
             return rows
 

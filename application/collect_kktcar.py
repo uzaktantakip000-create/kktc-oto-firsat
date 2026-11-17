@@ -21,6 +21,7 @@ class KktcarStats:
     price_changes: int = 0
     went_inactive: int = 0
     refresh_failed: int = 0  # yenilemede okunamayan (HTTP != 200 ya da şablon değişti): okuma oranı korumasına sayılır
+    reopened: int = 0  # kapalı sanılan ama sayfası yeniden yayında olan ilan (geri açıldı)
     time_limited: bool = False  # süre bütçesi dolduğu için kalan ilanlar sonraki tura bırakıldı (okunamadı SAYILMAZ)
     suspect: list[str] = field(default_factory=list)  # toplu "satıldı/arşiv" şüphesi: hiçbiri pasifleştirilmedi, tur sonunda hata
     unread: list[str] = field(default_factory=list)  # okunamayan YENİ ilanların adresi (log'da görünsün; biçim hatasıysa sayfa VPS'te saklanır)
@@ -29,6 +30,8 @@ class KktcarStats:
 # Site yavaşlarsa tur 13 dk bütçesini / iş akışı 20 dk sınırını aşmasın (en kötü durum eskiden ~26 dk: 50 istek x 30 sn zaman aşımı)
 NEW_SECONDS = 150
 REFRESH_SECONDS = 90
+RECHECK_SECONDS = 30
+RECHECK_DAYS = 45  # bu kadar gün önce kapanmış ilan artık yeniden denenmez
 MIN_SITEMAP = 200  # bundan küçük site haritasında kaybolanlar pasifleştirilmez (yarım yanıt/engel; %70 küçülme koruması ayrıca)
 
 
@@ -77,6 +80,32 @@ def refresh_active(repo: Repository, source: dict, client, stats: KktcarStats, l
         stats.went_inactive += repo.apply_refresh(row["id"], row, data) == "pasif"
 
 
+def recheck_archived(repo: Repository, source: dict, client, stats: KktcarStats, limit: int = 5, hours: int = 24,
+                     max_seconds: float = RECHECK_SECONDS, clock=time.monotonic) -> None:
+    """17.11.2026: KKTCar süresi dolan ilanı "İlan arşivi" yapar (nedeni belirsiz kapanır); satıcı yenileyince ilan aynı adresle yeniden
+    yayına girer. Kapalı ilana hiç bakılmadığı için yayındaki ilanlar (ve fiyat düşüşleri) kayboluyordu: ana sayfadaki 28 ilanın 12'si
+    bizde kapalıydı. Son RECHECK_DAYS günde belirsiz kapananlar günde bir, turda en çok `limit` ilan yeniden okunur; sayfa yayında
+    diyorsa geri açılır ve fiyatı güncellenir. Okunamayan/hâlâ arşivdeki sayfa yalnız sırada geriye atılır (okuma oranı alarmına sayılmaz)."""
+    deadline = clock() + max_seconds
+    for row in repo.stale_archived(source["id"], RECHECK_DAYS, hours, limit):
+        if clock() > deadline:
+            stats.time_limited = True
+            break
+        try:
+            data = kktcar.fetch_detail(client, kktcar.SitemapEntry(row["url"], row["source_item_id"], None))
+        except httpx.HTTPError:
+            data = None
+        kktcar.polite_sleep()
+        if not data or data.get("is_active") is False:
+            repo.touch(row["id"])
+            continue
+        data.pop("archive_dated", None)
+        data["price_gbp"] = _gbp(data)
+        repo.reopen(row["id"])
+        stats.price_changes += repo.apply_refresh(row["id"], row, data) == "fiyat"
+        stats.reopened += 1
+
+
 def collect_kktcar(repo: Repository, source: dict, max_new: int = 25, clock=time.monotonic) -> KktcarStats:
     stats = KktcarStats()
     with kktcar.new_client() as client:
@@ -120,6 +149,7 @@ def collect_kktcar(repo: Repository, source: dict, max_new: int = 25, clock=time
         if len(entries) > MIN_SITEMAP and not shrunk:
             stats.deactivated = repo.deactivate_missing(source["id"], {e.slug for e in entries})
         refresh_active(repo, source, client, stats, clock=clock)
+        recheck_archived(repo, source, client, stats, clock=clock)
     repo.mark_checked(source["id"], cursor=None, last_post_at=None, listings_7d=repo.count_recent(source["id"]))
     if shrunk:
         raise RuntimeError(f"{source['name']}: site haritası şüpheli biçimde küçüldü ({len(entries)} ilan), pasifleştirme yapılmadı")

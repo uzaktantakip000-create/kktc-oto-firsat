@@ -133,6 +133,10 @@ class FakeRepo:
         self.deactivated = present
         return 3
 
+    def reactivate_present(self, sid, present):
+        self.reactivated = present
+        return 2
+
 
 class FakeSite:
     def __init__(self, entries, details):
@@ -292,3 +296,17 @@ def test_same_car_across_sites_by_phone_km_price():
     me = {"brand_norm": "BMW", "model_norm": "1", "year": 2019, "km": kc["km"], "seller_phone": kc["seller_phone"], "price_gbp": kc["price_amount"]}
     assert same_car(me, other)  # aynı telefon + aynı km: fiyat farkı olsa da aynı araç
     assert not same_car(me, {**other, "km": 87000, "seller_phone": None})  # farklı km: farklı araç
+
+
+def test_listing_back_in_the_sitemap_is_reopened():
+    """17.11.2026: haritadan düşüp kapanan ilan haritaya dönerse geri açılır (KKTCar'da bulunan hatanın harita sitelerindeki karşılığı)."""
+    repo = FakeRepo()
+    entries = _entries(150)
+    st = css.collect_sitemap_site(repo, {"id": "s", "name": "X"}, FakeSite(entries, {}), max_new=0, now=NOW)
+    assert st.reactivated == 2 and repo.reactivated == {e.item_id for e in entries}
+
+
+def test_small_or_shrunk_sitemap_reopens_nothing():
+    repo = FakeRepo()
+    css.collect_sitemap_site(repo, {"id": "s", "name": "X"}, FakeSite(_entries(5), {}), max_new=0, now=NOW)
+    assert not hasattr(repo, "reactivated")

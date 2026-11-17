@@ -397,14 +397,15 @@ class Repository:
                WHERE l.is_active AND last_ev.rv IS DISTINCT FROM %s""", (rules_version,)).fetchone()["n"]
 
     def expire_unverifiable(self, days: int = 30, frozen_after_days: int = FROZEN_AFTER_DAYS) -> int:
-        """Satıldı/silindi bilgisi izlenemeyen kaynaklarda (Instagram, Facebook, kktcarabam, Mezunum) eski ilanı pasifleştirir.
+        """Satıldı/silindi bilgisi izlenemeyen kaynaklarda (Instagram, Facebook, kktcarabam, Mezunum, PazarKibris) eski ilanı pasifleştirir.
+        PazarKibris (17.11.2026): listede yalnız yeni ilanlar okunur, satılan hiç kapanmıyordu (ilk ilanlar 28.10'da); aynı 30 gün kuralı.
         Facebook eskiden listede yoktu: ilanlar hiç pasifleşmediği için telefonları saklama temizliğine (yalnız pasif ilan) hiç girmiyordu.
         KibrisArabaAl (sahip onayı 22.10.2026): site 10.10.2026'dan beri bizi engelliyor, izin kapısı kapalı (application/kaa_gate); ilanları
         "ilanda" sayılıp emsal havuzunun %42'sini tutuyordu. Kaynak `frozen_after_days` gündür okunmadıysa (last_checked_at) aynı 30 gün
         kuralı ona da uygulanır; izinle okuma yeniden başlarsa kural kendiliğinden kalkar (okunan site satılanı zaten kapatır)."""
         cur = self.conn.execute(
             """UPDATE listings l SET is_active=FALSE, inactive_at=NOW(), inactive_reason=%s FROM sources s
-               WHERE s.id=l.source_id AND l.is_active AND (s.platform IN ('instagram', 'facebook') OR s.url LIKE '%%kktcarabam.com%%' OR s.url LIKE '%%mezunumsatiyorumkibris%%'
+               WHERE s.id=l.source_id AND l.is_active AND (s.platform IN ('instagram', 'facebook') OR s.url LIKE '%%kktcarabam.com%%' OR s.url LIKE '%%mezunumsatiyorumkibris%%' OR s.url LIKE '%%pazarkibris.com%%'
                       OR (s.url LIKE '%%kibrisarabaal.com%%' AND s.last_checked_at < NOW() - make_interval(days => %s)))
                  AND COALESCE(l.posted_at, l.first_seen_at) < NOW() - make_interval(days => %s)""",
             (UNKNOWN, frozen_after_days, days),
@@ -570,6 +571,27 @@ class Repository:
                ORDER BY last_seen_at LIMIT %s""",
             (source_id, hours, limit),
         ).fetchall()
+
+    def stale_archived(self, source_id, days: int, hours: int, limit: int) -> list[dict]:
+        """Son `days` günde nedeni belirsiz kapanmış ilanlar (KKTCar "İlan arşivi" = süresi doldu; satıcı yenileyince ilan AYNI adresle
+        yeniden yayına girer, 17.11.2026), en eski kontrol edilen önce; `hours` içinde bakılanlar atlanır. Satıldı/kaldırıldı işaretli,
+        satış zamanı yazılı ilan seçilmez (reactivate_present ile aynı süzgeç)."""
+        return self.conn.execute(
+            """SELECT id, source_item_id, url, price_gbp::float8 AS price_gbp, price_amount::float8 AS price_amount, currency
+               FROM listings
+               WHERE source_id=%s AND NOT is_active AND inactive_reason=%s AND sold_at IS NULL AND url IS NOT NULL
+                 AND NOT (COALESCE(urgency_signals, ARRAY[]::text[]) && ARRAY['satildi', 'kaldirildi']::text[])
+                 AND inactive_at > NOW() - make_interval(days => %s) AND last_seen_at < NOW() - make_interval(hours => %s)
+               ORDER BY last_seen_at LIMIT %s""",
+            (source_id, UNKNOWN, days, hours, limit),
+        ).fetchall()
+
+    def reopen(self, listing_id) -> None:
+        """İlanın kendi sayfası onu yeniden yayında gösteriyor: geri açılır, listing_history'ye 'geri_acildi' düşer (geri alma için)."""
+        self.conn.execute("UPDATE listings SET is_active=TRUE, inactive_at=NULL, inactive_reason=NULL, urgency_signals=NULL WHERE id=%s",
+                          (listing_id,))
+        self.conn.execute("INSERT INTO listing_history (listing_id, field, old_value, new_value) VALUES (%s,'geri_acildi',%s,NULL)",
+                          (listing_id, UNKNOWN))
 
     def apply_refresh(self, listing_id, old: dict, data: dict) -> str | None:
         """Yeniden okunan ilanı işler. Dönen: 'fiyat' (fiyat değişti), 'pasif' (satıldı/arşiv) ya da None."""
