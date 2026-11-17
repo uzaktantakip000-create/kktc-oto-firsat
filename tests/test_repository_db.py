@@ -473,7 +473,7 @@ def test_morning_message_and_status_count_new_listings_the_same_way_without_copi
 def test_pazarkibris_listings_expire_after_30_days(db):
     """17.11.2026: PazarKibris'te satılan ilan hiç kapanmıyordu (yalnız yeni ilanlar okunur): 30 gün kuralına girdi."""
     c = db.conn
-    pk = c.execute("INSERT INTO sources (platform, name, url, status) VALUES ('web','PK','https://pazarkibris.com/','aktif') RETURNING id").fetchone()["id"]
+    pk = c.execute("SELECT id FROM sources WHERE url LIKE '%pazarkibris.com%'").fetchone()["id"]  # tohum verisinde var
     add_listing(c, pk, "pk_old", posted_at=ago(days=40))
     add_listing(c, pk, "pk_new", posted_at=ago(days=5))
     assert db.expire_unverifiable() == 1
