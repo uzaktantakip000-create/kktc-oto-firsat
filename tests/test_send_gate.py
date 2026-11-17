@@ -24,6 +24,10 @@ TIME_KEYS = {"eval:last", "eval:full", "dedupe:full", "eval:backlog", "bot_liste
              "vps_tick_seen", "gh_tick_seen", "gh_browser_seen", "backup_last_ok"}  # değerlendirme öncesi zaman damgaları: kapıyla ilgisi yok, izde gösterilmez (son dördünü sabah satırı okur)
 
 
+def mz(i):  # gönderimden önce yeniden okunamayan site: yaş sınırı (36 saat / 4 gün) bunda sürer
+    return f"https://www.mezunum.com/ilan/{i}"
+
+
 def kk(i):
     return f"https://www.kktcar.com/ilan/{i}"
 
@@ -209,7 +213,7 @@ def out_lines(capsys):
 def golden_world():
     green = [
         cand("g1", n=9, url=kk("g1")),  # gider
-        cand("g2", seen_h=40, url=kk("g2")),  # taze değil
+        cand("g2", seen_h=40, url=mz("g2")),  # taze değil
         cand("g3", n=7, url=kk("g3")),  # emsal < 8
         cand("g4", n=12, url=kk("g4")),  # sitede kaldırılmış (404)
         cand("g5", n=10, url=kk("g5")),  # fiyatı değişmiş
@@ -431,7 +435,7 @@ def test_gate_orange_without_llm_reader_unverified_llm_priced_listing_counts_as_
 def test_gate_treats_a_resurfaced_old_kktcarabam_ad_as_not_fresh_and_asks_only_about_undated_fresh_candidates(monkeypatch):
     """Sitenin "en yeni" listesine geri ittiği eski ilan (KKTCarabam, tarihsiz, numarası daha önce görülenlerden küçük) taze DEĞİLDİR: tazelik
     adımında `taze_degil` ile elenir, sonraki adımlara (canlılık, yapay zekâ) hiç girmez. İlan tarihi belliyse kural uygulanmaz (sorgulanmaz bile)."""
-    old, new, dated, stale = cand("r1", url=kk("r1")), cand("r2", url=kk("r2")), cand("r3", posted_h=3, url=kk("r3")), cand("r4", seen_h=40, url=kk("r4"))
+    old, new, dated, stale = cand("r1", url=kk("r1")), cand("r2", url=kk("r2")), cand("r3", posted_h=3, url=kk("r3")), cand("r4", seen_h=40, url=mz("r4"))
     w = World(green=[old, new, dated, stale], resurfaced={"r1", "r3", "r4"})  # r3 ve r4 sorulsaydı "eski" denirdi: sorulmamaları gerekir
     sendable, rejected = gonderim_kontrol(wire(monkeypatch, w), [old, new, dated, stale], "🟢")
     assert [ev.listing["id"] for ev in sendable] == ["r2", "r3"]  # tarihi belli r3 gider; r1 gitmez
@@ -503,7 +507,7 @@ def test_gate_fresh_photo_date_does_not_save_a_number_resurfaced_ad_and_an_old_p
 def test_gate_missing_or_garbage_photo_date_behaves_exactly_as_before(monkeypatch, photo_urls):
     """(c) fotoğraf tarihi yok/okunamıyor: sonuç ve iz, fotoğraf alanı hiç olmayan ilanla BİREBİR aynı."""
     def run(extra):
-        a, b = cand("n1", url=kk("n1"), **extra), cand("n2", url=kk("n2"), seen_h=40, **extra)
+        a, b = cand("n1", url=kk("n1"), **extra), cand("n2", url=mz("n2"), seen_h=40, **extra)
         w = World(green=[a, b], resurfaced={"n2"})
         sendable, rejected = gonderim_kontrol(wire(monkeypatch, w), [a, b], "🟢")
         return [ev.listing["id"] for ev in sendable], ids(rejected), w.trace

@@ -232,6 +232,9 @@ def format_alert(ev: Evaluated, note: dict | None = None, twins: list[dict] | No
         "💡 Neden: " + _reason(ev),
         *twin_lines(l, twins or []),
     ]
+    late = days_listed_line(l)
+    if late:
+        lines.insert(1, late)
     if l["currency_guess"]:
         lines.append(f"⚠️ Para birimi yazmıyordu, {CURRENCY_NAMES.get(l['currency'], l['currency'])} varsayıldı")
     lines += ev.checks
@@ -303,11 +306,14 @@ KAA_SOURCE = "KibrisArabaAl"
 
 
 def is_fresh(first_seen_at, posted_at, now: datetime | None = None, fresh_hours: int = 36, max_post_days: int = 4,
-             price_changed_at=None, platform: str | None = None, social_max_hours: int = 48, photo_urls=None, signals=None, source_name: str | None = None) -> bool:
+             price_changed_at=None, platform: str | None = None, social_max_hours: int = 48, photo_urls=None, signals=None, source_name: str | None = None, live_checked: bool = False) -> bool:
     """Yeni görülmüş VE (yayın tarihi biliniyorsa) en fazla 4 günlük: geçmiş doldurma eski ilan bildirmesin.
     Yakın zamanda fiyatı düşmüş/değişmiş ilan yaşına bakılmadan taze sayılır. KKTCarabam'da ilan tarihi hep boştur; `photo_urls` (kapak
     fotoğrafının adresi) yükleme anı gönderim anından `fresh_hours` saatten eskiyse ilan taze sayılmaz (`photo_stale`): fiyat değişikliği
     istisnası da bunu aşmaz (yeniden çıkmış ilan için numara kuralı da öyle: `resurfaced_ids`). Tarih yoksa davranış değişmez.
+    `live_checked` (17.11.2026): ilan gönderimden hemen önce sitede yeniden okunabiliyor (`liveness.can_check`: KKTCar, KibrisArabaAl) ve
+    satılmış/kalkmış/fiyatı değişmiş olan elenecek: böyle ilanda "geç kalmış" diye bir engel yok, hâlâ satıştaki fırsat görüldüğü anda herkese
+    gider (mesajda "N gündür satışta"). Okunamayan kaynak (Facebook, Instagram, KKTCarabam, Mezunum...) eski kurallarla kalır.
     KibrisArabaAl (17.11.2026): site 2 saatte bir ve proxyden okunduğu için ilan bize yayından günler sonra düşebilir; ilk görülme taze
     kaldıkça yayın payı `KAA_MAX_POST_DAYS` (10 gün) olur (2012 Nissan March yayından 6 gün sonra görülüp elenmişti)."""
     now = now or datetime.now(timezone.utc)
@@ -315,6 +321,8 @@ def is_fresh(first_seen_at, posted_at, now: datetime | None = None, fresh_hours:
         return False  # 13.10.2026: grup akışı yeni yoruma göre sıralanır; tarihsiz ve imlece ulaşılmadan okunan gönderi haftalık olabilir
     if photo_stale(photo_urls, now, fresh_hours):
         return False  # KKTCarabam: sitenin "en yeni" listesine geri ittiği eski ilan (fotoğrafı pencereden eski); yalnız SIKILAŞTIRIR
+    if live_checked:
+        return True  # 17.11.2026 (sahip: "geç kalmış fırsatlar herkese gitsin"): gönderimden önce sitede canlılık/fiyat kontrolü yapılabilen ilanda yaş sınırı YOK (aşağı bak)
     if price_changed_at and price_changed_at >= now - timedelta(hours=fresh_hours):
         return True
     if platform in SOCIAL and posted_at is not None and posted_at < now - timedelta(hours=social_max_hours):
@@ -336,10 +344,25 @@ def resurfaced_ids(repo: Repository, listings: list[dict]) -> set:
     return repo.resurfaced_kktcarabam(ids) if ids else set()
 
 
+def live_checked(listing: dict) -> bool:
+    """Gönderimden önce sitede yeniden okunabilen ilan mı (`liveness.can_check`)? `is_fresh(live_checked=...)` için."""
+    from application.liveness import can_check  # liveness bu modülü (evaluate üzerinden) içe aktarıyor: döngü olmasın diye burada
+    return can_check(listing)
+
+
+def days_listed_line(l: dict, now: datetime | None = None) -> str | None:
+    """"🕰 N gündür satışta" (ilan tarihi, yoksa ilk görülme; 2 günden azsa yok): geç kalmış ama hâlâ satıştaki fırsat bunu açıkça söyler."""
+    since = l.get("posted_at") or l.get("first_seen_at")
+    if since is None:
+        return None
+    days = ((now or datetime.now(timezone.utc)) - since).days
+    return f"🕰 {days} gündür satışta (geç bildirim: ilan hâlâ yayında ve fiyatı aynı)" if days >= 2 else None
+
+
 def _is_fresh_ev(ev: Evaluated) -> bool:
     return is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
                     platform=ev.listing.get("platform"), photo_urls=ev.listing.get("photo_urls"), signals=ev.listing.get("urgency_signals"),
-                    source_name=ev.listing.get("source_name"))
+                    source_name=ev.listing.get("source_name"), live_checked=live_checked(ev.listing))
 
 
 def _burst_summary(repo: Repository, token: str, fresh: list[Evaluated], subs: list[dict], limit: int, now: datetime | None = None) -> int:
@@ -539,7 +562,7 @@ def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes:
             break
         if not is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
                         platform=ev.listing.get("platform"), photo_urls=ev.listing.get("photo_urls"), signals=ev.listing.get("urgency_signals"),
-                    source_name=ev.listing.get("source_name")):
+                    source_name=ev.listing.get("source_name"), live_checked=live_checked(ev.listing)):
             continue
         text = format_alert(ev, (notes or {}).get(ev.listing["id"]), _twins(repo, ev.listing))
         delivered = False
