@@ -97,6 +97,17 @@ def test_freshness(first_seen, posted, expected):
     assert notify.is_fresh(first_seen, posted, NOW) is expected
 
 
+@pytest.mark.parametrize("source,days,expected", [
+    ("KibrisArabaAl", 6, True),     # site geç taranır: ilk görülme taze ise 10 güne kadar yayın kabul
+    ("KibrisArabaAl", 12, False),
+    ("KKTCar", 6, False),           # diğer kaynaklar 4 günde kalır
+    (None, 6, False),
+])
+def test_freshness_kibrisarabaal_post_window(source, days, expected):
+    assert notify.is_fresh(NOW, NOW - timedelta(days=days), NOW, source_name=source) is expected
+    assert not notify.is_fresh(NOW - timedelta(hours=40), NOW - timedelta(days=1), NOW, source_name=source)  # ilk görülme eskiyse yine elenir
+
+
 @pytest.mark.parametrize("tier", [Tier.STRONG, Tier.ESTIMATED])
 def test_send_alerts_skips_a_fresh_looking_ad_with_an_old_kktcarabam_photo(monkeypatch, tier):
     """`send_alerts`ın kendi tazelik kontrolü (🟢 ve 🟠 yolu aynı `is_fresh`): kapak fotoğrafı 36 saatten eski KKTCarabam ilanı gitmez, yenisi gider."""
