@@ -5,7 +5,7 @@ sayfa açılmasın, yapay zekâ parası harcanmasın. Elenen ilana alerts kaydı
 from application import llm_reader
 from application.evaluate import Evaluated, apply_send_floor
 from application.liveness import recheck_before_send
-from application.notify import is_fresh, resurfaced_ids
+from application.notify import live_checked, is_fresh, resurfaced_ids
 from infrastructure.db.repository import Repository
 
 # Elenme nedenleri (kısa, makine okur): ileride "neden gitmedi" sayılabilsin (🟠 gölge raporu, haftalık rapor)
@@ -21,7 +21,7 @@ def _fresh(ev: Evaluated) -> bool:
     l = ev.listing
     return is_fresh(l["first_seen_at"], l["posted_at"], price_changed_at=l.get("price_changed_at"), platform=l.get("platform"),
                     photo_urls=l.get("photo_urls"), signals=l.get("urgency_signals"),
-                    source_name=l.get("source_name"))
+                    source_name=l.get("source_name"), live_checked=live_checked(l))
 
 
 def _fresh_candidates(repo: Repository, candidates: list[Evaluated]) -> list[Evaluated]:

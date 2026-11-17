@@ -347,3 +347,17 @@ def test_masked_km_is_shown_as_a_lower_bound():
     e.listing["urgency_signals"] = None
     assert " · 192.000 km · " in notify.format_alert(e)
     assert notify.km_text({"km": None, "urgency_signals": ["km_alt_sinir"]}) == "km yok"
+
+
+def test_live_checkable_ads_have_no_age_limit_and_say_how_long_they_have_been_listed():
+    """17.11.2026 (sahip: "geç kalmış fırsatlar herkese gitsin"): gönderimden önce sitede yeniden okunabilen ilan (KKTCar, KibrisArabaAl) eski
+    olsa da taze sayılır; okunamayan kaynak eski kuralla kalır. Mesaj "N gündür satışta" der."""
+    old_seen, old_post = NOW - timedelta(days=30), NOW - timedelta(days=40)
+    assert notify.is_fresh(old_seen, old_post, NOW, live_checked=True) is True
+    assert notify.is_fresh(old_seen, old_post, NOW) is False
+    assert notify.is_fresh(old_seen, old_post, NOW, live_checked=False, source_name="KKTCar") is False
+    assert "40 gündür satışta" in notify.days_listed_line({"posted_at": old_post, "first_seen_at": old_seen}, NOW)
+    assert "30 gündür" in notify.days_listed_line({"posted_at": None, "first_seen_at": old_seen}, NOW)
+    assert notify.days_listed_line({"posted_at": NOW - timedelta(hours=20), "first_seen_at": NOW}, NOW) is None
+    assert notify.live_checked({"url": "https://www.kktcar.com/ilan/1"}) is True
+    assert notify.live_checked({"url": "https://www.kktcarabam.com/1"}) is False
