@@ -5,6 +5,7 @@ Yapay zekâ asla tek başına 🟢 üretmez; yalnızca düşürebilir. Hata/büt
 Ayrıca 🟢 mesajının kısa "fırsat notu" (deal_notes) aynı günlük bütçeden düşer. Model tek: infrastructure/llm/openrouter.MODEL (21.10.2026)."""
 import json
 import os
+import time
 from datetime import datetime, timedelta, timezone
 
 from application.evaluate import Evaluated
@@ -334,19 +335,27 @@ def _cached_note(raw: str) -> dict | None:
     return note if isinstance(note, dict) else None
 
 
+NOTE_STALL_AFTER = 2  # üst üste bu kadar geçici hata (yeniden denemeler bittikten sonra) olunca o turda başka not sorulmaz
+NOTE_TURN_BUDGET_S = 240  # bir turda not sorularına en çok bu kadar sn (tur toplamı < 13 dk kalsın; her çağrı yeniden denemeyle ~100 sn'ye çıkabilir)
+
+
 def deal_notes(repo: Repository, evs: list[Evaluated], api_key: str, model: str, call=openrouter.check_deal, now=None) -> dict:
     """🟢 mesajına eklenen kısa "fırsat notu" (openrouter.MODEL; mesaja yalnız ⚠️ ekler, 🟢'yi düşürmez). Dönen: {ilan_id: not}.
     - Okuyucuyla AYNI günlük bütçeden düşer (DAILY_BUDGET_USD, `llm_spend:<gün>`); bütçe doluysa soru sorulmaz.
     - Her (ilan, fiyat) için en çok BİR kez sorulur: cevap (not ya da kalıcı "not yok" = 'null': model cevap verdi ama not çıkmadı, hesap
       hatası) bot_state'e yazılır. Gönderilemeyen 🟢 36 saat bekleyebilir; eskiden her 15 dakikalık turda yeniden soruluyordu.
     - Geçici hata (`transient_error`: ağ, zaman aşımı, 429, 5xx) önbelleğe YAZILMAZ: sonraki turda yeniden sorulur (22.10.2026; eskiden 'null'
-      yazılıyor, not o ilan için hiç gelmiyordu). Fırtına olmasın diye geçici hatadan sonra o turda başka not sorulmaz (önbellekteki notlar yine gelir).
+      yazılıyor, not o ilan için hiç gelmiyordu). Çağrının kendisi zaten yeniden dener (openrouter.ask_json, 18.11.2026). Fırtına olmasın diye
+      429'da (günlük sınır) o turda başka not sorulmaz; öbür geçici hatada NOTE_STALL_AFTER üst üste hatadan sonra ya da tur süresi
+      NOTE_TURN_BUDGET_S'yi geçince durulur (önbellekteki notlar yine gelir). Eskiden tek hata o turdaki bütün notları siliyordu.
     - Bütçe doluysa, çağrı ya da veritabanı hata verirse o ilanın notu yok: bildirim notsuz gider (gönderim bu nota bağlı DEĞİL; hata
       yukarı fırlatılmaz)."""
     notes: dict = {}
     ledger = LlmReader(repo, api_key, model, now=now)  # yalnız harcama defteri: okuyucuyla aynı günlük anahtar
     budget_logged = False
-    stalled = False  # bu turda geçici hata alındı: kalan ilanlara soru sorulmaz
+    stalled = False  # bu turda kalan ilanlara soru sorulmaz (429, üst üste geçici hata ya da süre doldu)
+    fails = 0  # üst üste geçici hata
+    started = time.monotonic()
     for ev in evs:
         try:
             l, m = ev.listing, ev.market
@@ -357,7 +366,7 @@ def deal_notes(repo: Repository, evs: list[Evaluated], api_key: str, model: str,
                 if note is not None:
                     notes[l["id"]] = note
                 continue
-            if stalled:
+            if stalled or time.monotonic() - started > NOTE_TURN_BUDGET_S:
                 continue
             spent = ledger.spent_today()
             if spent >= DAILY_BUDGET_USD:
@@ -373,13 +382,16 @@ def deal_notes(repo: Repository, evs: list[Evaluated], api_key: str, model: str,
             note = data if isinstance(data, dict) else None
             if note is not None:  # önce nota koy: aşağıdaki kayıt yazılamasa da bu turun mesajı notu taşısın
                 notes[l["id"]] = note
-            stalled = transient_error(err)
+            transient = transient_error(err)
+            fails = fails + 1 if transient else 0
+            stalled = err == RATE_LIMITED or fails >= NOTE_STALL_AFTER
             if err:
-                print("LLM notu alınamadı:", err + (" (geçici: sonraki turda yeniden sorulur, bu turda başka not sorulmaz)" if stalled else ""))
+                print("LLM notu alınamadı:", err + (" (geçici: sonraki turda yeniden sorulur" + (", bu turda başka not sorulmaz)" if stalled else ")")
+                                                    if transient else ""))
             call_alarms(repo, err, now)  # hesap hatası ve 429 serisi (cevap gelince seri silinir)
             outcome_alarm(repo, None if note is not None else (err or "yanıt biçimi"), now)  # başarı = elde not
             repo.set_state(ledger._spend_key(), f"{spent + cost:.5f}")
-            if not stalled:  # geçici hata önbelleğe yazılmaz
+            if not transient:  # geçici hata önbelleğe yazılmaz
                 repo.set_state(key, json.dumps(note, ensure_ascii=False))
         except Exception as e:  # yapay zekâ ya da veritabanı hatası bildirimi engellemesin
             print("LLM notu alınamadı:", type(e).__name__)

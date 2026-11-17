@@ -238,22 +238,54 @@ def test_deal_note_permanent_failure_is_asked_once_and_never_raises(err):
     assert lr.deal_notes(DeadRepo(), [green()], "k", "m", call=call, now=DAY) == {}
 
 
-@pytest.mark.parametrize("err", ["http 429", "http 500", "http 503", "ReadTimeout", "ConnectError"])
-def test_deal_note_transient_failure_is_not_cached_and_is_asked_again_next_round(err, capsys):
-    """22.10.2026: geçici hata (429, 5xx, zaman aşımı, ağ) 'null' olarak önbelleğe yazılıyordu: o ilanın notu hiç gelmiyordu. Artık yazılmaz,
-    sonraki turda yeniden sorulur; o turda başka ilana soru sorulmaz (fırtına yok), önbellekteki not yine gelir."""
-    repo, fail = FakeRepo(), deal_call(note=None, err=err, cost=0.0)
+def _second_and_cached():
     second, cached = green(), green()
     second.listing["id"], cached.listing["id"] = 2, 3
+    return second, cached
+
+
+def test_deal_note_429_is_not_cached_and_stops_the_round(capsys):
+    """22.10.2026: geçici hata 'null' olarak önbelleğe yazılmıyor, sonraki turda yeniden sorulur. 429 (günlük sınır) o turu durdurur
+    (fırtına yok); önbellekteki not yine gelir."""
+    repo, fail = FakeRepo(), deal_call(note=None, err="http 429", cost=0.0)
+    second, cached = _second_and_cached()
     repo.state["deal_note:3:t5000"] = '{"gercek_firsat_mi": true}'  # önceki turdan notu olan ilan
     assert lr.deal_notes(repo, [green(), second, cached], "k", "m", call=fail, now=DAY) == {3: {"gercek_firsat_mi": True}}
-    assert len(fail.seen) == 1  # ilk geçici hatadan sonra bu turda soru yok
+    assert len(fail.seen) == 1  # 429'dan sonra bu turda soru yok
     assert sorted(k for k in repo.state if k.startswith("deal_note:")) == ["deal_note:3:t5000"]  # geçici hata önbelleğe yazılmadı
-    assert f"LLM notu alınamadı: {err} (geçici: sonraki turda yeniden sorulur" in capsys.readouterr().out
+    assert "LLM notu alınamadı: http 429 (geçici: sonraki turda yeniden sorulur, bu turda başka not sorulmaz)" in capsys.readouterr().out
     ok = deal_call()
     assert lr.deal_notes(repo, [green(), second, cached], "k", "m", call=ok, now=DAY) == {1: SUSPICIOUS, 2: SUSPICIOUS,
                                                                                           3: {"gercek_firsat_mi": True}}
-    assert len(ok.seen) == 2 and repo.state["deal_note:1:t5000"] == repo.state["deal_note:2:t5000"] != "null"  # sonraki tur: soruldu, yazıldı
+    assert len(ok.seen) == 2 and repo.state["deal_note:1:t5000"] == repo.state["deal_note:2:t5000"] != "null"
+
+
+@pytest.mark.parametrize("err", ["http 500", "http 503", "ReadTimeout", "ConnectError"])
+def test_deal_note_one_transient_failure_does_not_wipe_the_rest_of_the_round(err):
+    """18.11.2026: tek zaman aşımı/5xx o turdaki bütün 🟢'lerin notunu siliyordu. Artık yalnız o ilan notsuz kalır (yazılmaz, sonra yeniden
+    sorulur); sonraki ilan sorulur. NOTE_STALL_AFTER üst üste hatadan sonra tur durur."""
+    repo = FakeRepo()
+    second, third = _second_and_cached()
+    replies = iter([(None, err, 0.0), (SUSPICIOUS, None, 0.0005), (SUSPICIOUS, None, 0.0005)])
+    seen = []
+
+    def call(key, model, text, summary):
+        seen.append(text)
+        return next(replies)
+
+    assert lr.deal_notes(repo, [green(), second, third], "k", "m", call=call, now=DAY) == {2: SUSPICIOUS, 3: SUSPICIOUS}
+    assert len(seen) == 3  # ilk ilan hata aldı ama diğer ikisi soruldu
+    assert "deal_note:1:t5000" not in repo.state  # hata alan ilan sonraki turda yeniden sorulur
+
+
+@pytest.mark.parametrize("err", ["http 500", "ReadTimeout"])
+def test_deal_note_transient_failures_in_a_row_stop_the_round(err):
+    repo = FakeRepo()
+    second, third = _second_and_cached()
+    fail = deal_call(note=None, err=err, cost=0.0)
+    assert lr.deal_notes(repo, [green(), second, third], "k", "m", call=fail, now=DAY) == {}
+    assert len(fail.seen) == lr.NOTE_STALL_AFTER == 2  # iki üst üste hata: üçüncü ilana sorulmadı
+    assert not [k for k in repo.state if k.startswith("deal_note:")]  # hiçbiri kalıcı "not yok" yazılmadı
 
 
 def test_transient_error_classification():
@@ -263,6 +295,7 @@ def test_transient_error_classification():
 
 
 def test_check_deal_caps_tokens_masks_phone_and_returns_cost(monkeypatch):
+    monkeypatch.setattr(openrouter, "_sleep", lambda s: None)
     """Fırsat notu çağrısı: max_tokens tavanı var, telefon maskelenir, (veri, hata, maliyet) döner (maliyet yanıtta yoksa okuyucuyla aynı
     tahmini maliyet); ağ/HTTP hatası istisna değil kısa neden ve 0 ücrettir."""
     body = {"choices": [{"message": {"content": 'Not: {"gercek_firsat_mi": true}'}}], "usage": {"cost": 0.0012}}
@@ -286,7 +319,7 @@ def test_check_deal_caps_tokens_masks_phone_and_returns_cost(monkeypatch):
     assert sent[0]["max_tokens"] == openrouter.CHECK_MAX_TOKENS == 1500
     assert "0533" not in sent[0]["messages"][0]["content"] and "[tel]" in sent[0]["messages"][0]["content"]
     reply["body"] = {"choices": [{"message": {"content": "JSON yok"}}]}
-    assert openrouter.check_deal("k", "m", "x", "y") == (None, "json yok", openrouter.CALL_COST_USD)
+    assert openrouter.check_deal("k", "m", "x", "y") == (None, "json yok", openrouter.CALL_COST_USD * 2)  # bir kez daha soruldu (iki ücret)
     reply["status"] = 429
     assert openrouter.check_deal("k", "m", "x", "y") == (None, "http 429", 0.0)
     reply["status"] = None
@@ -328,6 +361,57 @@ def test_every_request_keeps_reasoning_low_and_a_cut_off_answer_is_an_error(monk
     cut = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}], "usage": {"cost": 0}}
     monkeypatch.setattr(openrouter.httpx, "post", lambda url, **kw: sent.append(kw["json"]) or R(cut))
     assert openrouter.read_listing("k", openrouter.MODEL, "x")[:2] == (None, "yanıt kesildi")
-    assert openrouter.check_deal("k", openrouter.MODEL, "x", "y")[:2] == (None, "yanıt kesildi")
+    assert openrouter.check_deal("k", openrouter.MODEL, "x", "y")[:2] == (None, "yanıt kesildi")  # fırsat notu: 2 kat tavanla bir kez daha
     openrouter.read_image_text("k", openrouter.MODEL, b"jpg")
-    assert [j["reasoning"] for j in sent] == [{"effort": "low"}] * 3 and all(j.get("max_tokens") for j in sent)
+    assert [j["reasoning"] for j in sent] == [{"effort": "low"}] * 4 and all(j.get("max_tokens") for j in sent)
+
+
+class _Resp:
+    def __init__(self, status=200, body=None):
+        self.status_code, self._body = status, body
+
+    def json(self):
+        return self._body
+
+
+OK_BODY = {"choices": [{"message": {"content": '{"gercek_firsat_mi": true}'}}], "usage": {"cost": 0.001}}
+CUT_BODY = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
+
+
+def _script(monkeypatch, steps):
+    """httpx.post sırayla steps'i döner (istisna ya da _Resp); bekleme sürelerini kaydeder, gerçekten beklemez."""
+    sent, waits, it = [], [], iter(steps)
+    monkeypatch.setattr(openrouter, "_sleep", waits.append)
+
+    def post(url, headers=None, json=None, timeout=None):
+        sent.append({"max_tokens": json["max_tokens"], "timeout": timeout})
+        step = next(it)
+        if isinstance(step, Exception):
+            raise step
+        return step
+
+    monkeypatch.setattr(openrouter.httpx, "post", post)
+    return sent, waits
+
+
+def test_check_deal_retries_timeouts_and_5xx_then_succeeds(monkeypatch):
+    """18.11.2026: tek zaman aşımında not kayboluyordu. Artık 5 sn ve 15 sn beklemeyle en çok iki kez daha denenir."""
+    sent, waits = _script(monkeypatch, [httpx.ReadTimeout("x"), _Resp(503), _Resp(200, OK_BODY)])
+    assert openrouter.check_deal("k", "m", "x", "y") == ({"gercek_firsat_mi": True}, None, 0.001)
+    assert len(sent) == 3 and waits == [5, 15] and sent[0]["timeout"] == openrouter.NOTE_TIMEOUT
+
+
+def test_check_deal_gives_up_after_two_retries_and_does_not_retry_account_errors(monkeypatch):
+    sent, waits = _script(monkeypatch, [httpx.ReadTimeout("x")] * 5)
+    assert openrouter.check_deal("k", "m", "x", "y") == (None, "ReadTimeout", 0.0)
+    assert len(sent) == 3 and waits == [5, 15]
+    sent, waits = _script(monkeypatch, [_Resp(402)] * 3)
+    assert openrouter.check_deal("k", "m", "x", "y") == (None, "http 402", 0.0)
+    assert len(sent) == 1 and waits == []  # kredi bitti: tekrar denemenin anlamı yok
+
+
+def test_check_deal_cut_answer_is_retried_once_with_double_max_tokens(monkeypatch):
+    sent, waits = _script(monkeypatch, [_Resp(200, CUT_BODY), _Resp(200, OK_BODY)])
+    data, err, cost = openrouter.check_deal("k", "m", "x", "y")
+    assert (data, err) == ({"gercek_firsat_mi": True}, None) and cost == openrouter.CALL_COST_USD + 0.001  # iki çağrının toplamı
+    assert [x["max_tokens"] for x in sent] == [1500, 3000] and waits == []
