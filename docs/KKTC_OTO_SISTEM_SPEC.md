@@ -1295,3 +1295,7 @@ Sistem yalnız bildirmesin, sorunca cevap versin. Hepsi salt okunur; yeni dış 
 - Gönderimden hemen önce sitede yeniden okunabilen ilanda (`liveness.can_check`: KKTCar, KibrisArabaAl kapısı açıkken) 36 saat / 4 gün (KibrisArabaAl 10 gün) yaş sınırı YOK: 🟢/🟠/🟡/🔍 yolunda `notify.is_fresh(live_checked=True)`. Yerine tek kural: satılmamış/kalkmamış ve fiyatı aynı (`recheck_before_send`, zaten gönderim kapısının parçası). Aynı ilan bir kez gider (alerts). Mesaj 2 günden eski ilanda "🕰 N gündür satışta" der (`notify.days_listed_line`).
 - Okunamayan kaynak (Facebook, Instagram, KKTCarabam, Mezunum...) eski kurallarla kalır: "hâlâ satışta" doğrulanamaz, eski gönderiyi anlık yollamak yanlış alarm olur. ⚡ acil, 🎯 av ve günlük 🟡 özeti de kendi tazelik kuralında kaldı (canlılık kontrolü yok).
 - `/gec` ve ilk turdaki tek seferlik gönderim (§24.57) aynen kalır; aynı alerts kaydını kullandığı için çift gönderim olmaz.
+
+### 24.59 Günlük adet sınırları kalktı (17.11.2026; sahip: "fırsat sınırı neden var")
+- Temiz 🟡 (günde 1), 🔍 teyit et (günde 3), 🟠 (günde 3) ve ⚡ acil (günde 8) günlük adet sınırları fiilen kaldırıldı (değerleri 1000; sınır mekanizması ve ayarlar duruyor). 🟢'nin günlük sınırı zaten yoktu.
+- Kalanlar bilinçli: aynı ilan bir kez (alerts), ⚡ aynı-araç kilidi, 🟠 arıza freni (`est_burst_limit` 15: bir turda 15'ten çok 🟠 çıkarsa tek özet + sahibe uyarı; bozuk tablo/eşik sel yapmasın) ve tur başına 10 mesaj (Telegram hız sınırı; kalanı sonraki 15 dk turunda gider).

@@ -83,7 +83,7 @@ class Settings(BaseModel):
     book_confirm_nights: int = 2
     book_self_check_max_error: float = 0.25  # öz-kontrolde model ortanca hatası bundan büyükse 🟠 kapanır
     est_burst_limit: int = 15  # tek turda bundan fazla 🟠 çıkarsa arıza say: tek özet mesaj
-    est_daily_limit: int = 3
+    est_daily_limit: int = 1000  # 17.11.2026 (sahip: "fırsat sınırı neden var"): günlük adet sınırı fiilen yok (eskiden 3); arıza freni est_burst_limit kalır
     # --- 🟡 PAZARLIK FIRSATI (27.10.2026; sahip: "çok az fırsat gönderiliyor", karar "sen seç te mantıklı olsun") ---
     # 🟢'nin BÜTÜN kapılarından (emsal ≥ 8, en ucuz çeyrek, emsal yılı, 2σ gürültü, temkinli km, yakın km, TL/para birimi, masraf/plaka,
     # kullanıcı kararları, gönderim kontrolü) geçen ama kârı %15–20 arası ilan, açık etiketle anında gider (decision.clean_negotiable).
@@ -91,7 +91,7 @@ class Settings(BaseModel):
     clean_negotiable_alerts: bool = True
     clean_negotiable_threshold: float = 0.15
     clean_negotiable_min_profit_gbp: float = 500.0
-    clean_negotiable_daily_limit: int = 1  # günde en çok bu kadar farklı ilan (son 24 saat)  # sahibin kararı (03.10.2026): 🟠 KONTROL ET günde en çok bu kadar (güven sırasıyla; son 24 saat)
+    clean_negotiable_daily_limit: int = 1000  # 17.11.2026: fiilen sınırsız (eskiden 1). Eski not: günde en çok bu kadar farklı ilan (son 24 saat)  # sahibin kararı (03.10.2026): 🟠 KONTROL ET günde en çok bu kadar (güven sırasıyla; son 24 saat)
     # --- 🔍 ÇOK UCUZ — ÖNCE TEYİT ET (01.11.2026; sahip: "fırsattı bunlar, ona göre ayarla") ---
     # Kârı ≥ %20, doğrudan emsali ≥ 8 olan ve 🟢 olmamasının TEK nedeni fiyatın inanılmayacak kadar ucuz olması (2σ gürültü `fiyat_gurultu`,
     # emsallerin yarısından düşük `fiyat_asiri_dusuk`) ya da km yazmayan yaşlı araçta temkinli km varsayımı (`km_temkinli`) olan ilan, 🟢 DEĞİL,
@@ -101,7 +101,7 @@ class Settings(BaseModel):
     # 2020 Fit £8.500, 2011 Focus "100 bin tl"); günde ~0,7.
     cheap_verify_alerts: bool = True
     cheap_verify_min_ratio: float = 0.35  # emsal medyanının bundan azı: eksik rakam (15.000 → 1.500) sayılır, bu mesaj da gitmez
-    cheap_verify_daily_limit: int = 3  # günde en çok bu kadar farklı ilan (son 24 saat)
+    cheap_verify_daily_limit: int = 1000  # 17.11.2026: fiilen sınırsız (eskiden 3). Eski not: günde en çok bu kadar farklı ilan (son 24 saat)
 
     @model_validator(mode="after")
     def _consistent_thresholds(self):
