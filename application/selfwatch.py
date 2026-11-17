@@ -62,6 +62,12 @@ SOCIAL_SILENT_AFTER = timedelta(hours=3, minutes=30)  # "tamam" diyen platform G
 # Süren tur (sosyal oturum 48d6f79, 13.10.2026): "tur_suruyor": true + "tur_basladi_utc". son_tur_utc yalnız tur BİTİNCE ilerler; 75 dk'lık turda
 # susma süresi süren turun başından sayılır. Bayrak bundan eskiyse (systemd'nin öldürdüğü turdan kalmış: birim sınırı 110 dk) yok sayılır.
 SOCIAL_RUN_MAX = timedelta(minutes=115)
+# 17.11.2026 (sosyal oturumun ölçümü): yeni oturum ilk 7 gün "yavaş başlangıç"ta 4 saatte bir tur atar (domain/social_schedule.SLOW_INTERVAL_H);
+# 3,5 saatlik eşik her gündüz turu arasında yanlış "sustu" uyarısı veriyordu. Okuyucu "sonraki_tur_utc" yazıyor: o an + SOCIAL_NEXT_GRACE
+# (20 dk'lık zamanlayıcı adımı + kktc-browser bekleme kapısı) henüz geçmediyse susmuyor. Alan yok/bozuk/şimdiden SOCIAL_NEXT_MAX'tan ileriyse
+# (planı yanlış yazan okuyucu uyarıyı süresiz gizlemesin) eski kural geçerli.
+SOCIAL_NEXT_GRACE = timedelta(minutes=45)
+SOCIAL_NEXT_MAX = timedelta(hours=12)
 SOCIAL_FILE_STALE = timedelta(hours=1)  # durum dosyası gündüz saatiyle bundan uzun süredir yazılmadıysa okuyucunun kendisi durmuş (~20 dk'da bir yazar)
 SOCIAL_REASON_MAX = 60  # fren nedeninin mesajdaki en çok uzunluğu
 SOCIAL_REPEAT_H = 24  # aynı sosyal uyarı en erken bu kadar saat sonra tekrar yazılır
@@ -300,6 +306,19 @@ def _running_age(p: dict, now: datetime) -> timedelta | None:
     return age if age is not None and age <= SOCIAL_RUN_MAX else None
 
 
+def _next_round_pending(value, now: datetime) -> bool:
+    """Okuyucunun planladığı sonraki tur (+ SOCIAL_NEXT_GRACE) henüz gelmedi mi. Kayıt yok/bozuk/saat dilimsiz/SOCIAL_NEXT_MAX'tan ilerideyse False."""
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        planned = datetime.fromisoformat(value)
+        if planned.tzinfo is None or now.tzinfo is None:
+            return False
+        return now <= planned + SOCIAL_NEXT_GRACE and planned - now <= SOCIAL_NEXT_MAX
+    except Exception:
+        return False
+
+
 def _social_platform(key: str, p: dict, now: datetime) -> SocialPlatform:
     name = SOCIAL_NAMES.get(key, key.capitalize())
     result, errors = p.get("sonuc"), _count(p.get("kaynak_hatasi")) or 0
@@ -311,7 +330,7 @@ def _social_platform(key: str, p: dict, now: datetime) -> SocialPlatform:
         running = _running_age(p, now)
         if running is not None and running < age:  # tur sürüyor: susma süresi süren turun başından
             day_age = _day_elapsed(now - running, now)
-        if day_age > SOCIAL_SILENT_AFTER:
+        if day_age > SOCIAL_SILENT_AFTER and not _next_round_pending(p.get("sonraki_tur_utc"), now):
             return SocialPlatform(key, "susuyor", f"{name} ⚠️ susuyor (son tur {_span(age)} önce)",
                                   f"⚠️ {name} okuyucusu sustu: son tur {_span(age)} önce. Sunucuda sosyal okuyucunun çalışıp çalışmadığına bakılmalı. "
                                   "Düzelince ayrıca yazacağım.")
