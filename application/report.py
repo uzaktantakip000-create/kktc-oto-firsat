@@ -297,6 +297,31 @@ def _learned(repo: Repository) -> list[str]:
     return out
 
 
+BUTTON_MIN_VOTES = 20  # eşik önerisi için gereken 👍+👎 sayısı (altında yalnız sayılar gösterilir)
+BUTTON_BAD_RATE = 0.35  # 👎 oranı bunu aşarsa öneri satırı çıkar
+
+
+def _button_lines(repo: Repository) -> list[str]:
+    """Haftalık rapor, yalnız sahibe (17.11.2026): son 30 günün 👍 İyi / 👎 Kötü / ✅ Satıldı özeti, seviye ve kaynak bazında. Yeterli oy varsa
+    (BUTTON_MIN_VOTES) ve 👎 oranı yüksekse eşik ÖNERİSİ yazar; ayarı kendisi DEĞİŞTİRMEZ (karar sahibin). Veri yoksa bölüm çıkmaz."""
+    stats = getattr(repo, "button_stats", None)
+    rows = stats(30) if stats else []
+    if not rows:
+        return []
+    out = ["🔘 Düğme özeti (son 30 gün: 👍 iyi · 👎 kötü · ✅ satıldı)"]
+    tot: dict[str, list[int]] = {}
+    for r in rows:
+        t = tot.setdefault(r["tier"], [0, 0, 0])
+        t[0] += r["iyi"]; t[1] += r["kotu"]; t[2] += r["satildi"]
+        hrs = f" · ort. {r['sold_hours'] / 24:.1f} günde satıldı" if r.get("sold_hours") is not None and r["satildi"] else ""
+        out.append(f"  {VOTE_ICON.get(r['tier'], '•')} {r['source_name']}: {r['iyi']} · {r['kotu']} · {r['satildi']}{hrs}")
+    for tier, (iyi, kotu, sat) in tot.items():
+        n = iyi + kotu
+        if n >= BUTTON_MIN_VOTES and kotu / n > BUTTON_BAD_RATE:
+            out.append(f"⚠️ {VOTE_ICON.get(tier, '')} oylarının %{kotu / n * 100:.0f}'i 👎 ({n} oy): eşiği sıkılaştırmayı düşünebilirsin (otomatik değiştirmedim).")
+    return out
+
+
 def _health_lines(repo: Repository, now: datetime, owner: bool = True) -> list[str]:
     sent, counts, late = repo.week_alert_counts(WEEK_DAYS), repo.listing_counts(WEEK_DAYS), late_sources(repo, now)
     parts = [f"{sent.get('guclu', 0)} 🟢"] + [f"{sent[t]} {icon}" for t, icon in (("tahmini", "🟠"), ("pazarlik", "🟡")) if sent.get(t)]
@@ -341,7 +366,7 @@ def _compose(repo: Repository, now: datetime, shared: list[_Section], chat_id: s
     votes, voted_rows = _votes_section(repo, chat_id, owner)
     body = [votes, *copy.deepcopy(shared)]  # _fit sığdırırken satır atar: ortak bölümler bir sonraki kişiye eksik gitmesin
     title = f"📊 Haftalık rapor · {to_kktc(now - timedelta(days=WEEK_DAYS)):%d.%m}–{to_kktc(now):%d.%m}"
-    text = _fit(title, body, _health_lines(repo, now, owner))
+    text = _fit(title, body, [*(_button_lines(repo) if owner else []), *_health_lines(repo, now, owner)])
     return text, _vote_keyboard(voted_rows[:len(votes.items)])  # yalnız mesajda kalan satırların düğmesi
 
 

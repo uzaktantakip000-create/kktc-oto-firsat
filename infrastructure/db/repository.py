@@ -1059,6 +1059,27 @@ class Repository:
                WHERE action NOT LIKE 'audit_%%' AND created_at > NOW() - make_interval(days => %s) GROUP BY action""", (days,)).fetchall()
         return {r["action"]: r["n"] for r in rows}
 
+    def button_stats(self, days: int = 30) -> list[dict]:
+        """İyi/Kötü/Satıldı düğme özeti (17.11.2026; haftalık rapor, yalnız okur). Seviye × kaynak başına, son 'days' gündeki bildirimlerin
+        (ilan başına ilk bildirim seviyesi) DISTINCT ilan sayıları: iyi (👍), kotu (👎/kusurlu), satildi (✅), ve bildirimden satıldı basışına
+        medyan saat (`sold_hours`). Aynı ilana farklı kişiler farklı basabilir: her biri ilan başına bir kez sayılır. Abone oyu da sayılır
+        (sahibin kararı: herkes basabilir); denetim hariç."""
+        return self.conn.execute(
+            """WITH first_alert AS (
+                   SELECT DISTINCT ON (listing_id) listing_id, tier, sent_at FROM alerts
+                   WHERE tier IN ('guclu','tahmini','pazarlik','acil') AND sent_at > NOW() - make_interval(days => %s)
+                   ORDER BY listing_id, sent_at)
+               SELECT a.tier, s.name AS source_name,
+                      count(DISTINCT f.listing_id) FILTER (WHERE f.action = 'ilgilendim') AS iyi,
+                      count(DISTINCT f.listing_id) FILTER (WHERE f.action IN ('yanlis_fiyat','kusurlu')) AS kotu,
+                      count(DISTINCT f.listing_id) FILTER (WHERE f.action = 'satilmis') AS satildi,
+                      percentile_cont(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (f.created_at - a.sent_at)) / 3600)
+                          FILTER (WHERE f.action = 'satilmis')::float8 AS sold_hours
+               FROM first_alert a JOIN feedback f ON f.listing_id = a.listing_id
+                    JOIN listings l ON l.id = a.listing_id JOIN sources s ON s.id = l.source_id
+               WHERE f.action IN ('ilgilendim','yanlis_fiyat','kusurlu','satilmis')
+               GROUP BY a.tier, s.name ORDER BY a.tier, s.name""", (days,)).fetchall()
+
     # --- haftalık rapor (application/report.py): yalnız okur ---
     def alerted_votes(self, days: int = 30, chat_id: str | None = None, owner: bool = True) -> list[dict]:
         """Son 'days' günde 🟢/🟠/🟡/⚡ bildirimi giden ilanlar (ilan başına tek satır, en yeni önce) ve oylanıp oylanmadığı: denetim dışındaki
