@@ -1,6 +1,7 @@
 import base64
 import json
 import re
+import time
 
 import httpx
 
@@ -47,10 +48,23 @@ def mask_phones(text: str) -> str:
 CHECK_MAX_TOKENS = 1500  # fırsat notu JSON'u kısa (birkaç yüz token); tavan yalnız uzun/kaçak yanıtın maliyetini sınırlar (görsel okumayla aynı)
 
 
-def ask_json(api_key: str, model: str, prompt: str, timeout: int = 60,
-             max_tokens: int = CHECK_MAX_TOKENS) -> tuple[dict | None, str | None, float]:
-    """Tek kullanıcı mesajı -> JSON. (veri, hata_nedeni, maliyet_usd): okuyucuyla (chat_json) aynı biçim, maliyet aynı günlük deftere
-    yazılsın (application/llm_reader.py). Hata olursa veri None, neden kısa metin (sır içermez)."""
+NOTE_TIMEOUT = 75  # sn, tek deneme (ücretsiz model çağrı başı ~18 sn; yoğun saatte 60 sn'yi aşıyordu)
+RETRY_WAITS = (5, 15)  # sn: geçici hatadan (zaman aşımı, ağ, 408/429/5xx) sonra en çok iki yeniden deneme (18.11.2026: tek denemede not kayboluyordu)
+SHAPE_ERRORS = frozenset({"yanıt kesildi", "json yok", "json bozuk", "yanıt biçimi"})  # model cevap verdi ama işe yarar çıktı yok
+_sleep = time.sleep  # testlerde değiştirilir
+
+
+def net_transient(err: str | None) -> bool:
+    """Aynı çağrı biraz sonra cevap alabilir mi (ağ hatası, zaman aşımı, http 408/429/5xx)? Hesap/istek hatası ve bozuk cevap: hayır."""
+    if not err or err in SHAPE_ERRORS:
+        return False
+    if err.startswith("http "):
+        code = err[5:]
+        return code in ("408", "429") or code.startswith("5")
+    return True  # httpx istisna adı (ReadTimeout, ConnectError…)
+
+
+def _ask_once(api_key: str, model: str, prompt: str, timeout: int, max_tokens: int) -> tuple[dict | None, str | None, float]:
     try:
         r = httpx.post(
             URL,
@@ -78,6 +92,28 @@ def ask_json(api_key: str, model: str, prompt: str, timeout: int = 60,
         return (json.loads(m.group()) if m else None), (None if m else "json yok"), cost
     except json.JSONDecodeError:
         return None, "json bozuk", cost
+
+
+def ask_json(api_key: str, model: str, prompt: str, timeout: int = NOTE_TIMEOUT,
+             max_tokens: int = CHECK_MAX_TOKENS) -> tuple[dict | None, str | None, float]:
+    """Tek kullanıcı mesajı -> JSON. (veri, hata_nedeni, maliyet_usd): okuyucuyla (chat_json) aynı biçim, maliyet aynı günlük deftere
+    yazılsın (application/llm_reader.py). Hata olursa veri None, neden kısa metin (sır içermez).
+    Yeniden deneme (18.11.2026): geçici hatada (net_transient) RETRY_WAITS kadar bekleyip en çok iki kez daha; kesik/bozuk cevapta
+    (SHAPE_ERRORS) bir kez, iki katı max_tokens ile. Maliyet her denemenin toplamıdır."""
+    total, net_tries, reshaped = 0.0, 0, False
+    while True:
+        data, err, cost = _ask_once(api_key, model, prompt, timeout, max_tokens)
+        total += cost
+        if err is None:
+            return data, None, total
+        if err in SHAPE_ERRORS and not reshaped:
+            reshaped, max_tokens = True, max_tokens * 2
+            continue
+        if net_transient(err) and net_tries < len(RETRY_WAITS):
+            _sleep(RETRY_WAITS[net_tries])
+            net_tries += 1
+            continue
+        return data, err, total
 
 
 def check_deal(api_key: str, model: str, listing_text: str, market_summary: str) -> tuple[dict | None, str | None, float]:
