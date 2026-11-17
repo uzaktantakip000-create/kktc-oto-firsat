@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from application import notify
+from domain.settings import Settings
 from application.evaluate import Evaluated
 from domain.comparables import Market
 from domain.data_gate import KM_UNKNOWN_WARNING
@@ -289,16 +290,19 @@ def test_alert_record_links_the_evaluation_and_stores_the_price_at_send_time(mon
     assert repo2.saved_alerts[0]["evaluation_id"] is None and repo2.saved_alerts[0]["price_gbp"] == 5000.0
 
 
+CAP3 = Settings(est_daily_limit=3)  # sınır mekanizması hâlâ çalışır; varsayılan 17.11.2026'dan beri fiilen sınırsız
+
+
 def test_estimated_alerts_respect_the_daily_limit(monkeypatch):
     """Sahibin kararı (03.10.2026): 🟠 KONTROL ET günde en çok 3; son 24 saatte gidenler sayılır."""
     sent = patch_api(monkeypatch, {})
     repo = FakeRepo(["a"])
     repo.sent_today = 1  # bugün zaten 1 tane gitti: kalan hak 2
     evs = [ev(i, tier=Tier.ESTIMATED) for i in range(1, 6)]
-    assert notify.send_alerts(repo, "t", evs, tier=Tier.ESTIMATED) == 2 and len(sent) == 2
+    assert notify.send_alerts(repo, "t", evs, tier=Tier.ESTIMATED, s=CAP3) == 2 and len(sent) == 2
     repo = FakeRepo(["a"])
     repo.sent_today = 3  # hak bitti
-    assert notify.send_alerts(repo, "t", [ev(9, tier=Tier.ESTIMATED)], tier=Tier.ESTIMATED) == 0
+    assert notify.send_alerts(repo, "t", [ev(9, tier=Tier.ESTIMATED)], tier=Tier.ESTIMATED, s=CAP3) == 0
     repo = FakeRepo(["a"])
     repo.sent_today = 3  # 🟢 sınırdan etkilenmez
     assert notify.send_alerts(repo, "t", [ev(10)]) == 1

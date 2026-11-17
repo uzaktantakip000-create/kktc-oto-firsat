@@ -94,6 +94,9 @@ def test_pending_reads_no_pool_without_candidates(monkeypatch):
     assert _pending(monkeypatch, [(0.30, ["fiyat_gurultu"])], verdict=False) == ([], 1)
 
 
+LIMITS = {"clean_negotiable_daily_limit": 1, "cheap_verify_daily_limit": 3}  # günlük sınır MEKANİZMASI hâlâ çalışır; varsayılan 17.11.2026'dan beri fiyatı sınırsız (1000)
+
+
 def _deliver(monkeypatch, pazarlik_24h: int, cheap_24h: int, enabled: bool = True):
     from entrypoints import cron_evaluate
     calls = []
@@ -116,9 +119,15 @@ def _deliver(monkeypatch, pazarlik_24h: int, cheap_24h: int, enabled: bool = Tru
         return cheap_24h if kind == "ucuz_teyit" else pazarlik_24h  # kind=None: bütün 🟡 (temiz + çok ucuz)
 
     repo = type("R", (), {"alerts_sent_since": sent_since})()
-    s = Settings(cheap_verify_alerts=enabled, estimated_alerts=False)
+    s = Settings(cheap_verify_alerts=enabled, estimated_alerts=False, **LIMITS)
     cron_evaluate.deliver(repo, "t", "1", s, [], lambda: None)
     return [c for c in calls if c[0]]
+
+
+def test_default_daily_limits_are_practically_unlimited():
+    """17.11.2026 (sahip: \"fırsat sınırı neden var\"): 🟡, 🔍 ve 🟠 günlük adet sınırı yok; arıza freni (est_burst_limit) kalır."""
+    s = Settings()
+    assert min(s.clean_negotiable_daily_limit, s.cheap_verify_daily_limit, s.est_daily_limit) >= 1000 and s.est_burst_limit == 15
 
 
 def test_verify_has_its_own_daily_limit_and_does_not_use_up_the_negotiable_one(monkeypatch):

@@ -36,7 +36,7 @@ from domain.settings import Settings
 MAX_RATIO = 0.90  # fiyat ≤ piyasa ortası × 0,90 (acil satıcı pazarlıkla daha da iner)
 MIN_COMPARABLES = 5
 FRESH_HOURS = 6
-MAX_PER_DAY = 8
+MAX_PER_DAY = 1000  # 17.11.2026 (sahip: "fırsat sınırı neden var"): fiilen sınırsız (eskiden 8); tekrar kapısı `same_car` kilidi ve ilan başına bir kez kalır
 STEP = 50
 SENT_KEY = "acil:islenen"  # bot_state: ⚡ gönderilen ilan kimlikleri (gönderimden ÖNCE yazılır; JSON liste, son KEEP); aynı-araç kilidinin belleği
 DAY_KEY = "acil:gun:{}"
