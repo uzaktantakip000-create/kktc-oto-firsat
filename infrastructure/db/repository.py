@@ -657,7 +657,7 @@ class Repository:
         return self.conn.execute(
             """SELECT id, brand_norm, model_norm, year, km, price_gbp::float8 AS price_gbp
                FROM listings WHERE brand_norm IS NOT NULL AND duplicate_of IS NULL
-                 AND COALESCE(posted_at, data_as_of, first_seen_at) > NOW() - interval '120 days'""").fetchall()
+                 AND (is_active OR COALESCE(posted_at, data_as_of, first_seen_at) > NOW() - interval '120 days')""").fetchall()  # aktif ilan yaşına bakılmadan (17.11.2026 denetim: 120 günden eski aktif £1 ilanlar karantinadan kaçıyordu)
 
     def set_quarantine(self, reasons: dict) -> int:
         """Karantina listesini baştan yazar (düzelenler çıkar). Dönen: yeni karantinaya girenlerin sayısı."""
