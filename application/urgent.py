@@ -84,7 +84,7 @@ def candidates(evaluated: list, s: Settings, now: datetime) -> list:
         if s.max_buy_gbp is not None and price > s.max_buy_gbp:
             continue
         if not is_fresh(l["first_seen_at"], l.get("posted_at"), now=now, fresh_hours=FRESH_HOURS, price_changed_at=l.get("price_changed_at"),
-                        platform=l.get("platform"), photo_urls=l.get("photo_urls"), signals=l.get("urgency_signals")):
+                        platform=l.get("platform"), photo_urls=l.get("photo_urls"), signals=l.get("urgency_signals"), source_name=l.get("source_name")):
             continue
         out.append(ev)
     return sorted(out, key=lambda ev: float(ev.listing["price_gbp"]) / ev.market.median_gbp)

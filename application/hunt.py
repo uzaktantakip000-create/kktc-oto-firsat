@@ -119,7 +119,7 @@ def run(repo: Repository, chat: str, send, s: Settings, now: datetime | None = N
                                   CANDIDATES, seen_after=after, seen_until=now)
         rows = [r for r in plausible(rows, view) if r["id"] not in used and not (r.get("seller_phone") and r["seller_phone"] in blocked)
                 and is_fresh(r["first_seen_at"], r.get("posted_at"), now=now, platform=r.get("platform"), photo_urls=r.get("photo_urls"),
-                             signals=r.get("urgency_signals"))]
+                             signals=r.get("urgency_signals"), source_name=r.get("source_name"))]
         if rows:
             old = resurfaced_ids(repo, rows)
             rows = [r for r in rows if r["id"] not in old]

@@ -298,12 +298,18 @@ def photo_stale(photo_urls, reference: datetime, fresh_hours: int = 36) -> bool:
     return taken is not None and taken < reference - timedelta(hours=fresh_hours)
 
 
+KAA_MAX_POST_DAYS = 10
+KAA_SOURCE = "KibrisArabaAl"
+
+
 def is_fresh(first_seen_at, posted_at, now: datetime | None = None, fresh_hours: int = 36, max_post_days: int = 4,
-             price_changed_at=None, platform: str | None = None, social_max_hours: int = 48, photo_urls=None, signals=None) -> bool:
+             price_changed_at=None, platform: str | None = None, social_max_hours: int = 48, photo_urls=None, signals=None, source_name: str | None = None) -> bool:
     """Yeni görülmüş VE (yayın tarihi biliniyorsa) en fazla 4 günlük: geçmiş doldurma eski ilan bildirmesin.
     Yakın zamanda fiyatı düşmüş/değişmiş ilan yaşına bakılmadan taze sayılır. KKTCarabam'da ilan tarihi hep boştur; `photo_urls` (kapak
     fotoğrafının adresi) yükleme anı gönderim anından `fresh_hours` saatten eskiyse ilan taze sayılmaz (`photo_stale`): fiyat değişikliği
-    istisnası da bunu aşmaz (yeniden çıkmış ilan için numara kuralı da öyle: `resurfaced_ids`). Tarih yoksa davranış değişmez."""
+    istisnası da bunu aşmaz (yeniden çıkmış ilan için numara kuralı da öyle: `resurfaced_ids`). Tarih yoksa davranış değişmez.
+    KibrisArabaAl (17.11.2026): site 2 saatte bir ve proxyden okunduğu için ilan bize yayından günler sonra düşebilir; ilk görülme taze
+    kaldıkça yayın payı `KAA_MAX_POST_DAYS` (10 gün) olur (2012 Nissan March yayından 6 gün sonra görülüp elenmişti)."""
     now = now or datetime.now(timezone.utc)
     if signals and DATE_UNSURE in signals:
         return False  # 13.10.2026: grup akışı yeni yoruma göre sıralanır; tarihsiz ve imlece ulaşılmadan okunan gönderi haftalık olabilir
@@ -315,6 +321,8 @@ def is_fresh(first_seen_at, posted_at, now: datetime | None = None, fresh_hours:
         return False  # Instagram/Facebook'ta "satıldı" izlenmiyor: 48 saatten eski gönderi anlık bildirim almaz
     if first_seen_at < now - timedelta(hours=fresh_hours):
         return False
+    if source_name == KAA_SOURCE:
+        max_post_days = max(max_post_days, KAA_MAX_POST_DAYS)
     return posted_at is None or posted_at >= now - timedelta(days=max_post_days)
 
 
@@ -330,7 +338,8 @@ def resurfaced_ids(repo: Repository, listings: list[dict]) -> set:
 
 def _is_fresh_ev(ev: Evaluated) -> bool:
     return is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
-                    platform=ev.listing.get("platform"), photo_urls=ev.listing.get("photo_urls"), signals=ev.listing.get("urgency_signals"))
+                    platform=ev.listing.get("platform"), photo_urls=ev.listing.get("photo_urls"), signals=ev.listing.get("urgency_signals"),
+                    source_name=ev.listing.get("source_name"))
 
 
 def _burst_summary(repo: Repository, token: str, fresh: list[Evaluated], subs: list[dict], limit: int, now: datetime | None = None) -> int:
@@ -529,7 +538,8 @@ def send_alerts(repo: Repository, token: str, evaluated: list[Evaluated], notes:
         if sent >= max_per_run or rate_limited:
             break
         if not is_fresh(ev.listing["first_seen_at"], ev.listing["posted_at"], price_changed_at=ev.listing.get("price_changed_at"),
-                        platform=ev.listing.get("platform"), photo_urls=ev.listing.get("photo_urls"), signals=ev.listing.get("urgency_signals")):
+                        platform=ev.listing.get("platform"), photo_urls=ev.listing.get("photo_urls"), signals=ev.listing.get("urgency_signals"),
+                    source_name=ev.listing.get("source_name")):
             continue
         text = format_alert(ev, (notes or {}).get(ev.listing["id"]), _twins(repo, ev.listing))
         delivered = False
