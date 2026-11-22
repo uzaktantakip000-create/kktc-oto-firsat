@@ -82,6 +82,9 @@ def _recheck_kaa(repo: Repository, todo: list[Evaluated], client) -> set:
                     if isinstance(e, kaa_gate.RobotsUnavailable):
                         break
                     continue
+                if data and data.get("skip"):  # satıcı fiyatı kaldırdı ("Fiyat İçin Arayınız"): artık fırsat değil, gönderilmez
+                    drop.add(l["id"])
+                    continue
                 if data:
                     if data.get("is_active") is not False:
                         data["price_gbp"] = _kaa_gbp(data)

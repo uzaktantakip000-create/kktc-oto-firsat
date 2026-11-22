@@ -28,6 +28,7 @@ class KaaStats:
     failed: int = 0
     deactivated: int = 0
     reactivated: int = 0  # kesintide yaşı yüzünden kapanmış, haritada hâlâ duran ilan geri açıldı (repo.reactivate_present)
+    skipped_no_price: int = 0  # "Fiyat İçin Arayınız" ilanı: kâr hesaplanamaz, kayda geçmez
     requests: int = 0  # siteye giden istek (robots.txt + harita + ilanlar)
     skipped: str | None = None  # tur hiç çalışmadı ya da engelle kesildi: neden (kapı kapalı, engel, kota, robots). Hata da başarı da sayılmaz
     stopped: str | None = None  # ilan okumaları yarıda kaldı (kota/aralık/süre/ağ hatası): kalanlar sonraki turda
@@ -97,6 +98,10 @@ def collect_kibrisarabaal(repo: Repository, source: dict, max_new: int = 10, now
                     stats.stopped = f"ağ hatası ({type(e).__name__})"
                     break
                 stats.fetched += 1
+                if data and data.get("skip"):  # fiyatsız ilan: hata değil, bir daha istenmez
+                    stats.skipped_no_price += 1
+                    tried[entry.item_id] = MAX_TRIES
+                    continue
                 if not data:  # okunamadı (5xx/şablon): bir kez daha denenir, sonra bırakılır
                     stats.failed += 1
                     tried[entry.item_id] = tried.get(entry.item_id, 0) + 1

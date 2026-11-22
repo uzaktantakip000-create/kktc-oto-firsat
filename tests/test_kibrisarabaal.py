@@ -32,6 +32,10 @@ class _Resp:
     def __init__(self, status, url, text="", headers=None):
         self.status_code, self.url, self.text, self.headers = status, url, text, headers or {}
 
+    def raise_for_status(self):
+        if self.status_code >= 300:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
 
 class _Client:
     def __init__(self, *resps):
@@ -121,3 +125,56 @@ def test_november_2026_template_location_seller_type_and_handle():
     assert (d["price_amount"], d["currency"], d["fuel"], d["transmission"]) == (8300.0, "GBP", "benzin", "otomatik")
     assert d["location"] == "Lefkoşa" and d["seller_type"] == "bireysel" and d["seller_handle"] == "ORNEK SATICI"
     assert d["posted_at"] == datetime(2026, 10, 30, tzinfo=timezone.utc)
+
+
+# 22.11.2026: "Fiyat İçin Arayınız" ilanında site araç JSON-LD'si koymuyor (yalnız Breadcrumb + FAQ). Örnek gerçek sayfanın iskeleti (#5261,
+# 2014 Mitsubishi L 200, galeri); satıcı adı/telefonu yok.
+NO_PRICE_HTML = """<html><head><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"BreadcrumbList",
+"itemListElement":[]},{"@type":"FAQPage","mainEntity":[{"@type":"Question","name":"2014 model Mitsubishi L 200 fiyatı ne kadar?",
+"acceptedAnswer":{"@type":"Answer","text":"Bu ilanda fiyat belirtilmemiş; satıcıyla doğrudan görüşebilirsiniz."}}]}]}</script></head>
+<body><h1>2014 Model Düz Mitsubishi L 200</h1><div>Fiyat İçin Arayınız</div><div>İlan Numarası:</div><div>#5261</div>
+<div>Yıl:</div><div>2014</div><div>Mil:</div><div>129000</div></body></html>"""
+
+
+def test_no_price_listing_is_skipped_not_unreadable():
+    from infrastructure.collectors.kibrisarabaal import NO_PRICE
+    assert parse_detail(NO_PRICE_HTML) == NO_PRICE
+
+
+def _sitemap(*ids):
+    return "<urlset>" + "".join(f"<url><loc>https://kibrisarabaal.com/ilan/{i}-x/</loc><lastmod>2026-11-22</lastmod></url>" for i in ids) + "</urlset>"
+
+
+def test_stale_cloudflare_sitemap_is_refetched_fresh():
+    from datetime import datetime, timezone
+    from infrastructure.collectors.kibrisarabaal import SITEMAP, fetch_sitemap
+    stale = _Resp(200, SITEMAP, _sitemap(1, 2), headers={"cf-cache-status": "UPDATING", "age": "33068"})
+    c = _Client(stale, _Resp(200, SITEMAP, _sitemap(1, 2, 3)))
+    got = fetch_sitemap(c, now=datetime(2026, 11, 22, 12, 27, tzinfo=timezone.utc))
+    assert [e.item_id for e in got] == ["1", "2", "3"] and c.urls == [SITEMAP, SITEMAP + "?t=202611221227"]
+
+
+def test_fresh_sitemap_is_not_refetched():
+    from infrastructure.collectors.kibrisarabaal import SITEMAP, fetch_sitemap
+    c = _Client(_Resp(200, SITEMAP, _sitemap(1, 2), headers={"cf-cache-status": "HIT", "age": "433"}))
+    assert len(fetch_sitemap(c)) == 2 and c.urls == [SITEMAP]
+
+
+def test_stale_sitemap_keeps_old_copy_when_refetch_fails():
+    from infrastructure.collectors.kibrisarabaal import SITEMAP, fetch_sitemap
+
+    class Quota(_Client):
+        def get(self, url, timeout=30):
+            if "?t=" in url:
+                raise RuntimeError("kota")
+            return super().get(url, timeout)
+    c = Quota(_Resp(200, SITEMAP, _sitemap(1, 2), headers={"cf-cache-status": "STALE"}))
+    assert len(fetch_sitemap(c)) == 2
+
+
+def test_stale_refetch_still_honours_block():
+    import pytest
+    from infrastructure.collectors.kibrisarabaal import SITEMAP, Blocked, fetch_sitemap
+    c = _Client(_Resp(200, SITEMAP, _sitemap(1), headers={"cf-cache-status": "UPDATING"}), _Resp(403, SITEMAP))
+    with pytest.raises(Blocked):
+        fetch_sitemap(c)
