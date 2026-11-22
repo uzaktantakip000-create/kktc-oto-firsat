@@ -114,3 +114,14 @@ def test_unreadable_new_listing_is_tried_at_most_twice(monkeypatch):
     for _ in range(4):
         collect(repo)
     assert asked == ["1", "1"]
+
+
+def test_no_price_listing_is_not_a_failure_and_not_retried(monkeypatch):
+    """22.11.2026: "Fiyat İçin Arayınız" ilanı (JSON-LD yok) okunamadı sayılıyordu: 113 ilan iki denemede kaldı, tur "başarısız" görünüyordu."""
+    import json
+    monkeypatch.setattr(site, "fetch_sitemap", lambda client: entries(3))
+    monkeypatch.setattr(site, "fetch_detail", lambda client, e: dict(site.NO_PRICE) if e.item_id == "2" else dict(OPEN))
+    repo = Repo()
+    stats = collect(repo)
+    assert stats.new == 2 and stats.failed == 0 and stats.skipped_no_price == 1
+    assert sorted(i for i, _ in repo.upserts) == ["1", "3"] and json.loads(repo.state[kaa.TRIED_KEY]) == {"2": kaa.MAX_TRIES}

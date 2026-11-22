@@ -100,13 +100,25 @@ class Entry:
     lastmod: datetime | None
 
 
-def fetch_sitemap(client) -> list[Entry]:
-    """`client`: kaa_gate.PoliteClient (izin/robots/kota/aralık). Yönlendirme de hata sayılır (raise_for_status 3xx'te de yükselir)."""
-    r = client.get(SITEMAP, timeout=60)
-    raise_if_blocked(r)
-    r.raise_for_status()
+STALE_CACHE = ("STALE", "UPDATING")  # Cloudflare önbelleği eski kopyayı veriyor (arka planda yenilemeye çalışıyor)
+STALE_AGE_S = 2 * 3600  # önbellekteki kopya bundan yaşlıysa da bayat sayılır
+
+
+def cache_stale(r) -> tuple[bool, str]:
+    """22.11.2026: site haritası Cloudflare önbelleğinden saatlerce ESKİ kopya geldi (cf-cache-status UPDATING, yaş 9 sa): tarama "başarılı",
+    ama sitede duran 74 yeni ilan görünmüyordu. (bayat mı, kısa açıklama)."""
+    h = getattr(r, "headers", None) or {}
+    status = str(h.get("cf-cache-status") or "").upper()
+    try:
+        age = int(h.get("age") or 0)
+    except (TypeError, ValueError):
+        age = 0
+    return status in STALE_CACHE or age > STALE_AGE_S, f"önbellek={status or '-'} yaş={age // 3600} sa"
+
+
+def parse_sitemap(text: str) -> list[Entry]:
     out = []
-    for block in re.findall(r"<url>(.*?)</url>", r.text, re.S):
+    for block in re.findall(r"<url>(.*?)</url>", text, re.S):
         loc = re.search(r"<loc>(.*?)</loc>", block)
         m = re.search(r"/ilan/(\d+)-", loc.group(1)) if loc else None
         if not m:
@@ -114,6 +126,32 @@ def fetch_sitemap(client) -> list[Entry]:
         lm = re.search(r"<lastmod>(.*?)</lastmod>", block)
         out.append(Entry(loc.group(1), m.group(1), datetime.fromisoformat(lm.group(1)) if lm else None))
     return out
+
+
+def fetch_sitemap(client, now: datetime | None = None) -> list[Entry]:
+    """`client`: kaa_gate.PoliteClient (izin/robots/kota/aralık). Yönlendirme de hata sayılır (raise_for_status 3xx'te de yükselir).
+    Önbellekten bayat kopya gelirse (cache_stale) bir kez taze kopya istenir: adrese dakikalık bir sorgu eki (robots.txt'e uygun) eklenir, böylece
+    Cloudflare kopyası yerine sitenin kendisi cevap verir. Ek istek yalnız bayatken (günde birkaç kez), her zamanki kapıdan, kotayla.
+    Taze kopya alınamazsa (kota, ağ, 200 dışı) eski kopyayla devam edilir; 403/429/503 yine Blocked."""
+    r = client.get(SITEMAP, timeout=60)
+    raise_if_blocked(r)
+    r.raise_for_status()
+    entries = parse_sitemap(r.text)
+    stale, why = cache_stale(r)
+    if not stale:
+        return entries
+    now = now or datetime.now(timezone.utc)
+    try:
+        r2 = client.get(f"{SITEMAP}?t={now:%Y%m%d%H%M}", timeout=60)
+    except Blocked:
+        raise
+    except Exception as e:  # kota/aralık/ağ: bu tur bayat kopyayla (eski davranış)
+        print(f"KibrisArabaAl: site haritası bayat ({why}), taze kopya alınamadı: {type(e).__name__}", flush=True)
+        return entries
+    raise_if_blocked(r2)
+    fresh = parse_sitemap(r2.text) if r2.status_code == 200 else []
+    print(f"KibrisArabaAl: site haritası bayat ({why}), taze kopya HTTP {r2.status_code}: {len(entries)} -> {len(fresh)} ilan", flush=True)
+    return fresh or entries
 
 
 def _vehicle_node(tree: HTMLParser) -> dict | None:
@@ -148,7 +186,11 @@ def parse_detail(html: str) -> dict | None:
     tree = HTMLParser(html)
     node = _vehicle_node(tree)
     if not node:
-        return None  # ilan sayfası değil (kaldırılmış ilan ana sayfaya yönleniyor)
+        # 22.11.2026: "Fiyat İçin Arayınız" ilanında site araç/teklif JSON-LD'sini hiç koymuyor (113 ilan "okunamadı" diye iki denemede kalıyordu).
+        # Fiyatsız ilandan kâr hesaplanmaz: okunamadı (hata) değil, bilerek atlanır
+        if "İlan Numarası:" in html and "Fiyat İçin Arayınız" in html:
+            return dict(NO_PRICE)
+        return None  # ilan sayfası değil (kaldırılmış ilan ana sayfaya yönleniyor) ya da şablon değişti
     offer = node.get("offers") or {}
     if "OutOfStock" in str(offer.get("availability")):
         return {"is_active": False, "urgency_signals": ["satildi"]}
@@ -228,6 +270,7 @@ def _seller_type(lines: list[str]) -> str:
 
 
 GONE = {"is_active": False, "urgency_signals": ["kaldirildi"]}
+NO_PRICE = {"skip": "fiyatsiz"}  # fiyatsız ilan (JSON-LD yok): kayda geçmez, bir daha istenmez
 
 
 def _is_listing_url(final_url: str, entry: Entry) -> bool:
